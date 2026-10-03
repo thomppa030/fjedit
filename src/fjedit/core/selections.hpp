@@ -11,6 +11,7 @@
 #include "fjedit/core/buffer.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -21,6 +22,10 @@ struct Selection {
     Position anchor;
     /// Where the caret is: the end that moves.
     Position caret;
+    /// How far along its line the caret tries to stay while it moves up and
+    /// down, so it comes back there past shorter lines; unset until it moves
+    /// up or down, and unset again by any other move.
+    std::optional<float> goal{};
 
     /// A caret at `at` that selects nothing.
     [[nodiscard]] static Selection at(Position at) { return {.anchor = at, .caret = at}; }
