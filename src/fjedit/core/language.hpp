@@ -2,6 +2,7 @@
 
 // The languages fjedit knows, and which a file is written in by its name.
 
+#include "fjedit/core/structure.hpp"
 #include "fjedit/core/syntax.hpp"
 
 #include <string_view>
@@ -15,6 +16,7 @@ struct Language {
     /// What begins a comment that runs to the end of the line; empty when
     /// the language has none.
     std::string_view line_comment;
+    Folding folding{Folding::Brackets};
 };
 
 /// The language `file_name` is written in, by its extension (case aside);

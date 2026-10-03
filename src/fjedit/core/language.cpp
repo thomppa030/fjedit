@@ -34,7 +34,8 @@ const Language& fjss() {
 }
 
 const Language& widget() {
-    static const Language language{.name = "Widget", .lexer = lex::markup(), .line_comment = ""};
+    static const Language language{.name = "Widget", .lexer = lex::markup(), .line_comment = "",
+                                   .folding = Folding::Indentation};
     return language;
 }
 
@@ -64,7 +65,8 @@ constexpr Known BY_EXTENSION[] = {
 
 const Language& plain_text() {
     static const PlainLexer lexer;
-    static const Language language{.name = "Plain text", .lexer = lexer, .line_comment = ""};
+    static const Language language{.name = "Plain text", .lexer = lexer, .line_comment = "",
+                                   .folding = Folding::Indentation};
     return language;
 }
 
