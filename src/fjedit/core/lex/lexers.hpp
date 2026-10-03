@@ -14,4 +14,7 @@ namespace fjedit::lex {
 [[nodiscard]] const Lexer& glsl();
 [[nodiscard]] const Lexer& fjsl();
 
+/// FJSS stylesheets.
+[[nodiscard]] const Lexer& fjss();
+
 } // namespace fjedit::lex
