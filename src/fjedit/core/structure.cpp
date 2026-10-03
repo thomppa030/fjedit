@@ -3,6 +3,7 @@
 #include "fjedit/core/layout.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <map>
 
@@ -203,6 +204,38 @@ std::optional<Position> enclosing_opener(const Buffer& buffer, const Syntax* syn
         if (line-- == 0) break;
     }
     return std::nullopt;
+}
+
+Indent detect_indent(const Buffer& buffer, Indent fallback) {
+    std::size_t tab_lines = 0;
+    std::size_t space_lines = 0;
+    // How often each step from 2 to 8 spaces was taken between lines.
+    std::array<std::size_t, 9> steps{};
+    std::size_t previous = 0;
+    for (std::size_t index = 0; index < buffer.line_count(); ++index) {
+        const std::string_view line = buffer.line(index);
+        if (blank(line)) continue;
+        if (line[0] == '\t') {
+            ++tab_lines;
+            continue;
+        }
+        const std::size_t spaces = line.find_first_not_of(' ');
+        if (spaces > 0) ++space_lines;
+        if (line[spaces] == '\t') continue; // spaces then tabs: no step to read
+        const std::size_t step = spaces > previous ? spaces - previous : previous - spaces;
+        if (step >= 2 && step < steps.size()) ++steps[step];
+        previous = spaces;
+    }
+
+    if (tab_lines == 0 && space_lines == 0) return fallback;
+    if (tab_lines > space_lines) return {.tabs = true, .width = fallback.width};
+
+    // The step taken most; on a tie, the more usual width.
+    std::size_t width = 0;
+    for (const std::size_t step : {4, 2, 8, 3, 6, 5, 7}) {
+        if (steps[step] > (width == 0 ? 0 : steps[width])) width = step;
+    }
+    return {.tabs = false, .width = width == 0 ? fallback.width : width};
 }
 
 bool in_string_or_comment(const Syntax& syntax, std::size_t line, std::size_t byte) {

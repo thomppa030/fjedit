@@ -102,3 +102,42 @@ TEST_CASE("A block may fold from the line the one before it closes on", "[struct
     const Text text("if (a) {\n  b();\n} else {\n  c();\n}");
     REQUIRE(fold_ranges(text.buffer, text.syntax, Folding::Brackets) == std::vector<FoldRange>{{0, 2}, {2, 4}});
 }
+
+static Indent detected(std::string_view text, Indent fallback = {.tabs = false, .width = 4}) {
+    return detect_indent(Buffer(text), fallback);
+}
+
+TEST_CASE("A file indented with four spaces", "[structure][indent]") {
+    const Indent indent = detected("a {\n    b {\n        c;\n    }\n}");
+    REQUIRE_FALSE(indent.tabs);
+    REQUIRE(indent.width == 4);
+}
+
+TEST_CASE("A file indented with two spaces", "[structure][indent]") {
+    const Indent indent = detected("a {\n  b;\n  c {\n    d;\n  }\n}");
+    REQUIRE_FALSE(indent.tabs);
+    REQUIRE(indent.width == 2);
+}
+
+TEST_CASE("A file indented with tabs keeps the width it is given", "[structure][indent]") {
+    const Indent indent = detected("a {\n\tb;\n\tc {\n\t\td;\n\t}\n}", {.tabs = false, .width = 8});
+    REQUIRE(indent.tabs);
+    REQUIRE(indent.width == 8);
+}
+
+TEST_CASE("A file without indented lines says nothing", "[structure][indent]") {
+    const Indent indent = detected("one\ntwo\n\nthree", {.tabs = true, .width = 3});
+    REQUIRE(indent.tabs);
+    REQUIRE(indent.width == 3);
+}
+
+TEST_CASE("A comment's stars don't count as a step", "[structure][indent]") {
+    const Indent indent = detected("/**\n * one\n * two\n */\nf() {\n  x;\n  y;\n}");
+    REQUIRE(indent.width == 2);
+}
+
+TEST_CASE("A few tabs in a file of spaces don't make it a tab file", "[structure][indent]") {
+    const Indent indent = detected("a {\n    b;\n    c;\n\td;\n    e;\n}");
+    REQUIRE_FALSE(indent.tabs);
+    REQUIRE(indent.width == 4);
+}

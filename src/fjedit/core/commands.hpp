@@ -15,6 +15,7 @@
 #include "fjedit/core/history.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/selections.hpp"
+#include "fjedit/core/structure.hpp"
 #include "fjedit/core/syntax.hpp"
 
 #include <cstddef>
@@ -24,13 +25,6 @@
 #include <string_view>
 
 namespace fjedit {
-
-/// How lines are indented: with a tab or with spaces, and how many cells a
-/// level of indent and a tab take up.
-struct Indent {
-    bool tabs{false};
-    std::size_t width{4};
-};
 
 /// The system's clipboard, as the program reaches it.
 struct Clipboard {

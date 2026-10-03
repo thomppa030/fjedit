@@ -1,7 +1,8 @@
 #pragma once
 
-// What the tokens tell of the text's shape: which brackets pair up, and
-// where the text folds. Brackets inside strings and comments don't count.
+// What the text's shape tells: which brackets pair up, where the text folds,
+// how its lines are indented. Brackets inside strings and comments don't
+// count.
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/syntax.hpp"
@@ -62,6 +63,20 @@ enum class Folding : uint8_t {
 /// multiple of `tab_width`.
 [[nodiscard]] std::vector<FoldRange> fold_ranges(const Buffer& buffer, const Syntax& syntax, Folding folding,
                                                  std::size_t tab_width = 4);
+
+/// How lines are indented: with a tab or with spaces, and how many cells a
+/// level of indent and a tab take up.
+struct Indent {
+    bool tabs{false};
+    std::size_t width{4};
+};
+
+/// How `buffer`'s lines are indented: with tabs when more of its indented
+/// lines begin with a tab than with a space; with spaces otherwise, a level
+/// as wide as the step most often taken from one line's indent to the next
+/// (steps of one, a comment's " * ", don't count). `fallback` where the text
+/// doesn't say, and its width for tabs.
+[[nodiscard]] Indent detect_indent(const Buffer& buffer, Indent fallback);
 
 /// Whether byte `byte` of line `line` is inside a string or a comment.
 [[nodiscard]] bool in_string_or_comment(const Syntax& syntax, std::size_t line, std::size_t byte);
