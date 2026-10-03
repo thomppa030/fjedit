@@ -13,7 +13,8 @@ FetchContent_MakeAvailable(Catch2)
 FetchContent_GetProperties(Catch2)
 
 add_executable(fjedit-tests
-    test_buffer.cpp)
+    test_buffer.cpp
+    test_edit.cpp)
 ftk_target_defaults(fjedit-tests)
 target_link_libraries(fjedit-tests PRIVATE fjedit::core Catch2::Catch2WithMain)
 

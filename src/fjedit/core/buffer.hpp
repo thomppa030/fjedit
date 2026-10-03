@@ -44,6 +44,43 @@ enum class LineEnding : uint8_t {
     CrLf,
 };
 
+/// One change of an edit: the text in `span` replaced by `text`. Lines in
+/// `text` break at \n, \r\n or a lone \r, all taken as one break.
+struct Change {
+    Span span;
+    std::string text;
+
+    bool operator==(const Change&) const = default;
+};
+
+/// Changes made together, as one step: typing at several cursors, a
+/// replace-all. Their spans are in the text as it was before the edit, in
+/// order, and never overlap, though one may end where the next begins.
+struct Edit {
+    std::vector<Change> changes;
+
+    bool operator==(const Edit&) const = default;
+};
+
+/// Where each change's text lies once `edit` is made: for a change that
+/// inserts, its new text; for one that only deletes, an empty span where
+/// the text was.
+[[nodiscard]] std::vector<Span> spans_after(const Edit& edit);
+
+/// Which side of new text a position at the very place it went in ends up.
+enum class Bias : uint8_t {
+    /// Before it: an insertion there pushes nothing.
+    Before,
+    /// After it: the caret of the one typing.
+    After,
+};
+
+/// Where `at`, a position in the text before `edit`, is once the edit is
+/// made. A position at the start of a replaced span stays before the new
+/// text, one at its end follows it, and one where text is inserted or
+/// inside a replaced span goes to the side `bias` says.
+[[nodiscard]] Position map(const Edit& edit, Position at, Bias bias);
+
 class Buffer {
 public:
     /// An empty text: one line with nothing on it.
@@ -83,10 +120,23 @@ public:
     /// whose bytes it falls between.
     [[nodiscard]] Position clamp(Position at) const;
 
+    /// Makes `edit` and returns the edit that undoes it, whose spans are in
+    /// the text as it is now. Every span must be in the text (see clamp())
+    /// and the changes in order without overlapping.
+    [[nodiscard]] Edit apply(const Edit& edit);
+
+    /// Counts the edits made: it moves with every apply(), so whoever holds
+    /// a copy of the text (a language server) can tell it is out of date.
+    [[nodiscard]] uint64_t version() const { return version_; }
+
 private:
+    // Puts `text` where `span` was.
+    void replace(Span span, std::string_view text);
+
     std::vector<std::string> lines_;
     LineEnding line_ending_{LineEnding::Lf};
     bool byte_order_mark_{false};
+    uint64_t version_{0};
 };
 
 } // namespace fjedit
