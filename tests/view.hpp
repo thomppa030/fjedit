@@ -6,8 +6,8 @@
 // the last marked is the primary.
 //
 //     TestView view("a|b\nc|d");
-//     view.run("caret.right");
-//     REQUIRE(view.shown() == "ab|\ncd|");
+//     view.run("edit.backspace");
+//     REQUIRE(view.shown() == "|b\n|d");
 
 #include "fjedit/core/commands.hpp"
 
@@ -26,6 +26,12 @@ struct TestView {
     fjedit::History history;
     fjedit::Selections selections;
     fjedit::MonospaceLayout layout{4, 3};
+    fjedit::Indent indent{};
+    std::string clipboard_text;
+    fjedit::Clipboard clipboard{
+        .get = [this] { return clipboard_text; },
+        .set = [this](std::string text) { clipboard_text = std::move(text); },
+    };
 
     explicit TestView(std::string_view marked) {
         std::string text;
@@ -49,10 +55,19 @@ struct TestView {
         if (!marks.empty()) selections.set(marks, marks.size() - 1);
     }
 
-    void run(std::string_view name) {
+    // The clipboard holds `this`: the view stays where it was made.
+    TestView(const TestView&) = delete;
+    TestView& operator=(const TestView&) = delete;
+
+    void run(std::string_view name, std::string_view text = {}) {
         fjedit::CommandContext context{.buffer = buffer, .history = history, .selections = selections,
-                                       .layout = layout};
+                                       .layout = layout, .indent = indent, .clipboard = &clipboard, .text = text};
         REQUIRE(fjedit::run_command(name, context));
+    }
+
+    /// Types `text` a character at a time.
+    void type(std::string_view text) {
+        for (std::size_t i = 0; i < text.size(); ++i) run("edit.type", text.substr(i, 1));
     }
 
     [[nodiscard]] std::vector<fjedit::Position> carets() const {

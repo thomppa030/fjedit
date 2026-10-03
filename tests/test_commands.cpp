@@ -88,3 +88,13 @@ TEST_CASE("Every caret moves, and carets that meet become one", "[commands]") {
     view.run("caret.text_start");
     REQUIRE(view.shown() == "|ab\ncd");
 }
+
+TEST_CASE("Moving a caret ends the step typing was in", "[commands]") {
+    TestView view("|");
+    view.type("ab");
+    view.run("caret.left");
+    view.type("X");
+    REQUIRE(view.shown() == "aX|b");
+    view.run("edit.undo");
+    REQUIRE(view.shown() == "a|b");
+}
