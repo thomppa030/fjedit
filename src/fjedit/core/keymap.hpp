@@ -1,0 +1,82 @@
+#pragma once
+
+// Which command a key runs. A binding is a sequence of keys (most are one;
+// "Ctrl K Ctrl C" is two, as are a modal layer's "d d"), held in a mode:
+// plain editing is one, and a modal layer adds its own. While the keys
+// pressed so far begin a longer binding, the view waits for the next.
+//
+//     const fjedit::Keymap keys = fjedit::Keymap::standard();
+//     pressed.push_back(chord);
+//     const fjedit::KeyMatch match = keys.find(fjedit::Keymap::EDITING, pressed);
+//     if (match.command) { run_command(*match.command, context); pressed.clear(); }
+//     else if (!match.waiting) pressed.clear();
+
+#include "ftk/ui/core/input.hpp"
+
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace fjedit {
+
+/// A key, with the modifiers held as it is pressed.
+struct Chord {
+    ftk::ui::Key key{};
+    ftk::ui::Modifiers modifiers{};
+
+    bool operator==(const Chord&) const = default;
+};
+
+/// A chord as menus show it and keymap files write it: the modifiers in the
+/// order Ctrl, Shift, Alt, Super, then the key, apart by spaces ("Ctrl Shift
+/// K", "Alt Up", "Ctrl ]").
+[[nodiscard]] std::string chord_text(Chord chord);
+
+/// The chord written as chord_text() writes it, or nothing when it names no
+/// key or a modifier twice. Modifiers may come in any order.
+[[nodiscard]] std::optional<Chord> parse_chord(std::string_view text);
+
+/// What the keys pressed so far come to.
+struct KeyMatch {
+    /// The command they run, when they make a whole binding.
+    std::optional<std::string_view> command;
+    /// They begin a longer binding: wait for the next key.
+    bool waiting{false};
+};
+
+class Keymap {
+public:
+    /// Plain editing, the mode a view starts in.
+    static constexpr std::string_view EDITING = "editing";
+
+    /// fjedit's own keys, the ones VS Code has.
+    [[nodiscard]] static Keymap standard();
+
+    /// Makes `keys`, in `mode`, run `command`. A binding of the same keys
+    /// made before is replaced.
+    void bind(std::string_view mode, std::vector<Chord> keys, std::string command);
+
+    /// Takes away the binding of `keys` in `mode`, if there is one.
+    void unbind(std::string_view mode, std::span<const Chord> keys);
+
+    /// What `pressed`, the keys pressed so far, comes to in `mode`. A whole
+    /// binding wins over waiting for a longer one.
+    [[nodiscard]] KeyMatch find(std::string_view mode, std::span<const Chord> pressed) const;
+
+    /// The keys that run `command` in `mode`, for a menu or tooltip to show:
+    /// the first binding made, or nothing.
+    [[nodiscard]] std::optional<std::vector<Chord>> keys_for(std::string_view mode, std::string_view command) const;
+
+private:
+    struct Binding {
+        std::string mode;
+        std::vector<Chord> keys;
+        std::string command;
+    };
+
+    std::vector<Binding> bindings_;
+};
+
+} // namespace fjedit
