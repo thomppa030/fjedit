@@ -4,6 +4,8 @@
 
 #include "ftk/base/utf8.hpp"
 
+#include <algorithm>
+
 namespace fjedit {
 
 namespace {
@@ -75,7 +77,13 @@ Position match_end(const std::vector<std::string_view>& parts, Position from) {
 } // namespace
 
 std::vector<Span> find_all(const Buffer& buffer, std::string_view needle, FindOptions options) {
+    return find_in_lines(buffer, needle, 0, buffer.line_count(), options);
+}
+
+std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, std::size_t first_line,
+                                std::size_t end_line, FindOptions options) {
     std::vector<Span> found;
+    end_line = std::min(end_line, buffer.line_count());
     if (needle.empty()) return found;
     const std::vector<std::string_view> parts = pieces(needle);
     const bool word_first = word_after(needle, 0);
@@ -91,8 +99,8 @@ std::vector<Span> find_all(const Buffer& buffer, std::string_view needle, FindOp
 
     // Every character boundary in turn; after a match, from its end. A match
     // is never empty, so the walk always moves on.
-    Position at;
-    while (at.line < buffer.line_count()) {
+    Position at{first_line, 0};
+    while (at.line < end_line) {
         const std::string_view line = buffer.line(at.line);
         if (at.byte > line.size()) {
             at = {at.line + 1, 0};

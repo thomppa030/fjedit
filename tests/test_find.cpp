@@ -60,3 +60,10 @@ TEST_CASE("The word at a place is the run of word characters around it", "[find]
     REQUIRE(word_at(buffer, {0, 12}) == Span{{0, 2}, {0, 12}});
     REQUIRE(word_at(buffer, {0, 13}).empty());
 }
+
+TEST_CASE("A search within lines finds only what begins on them", "[find]") {
+    const Buffer buffer("ab\nab\nab\nab");
+    REQUIRE(find_in_lines(buffer, "ab", 1, 3) == std::vector<Span>{{{1, 0}, {1, 2}}, {{2, 0}, {2, 2}}});
+    REQUIRE(find_in_lines(buffer, "b\na", 2, 9) == std::vector<Span>{{{2, 1}, {3, 1}}});
+    REQUIRE(find_in_lines(buffer, "ab", 3, 3).empty());
+}

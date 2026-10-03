@@ -27,6 +27,11 @@ struct FindOptions {
 /// needle occurs nowhere.
 [[nodiscard]] std::vector<Span> find_all(const Buffer& buffer, std::string_view needle, FindOptions options = {});
 
+/// The same, only the places that begin on lines `first_line` up to, not
+/// including, `end_line`: what a view has in sight.
+[[nodiscard]] std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, std::size_t first_line,
+                                              std::size_t end_line, FindOptions options = {});
+
 /// The first place `needle` occurs at or after `from`, or failing that, the
 /// first from the start of the text; nothing when it occurs nowhere.
 [[nodiscard]] std::optional<Span> find_next(const Buffer& buffer, std::string_view needle, Position from,
