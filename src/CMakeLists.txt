@@ -16,6 +16,7 @@ add_library(fjedit-core STATIC
     fjedit/core/lex/json.cpp
     fjedit/core/motion.cpp
     fjedit/core/selections.cpp
+    fjedit/core/structure.cpp
     fjedit/core/syntax.cpp)
 add_library(fjedit::core ALIAS fjedit-core)
 ftk_target_defaults(fjedit-core)
