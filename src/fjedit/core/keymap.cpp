@@ -9,7 +9,6 @@ namespace fjedit {
 namespace {
 
 using ftk::ui::Key;
-using ftk::ui::Modifiers;
 
 // Every key's name in chord text, in the order of ftk::ui::Key.
 constexpr std::string_view KEY_NAMES[] = {
