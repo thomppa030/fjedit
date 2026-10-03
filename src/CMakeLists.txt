@@ -8,6 +8,7 @@ add_library(fjedit-core STATIC
     fjedit/core/keymap.cpp
     fjedit/core/language.cpp
     fjedit/core/layout.cpp
+    fjedit/core/lex/c_like.cpp
     fjedit/core/lex/cpp.cpp
     fjedit/core/motion.cpp
     fjedit/core/selections.cpp
