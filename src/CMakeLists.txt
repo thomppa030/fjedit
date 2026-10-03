@@ -25,3 +25,14 @@ target_include_directories(fjedit-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # ftk-ui-core for its key vocabulary, which keymaps are written in; the core
 # draws nothing.
 target_link_libraries(fjedit-core PUBLIC ftk::base ftk::ui-core)
+
+# fjedit-widget is the code view, drawn with ftk's UI core in the theme's code
+# colours: the text laid out and drawn, and the keyboard and mouse taken.
+add_library(fjedit-widget STATIC
+    fjedit/widget/code_view.cpp
+    fjedit/widget/text_layout.cpp)
+add_library(fjedit::widget ALIAS fjedit-widget)
+ftk_target_defaults(fjedit-widget)
+target_link_libraries(fjedit-widget PUBLIC fjedit::core ftk::app-ui)
+# Its look comes from ftk's theme and kit alone, as every editor UI's does.
+ftk_check_editor_ui(fjedit-widget ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widget)

@@ -5,8 +5,8 @@ with help from clangd, and the Fjell engine's own files: shaders, stylesheets,
 widgets. It comes as a library, which is the editor and which Fjell builds in,
 and a program that opens a folder in it.
 
-It is early. What exists today is the text the editor works on, with no window
-yet.
+It is early. What exists today is the text the editor works on and the view
+that draws and edits it; a program that opens one comes next.
 
 ## Building
 
@@ -40,6 +40,7 @@ fjedit fetches ftk at a tag. To build against a checkout instead, keep a
 | Library | What it holds |
 |---|---|
 | `fjedit::core` | The text and how it is edited, without a window |
+| `fjedit::widget` | The code view, drawn with ftk's UI core in the theme's colours |
 
 A program that already builds ftk itself (Fjell does) can add fjedit beside it:
 fjedit then uses that program's ftk targets instead of fetching its own.

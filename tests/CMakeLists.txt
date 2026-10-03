@@ -34,6 +34,14 @@ add_executable(fjedit-tests
 ftk_target_defaults(fjedit-tests)
 target_link_libraries(fjedit-tests PRIVATE fjedit::core Catch2::Catch2WithMain)
 
+# The code view, driven as a person drives it through ftk's harness: clicks,
+# keys and text into the UI core with no window.
+add_executable(fjedit-widget-tests
+    test_code_view.cpp)
+ftk_target_defaults(fjedit-widget-tests)
+target_link_libraries(fjedit-widget-tests PRIVATE fjedit::widget ftk::kit-harness Catch2::Catch2WithMain)
+
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 catch_discover_tests(fjedit-tests)
+catch_discover_tests(fjedit-widget-tests TEST_PREFIX "view: ")
