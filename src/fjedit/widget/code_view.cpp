@@ -2,6 +2,7 @@
 
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/find.hpp"
+#include "fjedit/core/structure.hpp"
 #include "fjedit/widget/text_layout.hpp"
 
 #include "ftk/ui/core/context.hpp"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
 
 namespace fjedit {
@@ -270,6 +272,107 @@ Shown shown(const Frame& frame, const EditorView& view, const Buffer& buffer) {
             .top = frame.rect.min.y - (view.scroll.y - static_cast<float>(first) * CODE_LINE)};
 }
 
+// How far a blank line looks up and down for a line with text, whose indent
+// it borrows for its guides.
+constexpr std::size_t GUIDE_LOOK = 200;
+constexpr float DECORATION_ROUNDING = 2.0f;
+
+// How many levels of indent line `line` is in: its leading spaces and tabs,
+// in levels of `width` cells. A blank line is as deep as the shallower of the
+// lines with text either side of it, so guides run on through it.
+std::size_t indent_level(const Buffer& buffer, std::size_t line, std::size_t width) {
+    auto of = [&](std::size_t index) -> std::optional<std::size_t> {
+        const std::string_view text = buffer.line(index);
+        const std::size_t first = text.find_first_not_of(" \t");
+        if (first == std::string_view::npos) return std::nullopt;
+        return column_of(text, first, width) / width;
+    };
+    if (const auto level = of(line)) return *level;
+    std::size_t above = 0;
+    for (std::size_t i = line, looked = 0; i-- > 0 && looked < GUIDE_LOOK; ++looked) {
+        if (const auto level = of(i)) {
+            above = *level;
+            break;
+        }
+    }
+    std::size_t below = 0;
+    for (std::size_t i = line + 1, looked = 0; i < buffer.line_count() && looked < GUIDE_LOOK; ++i, ++looked) {
+        if (const auto level = of(i)) {
+            below = *level;
+            break;
+        }
+    }
+    return std::min(above, below);
+}
+
+// Indent guides: one at the start of each level of every line's indent; the
+// guide of the block the primary caret is in brighter.
+void draw_guides(core::DrawList& dl, const Document& document, const EditorView& view, const Frame& frame,
+                 const TextLayout& layout, std::size_t first, std::size_t last, float top) {
+    const Buffer& buffer = document.buffer();
+    const std::size_t width = std::max<std::size_t>(document.indent().width, 1);
+    const float step = layout.space_width() * static_cast<float>(width);
+
+    // The block the caret is in: the guide just left of its line's text, on
+    // the lines around it indented deeper than that guide.
+    const std::size_t caret = view.selections.primary().caret.line;
+    const std::size_t caret_level = indent_level(buffer, caret, width);
+    std::size_t active_from = 1;
+    std::size_t active_to = 0;
+    if (caret_level > 0) {
+        const std::size_t guide = caret_level - 1;
+        active_from = caret;
+        while (active_from > first && indent_level(buffer, active_from - 1, width) > guide) --active_from;
+        active_to = caret;
+        while (active_to + 1 < last && indent_level(buffer, active_to + 1, width) > guide) ++active_to;
+    }
+
+    for (std::size_t line = first; line < last; ++line) {
+        const float y = top + static_cast<float>(line - first) * CODE_LINE;
+        const std::size_t levels = indent_level(buffer, line, width);
+        for (std::size_t level = 0; level < levels; ++level) {
+            const bool active = level + 1 == caret_level && line >= active_from && line <= active_to;
+            const float x = std::round(frame.origin_x + static_cast<float>(level) * step);
+            dl.rect_filled({x, y}, {x + 1.0f, y + CODE_LINE},
+                           active ? theme::code_indent_guide_active() : theme::code_indent_guide());
+        }
+    }
+}
+
+// The other uses of the word at the primary caret, in sight, each in a quiet
+// box; and the bracket paired with the one at the caret, both outlined.
+void draw_marks(core::DrawList& dl, const Document& document, const EditorView& view, const Frame& frame,
+                const TextLayout& layout, std::size_t first, std::size_t last, float top) {
+    const Buffer& buffer = document.buffer();
+    const Selection& primary = view.selections.primary();
+    auto box = [&](Position from, Position to) {
+        const float y = top + static_cast<float>(from.line - first) * CODE_LINE;
+        return core::Rect{.min = {frame.origin_x + layout.x_of(buffer, from), y},
+                          .max = {frame.origin_x + layout.x_of(buffer, to), y + CODE_LINE}};
+    };
+
+    if (primary.empty()) {
+        const Span word = word_at(buffer, primary.caret);
+        if (!word.empty()) {
+            const FindOptions whole{.match_case = true, .whole_word = true};
+            for (const Span& use : find_in_lines(buffer, buffer.text(word), first, last, whole)) {
+                if (use == word || use.from.line != use.to.line) continue;
+                const core::Rect r = box(use.from, use.to);
+                dl.rect_filled(r.min, r.max, theme::code_occurrence(), DECORATION_ROUNDING);
+            }
+        }
+    }
+
+    if (const std::optional<BracketPair> pair = matching_bracket(buffer, document.syntax(), primary.caret)) {
+        for (const Position at : {pair->open, pair->close}) {
+            if (at.line < first || at.line >= last) continue;
+            const core::Rect r = box(at, {at.line, at.byte + 1});
+            dl.rect(r.min + glm::vec2{0.0f, 1.0f}, r.max - glm::vec2{0.0f, 1.0f}, theme::code_bracket(),
+                    DECORATION_ROUNDING);
+        }
+    }
+}
+
 void draw(core::Context& ui, const Document& document, const EditorView& view, const Frame& frame,
           const TextLayout& layout, core::TextStyle numbers, bool focused) {
     const Buffer& buffer = document.buffer();
@@ -302,6 +405,9 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
     }
 
     dl.push_clip(frame.text.min, frame.text.max);
+
+    draw_guides(dl, document, view, frame, layout, lines.first, lines.last, lines.top);
+    draw_marks(dl, document, view, frame, layout, lines.first, lines.last, lines.top);
 
     // Selections, the line break taking a space's width.
     for (const Selection& selection : view.selections.all()) {

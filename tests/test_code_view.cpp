@@ -3,6 +3,7 @@
 #include "print.hpp"
 
 #include "ftk/test/kit_harness.hpp"
+#include "ftk/ui/theme.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -31,6 +32,16 @@ struct Editor {
     [[nodiscard]] std::string text() const { return document.buffer().text(); }
     [[nodiscard]] Position caret() const { return view.selections.primary().caret; }
 };
+
+// How many shapes the last frame drew in `colour`.
+std::size_t drawn_in(const ftk::test::UiHarness& h, ftk::ui::Color colour) {
+    const uint32_t packed = ftk::ui::core::pack_colour(colour);
+    std::size_t count = 0;
+    for (const ftk::ui::core::RootOutput& root : h.output().roots) {
+        for (const ftk::ui::core::Primitive& p : root.draw->primitives) count += p.colour == packed ? 1 : 0;
+    }
+    return count;
+}
 
 constexpr Modifiers CTRL{.ctrl = true};
 constexpr Modifiers SHIFT{.shift = true};
@@ -215,4 +226,32 @@ TEST_CASE("A drag past the bottom scrolls the view on", "[code_view][mouse]") {
     e.h.drag({780.0f, 10.0f}, {780.0f, 700.0f});
     REQUIRE(e.view.scroll.y > 0.0f);
     REQUIRE(e.caret().line > 29);
+}
+
+TEST_CASE("The bracket paired with the one at the caret is outlined, both", "[code_view][marks]") {
+    Editor e("f(a)");
+    e.h.click_at({780.0f, 10.0f});
+    REQUIRE(drawn_in(e.h, ftk::theme::code_bracket()) == 2);
+    e.h.press(Key::Home);
+    e.h.step();
+    REQUIRE(drawn_in(e.h, ftk::theme::code_bracket()) == 0);
+}
+
+TEST_CASE("The other uses of the word at the caret are boxed", "[code_view][marks]") {
+    Editor e("spin + spinning + spin\nspin");
+    e.h.click_at({780.0f, 30.0f});
+    REQUIRE(drawn_in(e.h, ftk::theme::code_occurrence()) == 2);
+}
+
+TEST_CASE("Indent guides, the caret's block brighter", "[code_view][marks]") {
+    Editor e("a {\n    b {\n        c;\n    }\n}");
+    e.h.click_at({780.0f, 10.0f});
+    // Line 1 and 3 one level in, line 2 two: four guides, none active.
+    REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide()) == 4);
+    REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide_active()) == 0);
+    e.h.press(Key::Down);
+    e.h.press(Key::Down);
+    e.h.step();
+    // On c: the second guide of line 2 is the caret's block's.
+    REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide_active()) == 1);
 }
