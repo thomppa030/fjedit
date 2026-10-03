@@ -22,6 +22,11 @@ TEST_CASE("GLSL: types, built-in calls and numbers", "[lex][glsl]") {
     REQUIRE(colours(glsl, "if (NdotL > 0.001) diffuse /= NdotL;").front() == std::pair<std::string, K>{"if", K::Keyword});
 }
 
+TEST_CASE("GLSL: a type built with a call is still a type", "[lex][glsl]") {
+    REQUIRE(colours(glsl, "vec3(0.931, 0.7, 0.5)").front() == std::pair<std::string, K>{"vec3", K::Type});
+    REQUIRE(colours(glsl, "mat3(TBN)").front() == std::pair<std::string, K>{"mat3", K::Type});
+}
+
 TEST_CASE("GLSL: the preprocessor and comments", "[lex][glsl]") {
     REQUIRE(colours(glsl, "#include \"fjell_lighting.glsl\"") ==
             Colours{{"#include", K::Meta}, {"\"fjell_lighting.glsl\"", K::String}});

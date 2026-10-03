@@ -2,8 +2,9 @@
 
 // The lexer every C-like language shares: comments, strings, numbers, the
 // preprocessor, names and punctuation, told apart by the language's rules.
-// A name before `(` is a function, one before `::` or written LikeThis a
-// type. Inside fjedit-core only.
+// A name the language knows as a type is one, even called (GLSL's vec3(...));
+// otherwise a name before `(` is a function, one before `::` or written
+// LikeThis a type. Inside fjedit-core only.
 
 #include "fjedit/core/syntax.hpp"
 

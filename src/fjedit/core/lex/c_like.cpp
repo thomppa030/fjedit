@@ -146,9 +146,12 @@ LineState CLikeLexer::lex(std::string_view line, const LineState& state, std::ve
                 kind = TokenKind::Keyword;
             } else if (!rules_.meta_prefix.empty() && word.starts_with(rules_.meta_prefix)) {
                 kind = TokenKind::Meta;
+            } else if (one_of(rules_.types, word)) {
+                // vec3(...) builds a vec3: a type, called or not.
+                kind = TokenKind::Type;
             } else if (next < line.size() && line[next] == '(') {
                 kind = TokenKind::Function;
-            } else if (one_of(rules_.types, word) || line.substr(next, 2) == "::" || pascal_case(word)) {
+            } else if (line.substr(next, 2) == "::" || pascal_case(word)) {
                 kind = TokenKind::Type;
             }
             add(tokens, i, end, kind);
