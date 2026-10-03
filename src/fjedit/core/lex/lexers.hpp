@@ -17,4 +17,7 @@ namespace fjedit::lex {
 /// FJSS stylesheets.
 [[nodiscard]] const Lexer& fjss();
 
+/// Widget markup.
+[[nodiscard]] const Lexer& markup();
+
 } // namespace fjedit::lex

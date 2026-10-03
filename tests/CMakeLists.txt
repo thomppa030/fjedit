@@ -23,6 +23,7 @@ add_executable(fjedit-tests
     test_lex_cpp.cpp
     test_lex_fjss.cpp
     test_lex_glsl.cpp
+    test_lex_markup.cpp
     test_motion.cpp
     test_select.cpp
     test_selections.cpp
