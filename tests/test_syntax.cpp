@@ -45,34 +45,49 @@ TEST_CASE("Opening a comment colours the lines after it, closing it gives them b
     REQUIRE(syntax.tokens(2).front().kind == TokenKind::Function);
 }
 
-// Edits that open and close comments and strings, add and remove lines:
-// the tokens kept up to date edit by edit must be those of lexing anew.
-TEST_CASE("Tokens kept through random edits are those of lexing anew", "[syntax]") {
+// Edits that open and close comments, strings, tags and blocks, and add and
+// remove lines, in every language: the tokens kept up to date edit by edit
+// must be those of lexing anew, and every line's tokens must be in order,
+// apart, not empty and inside the line, whatever it holds.
+TEST_CASE("Tokens kept through random edits are those of lexing anew, in every language", "[syntax]") {
     std::mt19937 random(777);
     auto below = [&](std::size_t n) { return static_cast<std::size_t>(random() % n); };
-    const std::vector<std::string> pieces = {"/*", "*/", "\"", "x", " ", "\n", "R\"(", ")\"", "//", "f(", "1.5f",
-                                             "#include <a>", "\\"};
-    const Lexer& lexer = language_for("x.cpp").lexer;
+    const std::vector<std::string> pieces = {
+        "/*", "*/", "\"", "'", "x", " ", "\n", "R\"(", ")\"", "//", "f(", "1.5f", "#include <a>", "\\",
+        "<", ">", "/>", "<!--", "-->", "{", "}", "@media", ":", ";", "--a", "#fff", "\xC3\xA4", "\t", "-1"};
 
-    for (int round = 0; round < 60; ++round) {
-        Buffer buffer("int a;\n/* b */\nc();");
-        Syntax syntax(lexer, buffer);
-        for (int step = 0; step < 30; ++step) {
-            const std::size_t line = below(buffer.line_count());
-            Position from = buffer.clamp({line, below(buffer.line(line).size() + 1)});
-            Position to = from;
-            if (below(3) == 0) to = buffer.clamp({from.line + below(2), below(6)});
-            if (to < from) std::swap(from, to);
-            Edit edit{{{.span = {from, to}, .text = pieces[below(pieces.size())]}}};
-            (void)buffer.apply(edit);
-            syntax.edited(buffer, edit);
+    for (const char* file : {"x.cpp", "x.glsl", "x.fjsl", "x.fjss", "x.fjwidget", "x.json", "x.txt"}) {
+        const Lexer& lexer = language_for(file).lexer;
+        for (int round = 0; round < 40; ++round) {
+            Buffer buffer("int a;\n/* b */\nc();");
+            Syntax syntax(lexer, buffer);
+            for (int step = 0; step < 30; ++step) {
+                const std::size_t line = below(buffer.line_count());
+                Position from = buffer.clamp({line, below(buffer.line(line).size() + 1)});
+                Position to = from;
+                if (below(3) == 0) to = buffer.clamp({from.line + below(2), below(6)});
+                if (to < from) std::swap(from, to);
+                Edit edit{{{.span = {from, to}, .text = pieces[below(pieces.size())]}}};
+                (void)buffer.apply(edit);
+                syntax.edited(buffer, edit);
 
-            const Syntax fresh(lexer, buffer);
-            REQUIRE(syntax.line_count() == fresh.line_count());
-            for (std::size_t i = 0; i < fresh.line_count(); ++i) {
-                REQUIRE(syntax.end_state(i) == fresh.end_state(i));
-                REQUIRE(std::vector<Token>(syntax.tokens(i).begin(), syntax.tokens(i).end()) ==
-                        std::vector<Token>(fresh.tokens(i).begin(), fresh.tokens(i).end()));
+                const Syntax fresh(lexer, buffer);
+                REQUIRE(syntax.line_count() == fresh.line_count());
+                for (std::size_t i = 0; i < fresh.line_count(); ++i) {
+                    INFO(file << " line " << i << ": " << buffer.line(i));
+                    REQUIRE(syntax.end_state(i) == fresh.end_state(i));
+                    REQUIRE(std::vector<Token>(syntax.tokens(i).begin(), syntax.tokens(i).end()) ==
+                            std::vector<Token>(fresh.tokens(i).begin(), fresh.tokens(i).end()));
+
+                    std::size_t last_end = 0;
+                    for (const Token& token : fresh.tokens(i)) {
+                        REQUIRE(token.begin >= last_end);
+                        REQUIRE(token.begin < token.end);
+                        REQUIRE(token.end <= buffer.line(i).size());
+                        REQUIRE(token.kind != TokenKind::Text);
+                        last_end = token.end;
+                    }
+                }
             }
         }
     }
