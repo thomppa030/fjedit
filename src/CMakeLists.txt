@@ -3,6 +3,7 @@
 add_library(fjedit-core STATIC
     fjedit/core/buffer.cpp
     fjedit/core/commands.cpp
+    fjedit/core/find.cpp
     fjedit/core/history.cpp
     fjedit/core/layout.cpp
     fjedit/core/motion.cpp

@@ -7,8 +7,9 @@
 //                                    .selections = selections, .layout = layout};
 //     fjedit::run_command("caret.word_right", context);
 //
-// Names are `group.action`: `caret.*` moves carets, `select.*` extends
-// selections, `edit.*` changes the text.
+// Names are `group.action`: `caret.*` moves carets, `select.*` extends or
+// picks selections, `cursor.*` adds and removes carets, `edit.*` changes the
+// text.
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/history.hpp"
@@ -66,5 +67,13 @@ struct Command {
 
 /// Runs the command called `name`; false when there is none.
 bool run_command(std::string_view name, CommandContext& context);
+
+/// The selections a column dragged from `anchor_x` on `anchor_line` to
+/// `caret_x` on `caret_line` makes (Alt and the mouse): one on each line
+/// between, from the one place along it to the other. A line ending before
+/// the column begins takes no part; the caret's line always does, and holds
+/// the primary.
+[[nodiscard]] Selections column_selection(const Buffer& buffer, const Layout& layout, std::size_t anchor_line,
+                                          float anchor_x, std::size_t caret_line, float caret_x);
 
 } // namespace fjedit

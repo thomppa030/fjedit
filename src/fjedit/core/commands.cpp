@@ -1,5 +1,6 @@
 #include "fjedit/core/commands.hpp"
 
+#include "fjedit/core/find.hpp"
 #include "fjedit/core/motion.hpp"
 
 #include <algorithm>
@@ -452,6 +453,109 @@ void redo(CommandContext& c) {
     if (std::optional<Selections> restored = c.history.redo(c.buffer)) c.selections = *restored;
 }
 
+// ── Selecting more ──────────────────────────────────────────────────────────
+
+void select_all(CommandContext& c) {
+    c.selections = Selections({.anchor = {}, .caret = c.buffer.end()});
+    c.history.close();
+}
+
+// Each selection grown to its whole lines, through the break after them, and
+// on by a line each time again.
+void select_line(CommandContext& c) {
+    std::vector<Selection> grown;
+    for (const Selection& selection : c.selections.all()) {
+        const Span span = selection.span();
+        const Position to = span.to.line + 1 < c.buffer.line_count() ? Position{span.to.line + 1, 0} : c.buffer.end();
+        grown.push_back({.anchor = {span.from.line, 0}, .caret = to});
+    }
+    c.selections.set(std::move(grown), c.selections.primary_index());
+    c.history.close();
+}
+
+bool all_carets(const Selections& selections) {
+    return std::all_of(selections.all().begin(), selections.all().end(), [](const Selection& s) { return s.empty(); });
+}
+
+// The next match: carets first take the words they are in; from then on,
+// the next place the primary's text occurs that isn't selected yet, after
+// the primary and round from the start, is added as the primary.
+void next_match(CommandContext& c) {
+    if (all_carets(c.selections)) {
+        std::vector<Selection> words;
+        for (const Selection& selection : c.selections.all()) {
+            const Span word = word_at(c.buffer, selection.caret);
+            words.push_back(word.empty() ? selection : Selection{.anchor = word.from, .caret = word.to});
+        }
+        c.selections.set(std::move(words), c.selections.primary_index());
+        c.history.close();
+        return;
+    }
+
+    const Selection primary = c.selections.primary();
+    if (primary.empty()) return;
+    const std::vector<Span> matches = find_all(c.buffer, c.buffer.text(primary.span()));
+    auto selected = [&](const Span& match) {
+        return std::any_of(c.selections.all().begin(), c.selections.all().end(),
+                           [&](const Selection& s) { return s.span() == match; });
+    };
+    const Span* next = nullptr;
+    for (const Span& match : matches) {
+        if (match.from >= primary.span().to && !selected(match)) {
+            next = &match;
+            break;
+        }
+    }
+    for (const Span& match : matches) {
+        if (next == nullptr && !selected(match)) next = &match;
+    }
+    if (next == nullptr) return;
+    c.selections.add({.anchor = next->from, .caret = next->to});
+    c.history.close();
+}
+
+// Every place the primary's text occurs, or with nothing selected, every
+// whole word like the one at the primary caret.
+void all_matches(CommandContext& c) {
+    const Selection primary = c.selections.primary();
+    const Span target = primary.empty() ? word_at(c.buffer, primary.caret) : primary.span();
+    if (target.empty()) return;
+    const std::vector<Span> matches =
+        find_all(c.buffer, c.buffer.text(target), {.match_case = true, .whole_word = primary.empty()});
+    if (matches.empty()) return;
+
+    std::vector<Selection> selections;
+    std::size_t keep = 0;
+    for (std::size_t i = 0; i < matches.size(); ++i) {
+        selections.push_back({.anchor = matches[i].from, .caret = matches[i].to});
+        if (matches[i] == target) keep = i;
+    }
+    c.selections.set(std::move(selections), keep);
+    c.history.close();
+}
+
+// A caret added on the line above the first selection, or below the last,
+// as far along as that selection's caret.
+void add_cursor(CommandContext& c, bool below) {
+    const Selection edge = below ? c.selections.all().back() : c.selections.all().front();
+    if (below ? edge.caret.line + 1 >= c.buffer.line_count() : edge.caret.line == 0) return;
+    const float goal = edge.goal.value_or(c.layout.x_of(c.buffer, edge.caret));
+    const Position at = below ? lines_down(c.buffer, c.layout, edge.caret, goal, 1)
+                              : lines_up(c.buffer, c.layout, edge.caret, goal, 1);
+    c.selections.add({.anchor = at, .caret = at, .goal = goal});
+    c.history.close();
+}
+
+// Escape: several selections give way to the primary, one to its caret.
+void single(CommandContext& c) {
+    if (c.selections.size() > 1) {
+        c.selections.keep_primary();
+    } else if (!c.selections.primary().empty()) {
+        c.selections = Selections(Selection::at(c.selections.primary().caret));
+    }
+    c.history.close();
+}
+
 const std::array COMMANDS = {
     Command{"caret.left", "Move left", [](CommandContext& c) { step(c, false, false); }},
     Command{"caret.right", "Move right", [](CommandContext& c) { step(c, true, false); }},
@@ -483,6 +587,14 @@ const std::array COMMANDS = {
     Command{"select.text_start", "Select to the start of the file",
             [](CommandContext& c) { move(c, text_start, true); }},
     Command{"select.text_end", "Select to the end of the file", [](CommandContext& c) { move(c, text_end, true); }},
+    Command{"select.all", "Select all", select_all},
+    Command{"select.line", "Select the line", select_line},
+    Command{"select.next_match", "Select the next match", next_match},
+    Command{"select.all_matches", "Select every match", all_matches},
+
+    Command{"cursor.add_above", "Add a cursor above", [](CommandContext& c) { add_cursor(c, false); }},
+    Command{"cursor.add_below", "Add a cursor below", [](CommandContext& c) { add_cursor(c, true); }},
+    Command{"cursor.single", "Leave one cursor", single},
 
     Command{"edit.type", "Type", [](CommandContext& c) { type(c, c.text); }},
     Command{"edit.newline", "New line", [](CommandContext& c) { type(c, "\n"); }},
@@ -515,6 +627,25 @@ std::span<const Command> commands() {
 const Command* find_command(std::string_view name) {
     const auto found = std::find_if(COMMANDS.begin(), COMMANDS.end(), [&](const Command& c) { return c.name == name; });
     return found == COMMANDS.end() ? nullptr : &*found;
+}
+
+Selections column_selection(const Buffer& buffer, const Layout& layout, std::size_t anchor_line, float anchor_x,
+                             std::size_t caret_line, float caret_x) {
+    const std::size_t first = std::min(anchor_line, caret_line);
+    const std::size_t last = std::max(anchor_line, caret_line);
+    const float left = std::min(anchor_x, caret_x);
+
+    std::vector<Selection> selections;
+    std::size_t primary = 0;
+    for (std::size_t line = first; line <= last; ++line) {
+        if (line != caret_line && layout.x_of(buffer, {line, buffer.line(line).size()}) < left) continue;
+        if (line == caret_line) primary = selections.size();
+        selections.push_back({.anchor = layout.position_at(buffer, line, anchor_x),
+                              .caret = layout.position_at(buffer, line, caret_x)});
+    }
+    Selections out;
+    out.set(std::move(selections), primary);
+    return out;
 }
 
 bool run_command(std::string_view name, CommandContext& context) {
