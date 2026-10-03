@@ -26,11 +26,11 @@ void move(CommandContext& c, Motion motion, bool extend) {
     std::vector<Selection> moved;
     moved.reserve(c.selections.size());
     for (const Selection& selection : c.selections.all()) {
-        const Position caret = motion(c.buffer, selection.caret);
+        const Position caret = motion(c.document.buffer(), selection.caret);
         moved.push_back({.anchor = extend ? selection.anchor : caret, .caret = caret});
     }
     c.selections.set(std::move(moved), c.selections.primary_index());
-    c.history.close();
+    c.document.history().close();
 }
 
 // One character left or right. Without extending, a selection gives way to
@@ -43,12 +43,12 @@ void step(CommandContext& c, bool right, bool extend) {
         if (!extend && !selection.empty()) {
             caret = right ? selection.span().to : selection.span().from;
         } else {
-            caret = right ? char_right(c.buffer, selection.caret) : char_left(c.buffer, selection.caret);
+            caret = right ? char_right(c.document.buffer(), selection.caret) : char_left(c.document.buffer(), selection.caret);
         }
         moved.push_back({.anchor = extend ? selection.anchor : caret, .caret = caret});
     }
     c.selections.set(std::move(moved), c.selections.primary_index());
-    c.history.close();
+    c.document.history().close();
 }
 
 // `lines` lines up or down, each caret keeping to its goal along the line.
@@ -60,13 +60,13 @@ void vertical(CommandContext& c, bool down, std::size_t lines, bool extend) {
         const Position from = extend || selection.empty() ? selection.caret
                               : down                     ? selection.span().to
                                                          : selection.span().from;
-        const float goal = selection.goal.value_or(c.layout.x_of(c.buffer, from));
-        const Position caret = down ? lines_down(c.buffer, c.layout, from, goal, lines)
-                                    : lines_up(c.buffer, c.layout, from, goal, lines);
+        const float goal = selection.goal.value_or(c.layout.x_of(c.document.buffer(), from));
+        const Position caret = down ? lines_down(c.document.buffer(), c.layout, from, goal, lines)
+                                    : lines_up(c.document.buffer(), c.layout, from, goal, lines);
         moved.push_back({.anchor = extend ? selection.anchor : caret, .caret = caret, .goal = goal});
     }
     c.selections.set(std::move(moved), c.selections.primary_index());
-    c.history.close();
+    c.document.history().close();
 }
 
 Position text_start(const Buffer&, Position) {
@@ -85,9 +85,9 @@ template <typename After>
 void commit(CommandContext& c, Edit edit, EditKind kind, After after) {
     if (edit.changes.empty()) return;
     const Selections before = c.selections;
-    Edit undo = c.buffer.apply(edit);
+    Edit undo = c.document.apply(edit);
     c.selections.set(after(edit), before.primary_index());
-    c.history.record({.made = std::move(edit), .undo = std::move(undo), .before = before,
+    c.document.history().record({.made = std::move(edit), .undo = std::move(undo), .before = before,
                       .after = c.selections, .kind = kind});
 }
 
@@ -113,7 +113,8 @@ std::string_view leading_space(const Buffer& buffer, std::size_t index) {
 
 // One level of indent: a tab, or a level's worth of spaces.
 std::string indent_level(const CommandContext& c) {
-    return c.indent.tabs ? "\t" : std::string(c.indent.width, ' ');
+    const Indent indent = c.document.indent();
+    return indent.tabs ? "\t" : std::string(indent.width, ' ');
 }
 
 // The spaces and tabs line `at.line` begins with, up to `at` when it is
@@ -133,13 +134,13 @@ char closer_of(char open) {
 // The opener the line's text before `at` ends in, past spaces; 0 when it
 // ends in none, or in one in a string or comment.
 char opener_before(const CommandContext& c, Position at) {
-    const std::string_view line = c.buffer.line(at.line);
+    const std::string_view line = c.document.buffer().line(at.line);
     std::size_t end = at.byte;
     while (end > 0 && (line[end - 1] == ' ' || line[end - 1] == '\t')) --end;
     if (end == 0) return 0;
     const char last = line[end - 1];
     if (last != '{' && last != '[' && last != '(') return 0;
-    if (c.syntax != nullptr && in_string_or_comment(*c.syntax, at.line, end - 1)) return 0;
+    if (in_string_or_comment(c.document.syntax(), at.line, end - 1)) return 0;
     return last;
 }
 
@@ -160,12 +161,12 @@ void newline(CommandContext& c) {
     std::vector<std::size_t> indents;
     for (const Selection& selection : c.selections.all()) {
         const Span span = selection.span();
-        const std::string indent(indent_before(c.buffer, span.from));
+        const std::string indent(indent_before(c.document.buffer(), span.from));
         const char open = opener_before(c, span.from);
         std::string text = "\n" + indent;
         if (open != 0) {
             text += level;
-            if (closer_after(c.buffer, span.to, closer_of(open))) text += "\n" + indent;
+            if (closer_after(c.document.buffer(), span.to, closer_of(open))) text += "\n" + indent;
         }
         indents.push_back(indent.size() + (open != 0 ? level.size() : 0));
         edit.changes.push_back({.span = span, .text = std::move(text)});
@@ -190,10 +191,10 @@ void type(CommandContext& c, std::string_view text) {
     for (const Selection& selection : c.selections.all()) {
         const Span span = selection.span();
         const Position at = span.from;
-        if (closer && selection.empty() && at.byte > 0 && indent_before(c.buffer, at).size() == at.byte) {
+        if (closer && selection.empty() && at.byte > 0 && indent_before(c.document.buffer(), at).size() == at.byte) {
             const char open = text[0] == '}' ? '{' : text[0] == ']' ? '[' : '(';
-            if (const std::optional<Position> opener = enclosing_opener(c.buffer, c.syntax, at, open)) {
-                const std::string indent(leading_space(c.buffer, opener->line));
+            if (const std::optional<Position> opener = enclosing_opener(c.document.buffer(), &c.document.syntax(), at, open)) {
+                const std::string indent(leading_space(c.document.buffer(), opener->line));
                 edit.changes.push_back({.span = {{at.line, 0}, at}, .text = indent + std::string(text)});
                 carets.push_back(indent.size() + 1);
                 moved = true;
@@ -226,7 +227,7 @@ using Reach = Span (*)(const Buffer&, Position);
 void erase(CommandContext& c, Reach reach, EditKind kind = EditKind::Deleting) {
     std::vector<Span> spans;
     for (const Selection& selection : c.selections.all()) {
-        spans.push_back(selection.empty() ? reach(c.buffer, selection.caret) : selection.span());
+        spans.push_back(selection.empty() ? reach(c.document.buffer(), selection.caret) : selection.span());
     }
 
     std::vector<Span> joined = spans;
@@ -295,14 +296,14 @@ void delete_lines(CommandContext& c) {
     const std::vector<LineRange> ranges = covered_lines(c.selections);
     Edit edit;
     for (const LineRange& range : ranges) {
-        if (range.last + 1 < c.buffer.line_count()) {
+        if (range.last + 1 < c.document.buffer().line_count()) {
             edit.changes.push_back({.span = {{range.first, 0}, {range.last + 1, 0}}, .text = ""});
         } else if (range.first > 0) {
-            edit.changes.push_back({.span = {{range.first - 1, c.buffer.line(range.first - 1).size()},
-                                             {range.last, c.buffer.line(range.last).size()}},
+            edit.changes.push_back({.span = {{range.first - 1, c.document.buffer().line(range.first - 1).size()},
+                                             {range.last, c.document.buffer().line(range.last).size()}},
                                     .text = ""});
         } else {
-            edit.changes.push_back({.span = {{0, 0}, c.buffer.end()}, .text = ""});
+            edit.changes.push_back({.span = {{0, 0}, c.document.buffer().end()}, .text = ""});
         }
     }
     // Each caret goes to the line that takes its line's place, as far along
@@ -312,7 +313,7 @@ void delete_lines(CommandContext& c) {
         std::vector<Selection> after;
         for (const Selection& selection : carets) {
             const Position line_start = map(made, {selection.caret.line, 0}, Bias::Before);
-            after.push_back(Selection::at(c.buffer.clamp({line_start.line, selection.caret.byte})));
+            after.push_back(Selection::at(c.document.buffer().clamp({line_start.line, selection.caret.byte})));
         }
         return after;
     });
@@ -320,9 +321,10 @@ void delete_lines(CommandContext& c) {
 
 // One level of indent put in at `at`: a tab, or spaces on to the next stop.
 std::string indent_at(const CommandContext& c, Position at) {
-    if (c.indent.tabs) return "\t";
-    const std::size_t column = column_of(c.buffer.line(at.line), at.byte, c.indent.width);
-    return std::string(c.indent.width - column % c.indent.width, ' ');
+    const Indent indent = c.document.indent();
+    if (indent.tabs) return "\t";
+    const std::size_t column = column_of(c.document.buffer().line(at.line), at.byte, indent.width);
+    return std::string(indent.width - column % indent.width, ' ');
 }
 
 // Each selection carried through an indent or outdent: an end at a line's
@@ -348,11 +350,11 @@ void tab(CommandContext& c) {
         return;
     }
 
-    const std::string level = c.indent.tabs ? "\t" : std::string(c.indent.width, ' ');
+    const std::string level = indent_level(c);
     Edit edit;
     for (const LineRange& range : covered_lines(c.selections)) {
         for (std::size_t line = range.first; line <= range.last; ++line) {
-            if (!c.buffer.line(line).empty()) edit.changes.push_back({.span = {{line, 0}, {line, 0}}, .text = level});
+            if (!c.document.buffer().line(line).empty()) edit.changes.push_back({.span = {{line, 0}, {line, 0}}, .text = level});
         }
     }
     const std::vector<Selection> selections(c.selections.all().begin(), c.selections.all().end());
@@ -362,15 +364,16 @@ void tab(CommandContext& c) {
 // Every line the selections touch loses a level of indent: a tab, or up to
 // a level's worth of spaces.
 void outdent(CommandContext& c) {
+    const std::size_t width = c.document.indent().width;
     Edit edit;
     for (const LineRange& range : covered_lines(c.selections)) {
         for (std::size_t line = range.first; line <= range.last; ++line) {
-            const std::string_view text = c.buffer.line(line);
+            const std::string_view text = c.document.buffer().line(line);
             std::size_t end = 0;
             if (!text.empty() && text[0] == '\t') {
                 end = 1;
             } else {
-                while (end < text.size() && end < c.indent.width && text[end] == ' ') ++end;
+                while (end < text.size() && end < width && text[end] == ' ') ++end;
             }
             if (end > 0) edit.changes.push_back({.span = {{line, 0}, {line, end}}, .text = ""});
         }
@@ -384,19 +387,19 @@ void outdent(CommandContext& c) {
 void move_lines(CommandContext& c, bool down) {
     const std::vector<LineRange> ranges = covered_lines(c.selections);
     if (!down && ranges.front().first == 0) return;
-    if (down && ranges.back().last + 1 >= c.buffer.line_count()) return;
+    if (down && ranges.back().last + 1 >= c.document.buffer().line_count()) return;
 
     Edit edit;
     for (const LineRange& range : ranges) {
-        const std::string block = block_text(c.buffer, range);
+        const std::string block = block_text(c.document.buffer(), range);
         if (down) {
             const std::size_t below = range.last + 1;
-            edit.changes.push_back({.span = {{range.first, 0}, {below, c.buffer.line(below).size()}},
-                                    .text = std::string(c.buffer.line(below)) + "\n" + block});
+            edit.changes.push_back({.span = {{range.first, 0}, {below, c.document.buffer().line(below).size()}},
+                                    .text = std::string(c.document.buffer().line(below)) + "\n" + block});
         } else {
             const std::size_t above = range.first - 1;
-            edit.changes.push_back({.span = {{above, 0}, {range.last, c.buffer.line(range.last).size()}},
-                                    .text = block + "\n" + std::string(c.buffer.line(above))});
+            edit.changes.push_back({.span = {{above, 0}, {range.last, c.document.buffer().line(range.last).size()}},
+                                    .text = block + "\n" + std::string(c.document.buffer().line(above))});
         }
     }
     const std::vector<Selection> selections(c.selections.all().begin(), c.selections.all().end());
@@ -418,9 +421,9 @@ void copy_lines(CommandContext& c, bool down) {
     const std::vector<LineRange> ranges = covered_lines(c.selections);
     Edit edit;
     for (const LineRange& range : ranges) {
-        const std::string block = block_text(c.buffer, range);
+        const std::string block = block_text(c.document.buffer(), range);
         if (down) {
-            const Position end{range.last, c.buffer.line(range.last).size()};
+            const Position end{range.last, c.document.buffer().line(range.last).size()};
             edit.changes.push_back({.span = {end, end}, .text = "\n" + block});
         } else {
             edit.changes.push_back({.span = {{range.first, 0}, {range.first, 0}}, .text = block + "\n"});
@@ -459,9 +462,9 @@ void insert_line(CommandContext& c, bool below) {
     }
     Edit edit;
     for (const std::size_t line : lines) {
-        const std::string indent(leading_space(c.buffer, line));
+        const std::string indent(leading_space(c.document.buffer(), line));
         if (below) {
-            const Position end{line, c.buffer.line(line).size()};
+            const Position end{line, c.document.buffer().line(line).size()};
             edit.changes.push_back({.span = {end, end}, .text = "\n" + indent});
         } else {
             edit.changes.push_back({.span = {{line, 0}, {line, 0}}, .text = indent + "\n"});
@@ -493,7 +496,7 @@ std::string copied(const CommandContext& c) {
         for (const Selection& selection : c.selections.all()) {
             if (selection.caret.line == last) continue;
             last = selection.caret.line;
-            text += c.buffer.line(last);
+            text += c.document.buffer().line(last);
             text += '\n';
         }
         return text;
@@ -502,7 +505,7 @@ std::string copied(const CommandContext& c) {
     for (const Selection& selection : c.selections.all()) {
         if (selection.empty()) continue;
         if (!first) text += '\n';
-        text += c.buffer.text(selection.span());
+        text += c.document.buffer().text(selection.span());
         first = false;
     }
     return text;
@@ -549,18 +552,18 @@ void paste(CommandContext& c) {
 }
 
 void undo(CommandContext& c) {
-    if (std::optional<Selections> restored = c.history.undo(c.buffer)) c.selections = *restored;
+    if (std::optional<Selections> restored = c.document.undo()) c.selections = *restored;
 }
 
 void redo(CommandContext& c) {
-    if (std::optional<Selections> restored = c.history.redo(c.buffer)) c.selections = *restored;
+    if (std::optional<Selections> restored = c.document.redo()) c.selections = *restored;
 }
 
 // ── Selecting more ──────────────────────────────────────────────────────────
 
 void select_all(CommandContext& c) {
-    c.selections = Selections({.anchor = {}, .caret = c.buffer.end()});
-    c.history.close();
+    c.selections = Selections({.anchor = {}, .caret = c.document.buffer().end()});
+    c.document.history().close();
 }
 
 // Each selection grown to its whole lines, through the break after them, and
@@ -569,11 +572,11 @@ void select_line(CommandContext& c) {
     std::vector<Selection> grown;
     for (const Selection& selection : c.selections.all()) {
         const Span span = selection.span();
-        const Position to = span.to.line + 1 < c.buffer.line_count() ? Position{span.to.line + 1, 0} : c.buffer.end();
+        const Position to = span.to.line + 1 < c.document.buffer().line_count() ? Position{span.to.line + 1, 0} : c.document.buffer().end();
         grown.push_back({.anchor = {span.from.line, 0}, .caret = to});
     }
     c.selections.set(std::move(grown), c.selections.primary_index());
-    c.history.close();
+    c.document.history().close();
 }
 
 bool all_carets(const Selections& selections) {
@@ -587,17 +590,17 @@ void next_match(CommandContext& c) {
     if (all_carets(c.selections)) {
         std::vector<Selection> words;
         for (const Selection& selection : c.selections.all()) {
-            const Span word = word_at(c.buffer, selection.caret);
+            const Span word = word_at(c.document.buffer(), selection.caret);
             words.push_back(word.empty() ? selection : Selection{.anchor = word.from, .caret = word.to});
         }
         c.selections.set(std::move(words), c.selections.primary_index());
-        c.history.close();
+        c.document.history().close();
         return;
     }
 
     const Selection primary = c.selections.primary();
     if (primary.empty()) return;
-    const std::vector<Span> matches = find_all(c.buffer, c.buffer.text(primary.span()));
+    const std::vector<Span> matches = find_all(c.document.buffer(), c.document.buffer().text(primary.span()));
     auto selected = [&](const Span& match) {
         return std::any_of(c.selections.all().begin(), c.selections.all().end(),
                            [&](const Selection& s) { return s.span() == match; });
@@ -614,17 +617,17 @@ void next_match(CommandContext& c) {
     }
     if (next == nullptr) return;
     c.selections.add({.anchor = next->from, .caret = next->to});
-    c.history.close();
+    c.document.history().close();
 }
 
 // Every place the primary's text occurs, or with nothing selected, every
 // whole word like the one at the primary caret.
 void all_matches(CommandContext& c) {
     const Selection primary = c.selections.primary();
-    const Span target = primary.empty() ? word_at(c.buffer, primary.caret) : primary.span();
+    const Span target = primary.empty() ? word_at(c.document.buffer(), primary.caret) : primary.span();
     if (target.empty()) return;
     const std::vector<Span> matches =
-        find_all(c.buffer, c.buffer.text(target), {.match_case = true, .whole_word = primary.empty()});
+        find_all(c.document.buffer(), c.document.buffer().text(target), {.match_case = true, .whole_word = primary.empty()});
     if (matches.empty()) return;
 
     std::vector<Selection> selections;
@@ -634,19 +637,19 @@ void all_matches(CommandContext& c) {
         if (matches[i] == target) keep = i;
     }
     c.selections.set(std::move(selections), keep);
-    c.history.close();
+    c.document.history().close();
 }
 
 // A caret added on the line above the first selection, or below the last,
 // as far along as that selection's caret.
 void add_cursor(CommandContext& c, bool below) {
     const Selection edge = below ? c.selections.all().back() : c.selections.all().front();
-    if (below ? edge.caret.line + 1 >= c.buffer.line_count() : edge.caret.line == 0) return;
-    const float goal = edge.goal.value_or(c.layout.x_of(c.buffer, edge.caret));
-    const Position at = below ? lines_down(c.buffer, c.layout, edge.caret, goal, 1)
-                              : lines_up(c.buffer, c.layout, edge.caret, goal, 1);
+    if (below ? edge.caret.line + 1 >= c.document.buffer().line_count() : edge.caret.line == 0) return;
+    const float goal = edge.goal.value_or(c.layout.x_of(c.document.buffer(), edge.caret));
+    const Position at = below ? lines_down(c.document.buffer(), c.layout, edge.caret, goal, 1)
+                              : lines_up(c.document.buffer(), c.layout, edge.caret, goal, 1);
     c.selections.add({.anchor = at, .caret = at, .goal = goal});
-    c.history.close();
+    c.document.history().close();
 }
 
 // Escape: several selections give way to the primary, one to its caret.
@@ -656,7 +659,7 @@ void single(CommandContext& c) {
     } else if (!c.selections.primary().empty()) {
         c.selections = Selections(Selection::at(c.selections.primary().caret));
     }
-    c.history.close();
+    c.document.history().close();
 }
 
 const std::array COMMANDS = {

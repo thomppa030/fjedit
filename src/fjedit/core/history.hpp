@@ -11,7 +11,10 @@
 //     history.record({.made = edit, .undo = undo, .before = before, .after = selections,
 //                     .kind = EditKind::Typing});
 //
-//     if (std::optional<Selections> restored = history.undo(buffer)) selections = *restored;
+//     if (std::optional<History::Move> undone = history.undo()) {
+//         for (const Edit& e : undone->edits) buffer.apply(e);
+//         selections = undone->selections;
+//     }
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/selections.hpp"
@@ -60,14 +63,20 @@ public:
     [[nodiscard]] bool can_undo() const { return done_ > 0; }
     [[nodiscard]] bool can_redo() const { return done_ < steps_.size(); }
 
-    /// Undoes the last step in `buffer`, the buffer it was recorded for, and
-    /// returns the selections from before it; nothing when there is nothing
-    /// to undo.
-    std::optional<Selections> undo(Buffer& buffer);
+    /// What undoing or redoing a step takes: its edits, to be made in order
+    /// in the text they were recorded for, and the selections it leaves.
+    struct Move {
+        std::vector<Edit> edits;
+        Selections selections;
+    };
 
-    /// Makes the last step undone again in `buffer` and returns the
-    /// selections from after it; nothing when there is nothing to redo.
-    std::optional<Selections> redo(Buffer& buffer);
+    /// Takes the last step done back: the edits that undo it, and the
+    /// selections from before it. Nothing when there is nothing to undo.
+    std::optional<Move> undo();
+
+    /// Takes the last step undone forward again: its edits, and the
+    /// selections from after it. Nothing when there is nothing to redo.
+    std::optional<Move> redo();
 
     /// Notes that the text as it is now is what its file holds, and ends the
     /// open step.

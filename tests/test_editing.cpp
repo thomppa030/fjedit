@@ -78,7 +78,7 @@ TEST_CASE("Tab within a line indents to the next stop", "[editing]") {
     REQUIRE(spaces.shown() == "ab  |c");
 
     TestView tabs("ab|c");
-    tabs.indent.tabs = true;
+    tabs.document.set_indent({.tabs = true, .width = 4});
     tabs.run("edit.tab");
     REQUIRE(tabs.shown() == "ab\t|c");
 }
@@ -177,6 +177,7 @@ TEST_CASE("Enter keeps the line's indent", "[editing][indent]") {
 
 TEST_CASE("Enter after an opener goes a level deeper", "[editing][indent]") {
     TestView view("  if (a) {|");
+    view.document.set_indent({.tabs = false, .width = 4});
     view.run("edit.newline");
     REQUIRE(view.shown() == "  if (a) {\n      |");
 }
@@ -203,13 +204,14 @@ TEST_CASE("Enter inside the indent keeps only the indent before the caret", "[ed
 
 TEST_CASE("Enter indents with tabs when the file does", "[editing][indent]") {
     TestView view("\tif (a) {|");
-    view.indent.tabs = true;
+    view.document.set_indent({.tabs = true, .width = 4});
     view.run("edit.newline");
     REQUIRE(view.shown() == "\tif (a) {\n\t\t|");
 }
 
 TEST_CASE("Enter at every caret", "[editing][indent]") {
     TestView view("a {|\n  b|");
+    view.document.set_indent({.tabs = false, .width = 4});
     view.run("edit.newline");
     REQUIRE(view.shown() == "a {\n    |\n  b\n  |");
 }
@@ -242,4 +244,10 @@ TEST_CASE("Typing on after Enter is one step to undo", "[editing][indent]") {
     view.type("y();");
     view.run("edit.undo");
     REQUIRE(view.shown() == "x {|");
+}
+
+TEST_CASE("Enter goes as deep as the file indents", "[editing][indent]") {
+    TestView view("a {\n  b {|");
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "a {\n  b {\n    |");
 }

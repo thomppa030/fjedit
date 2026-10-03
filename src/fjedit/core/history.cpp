@@ -29,20 +29,18 @@ void History::record(RecordedEdit edit) {
     open_ = edit.kind != EditKind::Other;
 }
 
-std::optional<Selections> History::undo(Buffer& buffer) {
+std::optional<History::Move> History::undo() {
     if (!can_undo()) return std::nullopt;
     const Step& step = steps_[--done_];
-    for (auto edit = step.undo.rbegin(); edit != step.undo.rend(); ++edit) (void)buffer.apply(*edit);
     open_ = false;
-    return step.before;
+    return Move{.edits = {step.undo.rbegin(), step.undo.rend()}, .selections = step.before};
 }
 
-std::optional<Selections> History::redo(Buffer& buffer) {
+std::optional<History::Move> History::redo() {
     if (!can_redo()) return std::nullopt;
     const Step& step = steps_[done_++];
-    for (const Edit& edit : step.made) (void)buffer.apply(edit);
     open_ = false;
-    return step.after;
+    return Move{.edits = step.made, .selections = step.after};
 }
 
 void History::mark_saved() {

@@ -15,6 +15,7 @@ FetchContent_GetProperties(Catch2)
 add_executable(fjedit-tests
     test_buffer.cpp
     test_commands.cpp
+    test_document.cpp
     test_edit.cpp
     test_editing.cpp
     test_find.cpp

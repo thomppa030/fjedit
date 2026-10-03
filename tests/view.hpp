@@ -23,21 +23,18 @@
 #include <vector>
 
 struct TestView {
-    fjedit::Buffer buffer;
-    fjedit::History history;
+    fjedit::Document document;
     fjedit::Selections selections;
     fjedit::MonospaceLayout layout{4, 3};
-    fjedit::Indent indent{};
-    /// The file the text is in, which picks the language its syntax is lexed in.
-    std::string file{"x.cpp"};
     std::string clipboard_text;
     fjedit::Clipboard clipboard{
         .get = [this] { return clipboard_text; },
         .set = [this](std::string text) { clipboard_text = std::move(text); },
     };
 
-    explicit TestView(std::string_view marked) {
-        std::string text;
+    /// `marked` as the text, in the language of `file`.
+    explicit TestView(std::string_view marked, std::string_view file = "x.cpp")
+        : document(unmarked(marked), fjedit::language_for(file)) {
         std::vector<fjedit::Selection> marks;
         fjedit::Position at;
         std::optional<fjedit::Position> open;
@@ -50,23 +47,30 @@ struct TestView {
                 marks.push_back({.anchor = *open, .caret = at});
                 open.reset();
             } else {
-                text += c;
                 at = c == '\n' ? fjedit::Position{at.line + 1, 0} : fjedit::Position{at.line, at.byte + 1};
             }
         }
-        buffer = fjedit::Buffer(text);
         if (!marks.empty()) selections.set(marks, marks.size() - 1);
     }
+
+    /// `marked` without its marks.
+    static std::string unmarked(std::string_view marked) {
+        std::string text;
+        for (const char c : marked) {
+            if (c != '|' && c != '[' && c != ']') text += c;
+        }
+        return text;
+    }
+
+    [[nodiscard]] const fjedit::Buffer& buffer() const { return document.buffer(); }
 
     // The clipboard holds `this`: the view stays where it was made.
     TestView(const TestView&) = delete;
     TestView& operator=(const TestView&) = delete;
 
     void run(std::string_view name, std::string_view text = {}) {
-        const fjedit::Syntax syntax(fjedit::language_for(file).lexer, buffer);
-        fjedit::CommandContext context{.buffer = buffer, .history = history, .selections = selections,
-                                       .layout = layout, .indent = indent, .clipboard = &clipboard, .text = text,
-                                       .syntax = &syntax};
+        fjedit::CommandContext context{.document = document, .selections = selections, .layout = layout,
+                                       .clipboard = &clipboard, .text = text};
         REQUIRE(fjedit::run_command(name, context));
     }
 
@@ -101,9 +105,9 @@ struct TestView {
 
         std::string out;
         std::size_t next = 0;
-        for (std::size_t line = 0; line < buffer.line_count(); ++line) {
+        for (std::size_t line = 0; line < buffer().line_count(); ++line) {
             if (line > 0) out += '\n';
-            const std::string_view text = buffer.line(line);
+            const std::string_view text = buffer().line(line);
             for (std::size_t byte = 0; byte <= text.size(); ++byte) {
                 while (next < marks.size() && marks[next].first == fjedit::Position{line, byte}) out += marks[next++].second;
                 if (byte < text.size()) out += text[byte];

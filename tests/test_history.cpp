@@ -40,11 +40,17 @@ struct Doc {
     }
 
     void undo() {
-        if (auto restored = history.undo(buffer)) selections = *restored;
+        if (auto undone = history.undo()) {
+            for (const Edit& edit : undone->edits) (void)buffer.apply(edit);
+            selections = undone->selections;
+        }
     }
 
     void redo() {
-        if (auto restored = history.redo(buffer)) selections = *restored;
+        if (auto redone = history.redo()) {
+            for (const Edit& edit : redone->edits) (void)buffer.apply(edit);
+            selections = redone->selections;
+        }
     }
 };
 
@@ -118,8 +124,8 @@ TEST_CASE("An edit after an undo drops what could be redone", "[history]") {
 
 TEST_CASE("Undo and redo with nothing to do change nothing", "[history]") {
     Doc doc("text");
-    REQUIRE_FALSE(doc.history.undo(doc.buffer).has_value());
-    REQUIRE_FALSE(doc.history.redo(doc.buffer).has_value());
+    REQUIRE_FALSE(doc.history.undo().has_value());
+    REQUIRE_FALSE(doc.history.redo().has_value());
     REQUIRE(doc.buffer.text() == "text");
 }
 
