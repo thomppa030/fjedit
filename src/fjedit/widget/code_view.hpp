@@ -51,6 +51,32 @@ struct EditorView {
     double moved{0.0};
     /// The primary caret is to be scrolled into sight.
     bool reveal{true};
+
+    /// What a press of the mouse began, which dragging goes on with.
+    struct Drag {
+        enum class By : uint8_t {
+            /// From the caret, a character at a time.
+            Character,
+            /// By whole words: a double click.
+            Word,
+            /// By whole lines: a triple click, or a press on the line numbers.
+            Line,
+            /// A column, with Alt; a click that doesn't drag adds a caret.
+            Column,
+        };
+        By by{By::Character};
+        bool active{false};
+        /// It has moved since the press.
+        bool moved{false};
+        /// What the press took: its anchor, or the word or line it selected.
+        Span origin{};
+        /// A column's start: its line, and how far along it.
+        std::size_t line{0};
+        float x{0.0f};
+        /// The selections before an Alt press, which a click adds a caret to.
+        Selections before{};
+    };
+    Drag drag{};
 };
 
 /// What a code view did in a frame.

@@ -1,6 +1,7 @@
 #include "fjedit/widget/code_view.hpp"
 
 #include "fjedit/core/commands.hpp"
+#include "fjedit/core/find.hpp"
 #include "fjedit/widget/text_layout.hpp"
 
 #include "ftk/ui/core/context.hpp"
@@ -97,6 +98,95 @@ Position position_under(const Frame& frame, const EditorView& view, const Buffer
     const float y = point.y - frame.rect.min.y + view.scroll.y;
     const auto line = static_cast<std::size_t>(std::max(0.0f, std::floor(y / CODE_LINE)));
     return layout.position_at(buffer, std::min(line, buffer.line_count() - 1), point.x - frame.origin_x);
+}
+
+// How fast a drag past the view's top or bottom scrolls: this share of how
+// far past it the pointer is, each frame.
+constexpr float DRAG_SCROLL = 0.25f;
+
+// Line `line` whole, through its break.
+Span whole_line(const Buffer& buffer, std::size_t line) {
+    const Position end = line + 1 < buffer.line_count() ? Position{line + 1, 0} : Position{line, buffer.line(line).size()};
+    return {.from = {line, 0}, .to = end};
+}
+
+// The word at `at`, or just `at` where there is none.
+Span word_or_place(const Buffer& buffer, Position at) {
+    const Span word = word_at(buffer, at);
+    return word.empty() ? Span{at, at} : word;
+}
+
+// From `origin`, what a press took, to `unit`, the word or line the drag is
+// over: whole units both ends, the caret at the drag's end.
+Selection by_units(Span origin, Span unit) {
+    if (unit.from < origin.from) return {.anchor = origin.to, .caret = unit.from};
+    return {.anchor = origin.from, .caret = std::max(unit.to, origin.to)};
+}
+
+// What the mouse does: a press places the caret, selects a word (twice) or a
+// line (three times, or on the line numbers); with Shift it takes the primary
+// selection there; with Alt it begins a column, or adds a caret if it doesn't
+// drag. Dragging goes on in the same unit, and past the top or bottom it
+// scrolls.
+void take_mouse(core::Context& ui, const core::Interaction& in, const Frame& frame, Document& document,
+                EditorView& view, const TextLayout& layout) {
+    using By = EditorView::Drag::By;
+    const Buffer& buffer = document.buffer();
+    EditorView::Drag& drag = view.drag;
+    const glm::vec2 point = in.position;
+    const ftk::ui::Modifiers held = ui.modifiers();
+
+    if (in.pressed && in.button == ftk::ui::MouseButton::Left) {
+        const Position at = position_under(frame, view, buffer, layout, point);
+        const core::Pointer* mouse = ui.find_pointer(core::PointerType::Mouse, 0);
+        const int clicks = mouse != nullptr ? mouse->click_count[0] : 1;
+        drag = {.active = true, .origin = {at, at}};
+        if (held.alt) {
+            drag.by = By::Column;
+            drag.line = at.line;
+            drag.x = point.x - frame.origin_x;
+            drag.before = view.selections;
+        } else if (point.x < frame.text.min.x || clicks >= 3) {
+            drag.by = By::Line;
+            drag.origin = whole_line(buffer, at.line);
+            view.selections = Selections({.anchor = drag.origin.from, .caret = drag.origin.to});
+        } else if (clicks == 2) {
+            drag.by = By::Word;
+            drag.origin = word_or_place(buffer, at);
+            view.selections = Selections({.anchor = drag.origin.from, .caret = drag.origin.to});
+        } else if (held.shift) {
+            const Position anchor = view.selections.primary().anchor;
+            drag.origin = {anchor, anchor};
+            view.selections = Selections({.anchor = anchor, .caret = at});
+        } else {
+            view.selections = Selections(Selection::at(at));
+        }
+        document.history().close();
+    }
+
+    if (drag.active && in.held && in.dragging) {
+        drag.moved = true;
+        const Position at = position_under(frame, view, buffer, layout, point);
+        switch (drag.by) {
+        case By::Character: view.selections = Selections({.anchor = drag.origin.from, .caret = at}); break;
+        case By::Word: view.selections = Selections(by_units(drag.origin, word_or_place(buffer, at))); break;
+        case By::Line: view.selections = Selections(by_units(drag.origin, whole_line(buffer, at.line))); break;
+        case By::Column:
+            view.selections = column_selection(buffer, layout, drag.line, drag.x, at.line, point.x - frame.origin_x);
+            break;
+        }
+        if (point.y < frame.rect.min.y) view.scroll.y -= (frame.rect.min.y - point.y) * DRAG_SCROLL;
+        if (point.y > frame.rect.max.y) view.scroll.y += (point.y - frame.rect.max.y) * DRAG_SCROLL;
+        if (point.y < frame.rect.min.y || point.y > frame.rect.max.y) ui.request_frame();
+    }
+
+    if (in.released || in.cancelled) {
+        if (drag.active && drag.by == By::Column && !drag.moved && !in.cancelled) {
+            view.selections = drag.before;
+            view.selections.add(Selection::at(drag.origin.from));
+        }
+        drag.active = false;
+    }
 }
 
 // The keys pressed this frame, through the keymap: a whole binding runs its
@@ -297,17 +387,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         take_keys(ui, keymap, view, run);
     }
 
-    // A press places the caret; with Shift, it takes the primary selection
-    // there.
-    if (in.pressed && in.button == ftk::ui::MouseButton::Left) {
-        const Position at = position_under(frame, view, buffer, layout, in.position);
-        if (ui.modifiers().shift) {
-            view.selections.set({{.anchor = view.selections.primary().anchor, .caret = at}}, 0);
-        } else {
-            view.selections = Selections(Selection::at(at));
-        }
-        document.history().close();
-    }
+    take_mouse(ui, in, frame, document, view, layout);
 
     // The wheel scrolls: down the text, or along it with Shift. A notch up
     // or left is positive; the scroll grows down and right.

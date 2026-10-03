@@ -158,3 +158,61 @@ TEST_CASE("A second view of the document follows its edits", "[code_view]") {
     REQUIRE(document.buffer().text() == "\none\ntwo");
     REQUIRE(right.selections.primary() == Selection::at({2, 1}));
 }
+
+TEST_CASE("A double click selects the word, a triple click the line", "[code_view][mouse]") {
+    Editor e("alpha beta\ngamma");
+    e.h.double_click_at({780.0f, 10.0f});
+    REQUIRE(e.view.selections.primary().span() == Span{{0, 6}, {0, 10}});
+    e.h.click_at({780.0f, 10.0f});
+    REQUIRE(e.view.selections.primary().span() == Span{{0, 0}, {1, 0}});
+}
+
+TEST_CASE("A drag selects from where it was pressed", "[code_view][mouse]") {
+    Editor e("one\ntwo\nthree");
+    e.h.drag({780.0f, 10.0f}, {780.0f, 50.0f});
+    REQUIRE(e.view.selections.primary() == Selection{.anchor = {0, 3}, .caret = {2, 5}});
+}
+
+TEST_CASE("A press on the line numbers selects the line, a drag there more lines", "[code_view][mouse]") {
+    Editor e("one\ntwo\nthree");
+    e.h.click_at({12.0f, 30.0f});
+    REQUIRE(e.view.selections.primary().span() == Span{{1, 0}, {2, 0}});
+    e.h.drag({12.0f, 50.0f}, {12.0f, 10.0f});
+    REQUIRE(e.view.selections.primary() == Selection{.anchor = {2, 5}, .caret = {0, 0}});
+}
+
+TEST_CASE("Alt and a click adds a caret", "[code_view][mouse]") {
+    Editor e("one\ntwo");
+    e.h.click_at({780.0f, 10.0f});
+    e.h.hold({.alt = true});
+    e.h.click_at({780.0f, 30.0f});
+    e.h.hold({});
+    REQUIRE(e.view.selections.size() == 2);
+    e.h.type("!");
+    REQUIRE(e.text() == "one!\ntwo!");
+}
+
+TEST_CASE("Alt and a drag makes a column", "[code_view][mouse]") {
+    // Lines long enough to reach across the view, so the column is inside each.
+    const std::string line(100, 'a');
+    Editor e(line + "\n" + line + "\n" + line);
+    e.h.hold({.alt = true});
+    e.h.drag({400.0f, 10.0f}, {440.0f, 50.0f});
+    e.h.hold({});
+    REQUIRE(e.view.selections.size() == 3);
+    e.h.type("d");
+    const Buffer& buffer = e.document.buffer();
+    REQUIRE(buffer.line(0).find('d') != std::string_view::npos);
+    REQUIRE(buffer.line(0) == buffer.line(1));
+    REQUIRE(buffer.line(1) == buffer.line(2));
+    REQUIRE(buffer.line(0).size() < 100);
+}
+
+TEST_CASE("A drag past the bottom scrolls the view on", "[code_view][mouse]") {
+    std::string text;
+    for (int i = 0; i < 100; ++i) text += "line\n";
+    Editor e(text);
+    e.h.drag({780.0f, 10.0f}, {780.0f, 700.0f});
+    REQUIRE(e.view.scroll.y > 0.0f);
+    REQUIRE(e.caret().line > 29);
+}
