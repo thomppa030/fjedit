@@ -1,0 +1,12 @@
+# Every preset's binary dir: build, build-release, build-asan.
+build*/
+compile_commands.json
+
+# Where this machine keeps its ftk checkout.
+CMakeUserPresets.json
+
+.cache/
+.vscode/
+.idea/
+*.swp
+*~
