@@ -20,4 +20,7 @@ namespace fjedit::lex {
 /// Widget markup.
 [[nodiscard]] const Lexer& markup();
 
+/// JSON, comments allowed.
+[[nodiscard]] const Lexer& json();
+
 } // namespace fjedit::lex

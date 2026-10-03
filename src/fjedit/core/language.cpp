@@ -38,6 +38,11 @@ const Language& widget() {
     return language;
 }
 
+const Language& json() {
+    static const Language language{.name = "JSON", .lexer = lex::json(), .line_comment = "//"};
+    return language;
+}
+
 // Each extension fjedit knows, lower case, and its language.
 struct Known {
     std::string_view extension;
@@ -50,6 +55,9 @@ constexpr Known BY_EXTENSION[] = {
     {"comp", glsl}, {"frag", glsl}, {"geom", glsl}, {"glsl", glsl}, {"mesh", glsl}, {"rchit", glsl},
     {"rgen", glsl}, {"rmiss", glsl}, {"task", glsl}, {"tesc", glsl}, {"tese", glsl}, {"vert", glsl},
     {"fjsl", fjsl}, {"fjss", fjss}, {"fjui", widget}, {"fjwidget", widget},
+    {"fjanimset", json}, {"fjday", json}, {"fjell", json}, {"fjfont", json}, {"fjgraph", json}, {"fjinput", json},
+    {"fjlut", json}, {"fjmat", json}, {"fjp", json}, {"fjsurface", json}, {"fjvfx", json}, {"fjwater", json},
+    {"fjweather", json}, {"json", json},
 };
 
 } // namespace
