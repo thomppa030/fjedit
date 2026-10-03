@@ -18,6 +18,16 @@ const Language& cpp() {
     return language;
 }
 
+const Language& glsl() {
+    static const Language language{.name = "GLSL", .lexer = lex::glsl(), .line_comment = "//"};
+    return language;
+}
+
+const Language& fjsl() {
+    static const Language language{.name = "FJSL", .lexer = lex::fjsl(), .line_comment = "//"};
+    return language;
+}
+
 // Each extension fjedit knows, lower case, and its language.
 struct Known {
     std::string_view extension;
@@ -27,6 +37,9 @@ struct Known {
 constexpr Known BY_EXTENSION[] = {
     {"c", cpp},   {"cc", cpp},  {"cpp", cpp}, {"cxx", cpp}, {"h", cpp},
     {"hh", cpp},  {"hpp", cpp}, {"hxx", cpp}, {"inl", cpp}, {"ipp", cpp},
+    {"comp", glsl}, {"frag", glsl}, {"geom", glsl}, {"glsl", glsl}, {"mesh", glsl}, {"rchit", glsl},
+    {"rgen", glsl}, {"rmiss", glsl}, {"task", glsl}, {"tesc", glsl}, {"tese", glsl}, {"vert", glsl},
+    {"fjsl", fjsl},
 };
 
 } // namespace

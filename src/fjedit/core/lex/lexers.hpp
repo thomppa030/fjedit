@@ -10,4 +10,8 @@ namespace fjedit::lex {
 /// C and C++.
 [[nodiscard]] const Lexer& cpp();
 
+/// GLSL, and FJSL: GLSL with Fjell's shader words and hints.
+[[nodiscard]] const Lexer& glsl();
+[[nodiscard]] const Lexer& fjsl();
+
 } // namespace fjedit::lex

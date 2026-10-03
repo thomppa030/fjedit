@@ -21,6 +21,7 @@ add_executable(fjedit-tests
     test_history.cpp
     test_keymap.cpp
     test_lex_cpp.cpp
+    test_lex_glsl.cpp
     test_motion.cpp
     test_select.cpp
     test_selections.cpp
