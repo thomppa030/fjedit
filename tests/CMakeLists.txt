@@ -20,9 +20,11 @@ add_executable(fjedit-tests
     test_find.cpp
     test_history.cpp
     test_keymap.cpp
+    test_lex_cpp.cpp
     test_motion.cpp
     test_select.cpp
-    test_selections.cpp)
+    test_selections.cpp
+    test_syntax.cpp)
 ftk_target_defaults(fjedit-tests)
 target_link_libraries(fjedit-tests PRIVATE fjedit::core Catch2::Catch2WithMain)
 
