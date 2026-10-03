@@ -2,6 +2,7 @@
 
 #include "fjedit/core/find.hpp"
 #include "fjedit/core/motion.hpp"
+#include "fjedit/core/structure.hpp"
 
 #include <algorithm>
 #include <array>
@@ -102,8 +103,118 @@ void replace_each(CommandContext& c, const std::vector<std::string>& texts, Edit
     });
 }
 
+// The spaces and tabs line `index` begins with.
+std::string_view leading_space(const Buffer& buffer, std::size_t index) {
+    const std::string_view line = buffer.line(index);
+    std::size_t end = 0;
+    while (end < line.size() && (line[end] == ' ' || line[end] == '\t')) ++end;
+    return line.substr(0, end);
+}
+
+// One level of indent: a tab, or a level's worth of spaces.
+std::string indent_level(const CommandContext& c) {
+    return c.indent.tabs ? "\t" : std::string(c.indent.width, ' ');
+}
+
+// The spaces and tabs line `at.line` begins with, up to `at` when it is
+// among them.
+std::string_view indent_before(const Buffer& buffer, Position at) {
+    const std::string_view line = buffer.line(at.line);
+    std::size_t end = 0;
+    while (end < line.size() && end < at.byte && (line[end] == ' ' || line[end] == '\t')) ++end;
+    return line.substr(0, end);
+}
+
+// The closer `open` pairs with.
+char closer_of(char open) {
+    return open == '{' ? '}' : open == '[' ? ']' : ')';
+}
+
+// The opener the line's text before `at` ends in, past spaces; 0 when it
+// ends in none, or in one in a string or comment.
+char opener_before(const CommandContext& c, Position at) {
+    const std::string_view line = c.buffer.line(at.line);
+    std::size_t end = at.byte;
+    while (end > 0 && (line[end - 1] == ' ' || line[end - 1] == '\t')) --end;
+    if (end == 0) return 0;
+    const char last = line[end - 1];
+    if (last != '{' && last != '[' && last != '(') return 0;
+    if (c.syntax != nullptr && in_string_or_comment(*c.syntax, at.line, end - 1)) return 0;
+    return last;
+}
+
+// Whether the line's text from `at` begins with `close`, past spaces.
+bool closer_after(const Buffer& buffer, Position at, char close) {
+    const std::string_view line = buffer.line(at.line);
+    std::size_t first = at.byte;
+    while (first < line.size() && (line[first] == ' ' || line[first] == '\t')) ++first;
+    return first < line.size() && line[first] == close;
+}
+
+// Enter: a new line indented as the line it leaves, a level deeper after an
+// opener; between an opener and its closer, the closer goes on a line of
+// its own below.
+void newline(CommandContext& c) {
+    const std::string level = indent_level(c);
+    Edit edit;
+    std::vector<std::size_t> indents;
+    for (const Selection& selection : c.selections.all()) {
+        const Span span = selection.span();
+        const std::string indent(indent_before(c.buffer, span.from));
+        const char open = opener_before(c, span.from);
+        std::string text = "\n" + indent;
+        if (open != 0) {
+            text += level;
+            if (closer_after(c.buffer, span.to, closer_of(open))) text += "\n" + indent;
+        }
+        indents.push_back(indent.size() + (open != 0 ? level.size() : 0));
+        edit.changes.push_back({.span = span, .text = std::move(text)});
+    }
+    commit(c, std::move(edit), EditKind::Typing, [&](const Edit& made) {
+        const std::vector<Span> spans = spans_after(made);
+        std::vector<Selection> after;
+        for (std::size_t i = 0; i < spans.size(); ++i) {
+            after.push_back(Selection::at({spans[i].from.line + 1, indents[i]}));
+        }
+        return after;
+    });
+}
+
+// Typing. A closer typed where only spaces stand before it on its line goes
+// back to the indent of the line its opener is on.
 void type(CommandContext& c, std::string_view text) {
-    replace_each(c, std::vector<std::string>(c.selections.size(), std::string(text)), EditKind::Typing);
+    const bool closer = text == "}" || text == "]" || text == ")";
+    Edit edit;
+    std::vector<std::size_t> carets;
+    bool moved = false;
+    for (const Selection& selection : c.selections.all()) {
+        const Span span = selection.span();
+        const Position at = span.from;
+        if (closer && selection.empty() && at.byte > 0 && indent_before(c.buffer, at).size() == at.byte) {
+            const char open = text[0] == '}' ? '{' : text[0] == ']' ? '[' : '(';
+            if (const std::optional<Position> opener = enclosing_opener(c.buffer, c.syntax, at, open)) {
+                const std::string indent(leading_space(c.buffer, opener->line));
+                edit.changes.push_back({.span = {{at.line, 0}, at}, .text = indent + std::string(text)});
+                carets.push_back(indent.size() + 1);
+                moved = true;
+                continue;
+            }
+        }
+        edit.changes.push_back({.span = span, .text = std::string(text)});
+        carets.push_back(0);
+    }
+    if (!moved) {
+        replace_each(c, std::vector<std::string>(c.selections.size(), std::string(text)), EditKind::Typing);
+        return;
+    }
+    commit(c, std::move(edit), EditKind::Typing, [&](const Edit& made) {
+        const std::vector<Span> spans = spans_after(made);
+        std::vector<Selection> after;
+        for (std::size_t i = 0; i < spans.size(); ++i) {
+            after.push_back(Selection::at(carets[i] != 0 ? Position{spans[i].from.line, carets[i]} : spans[i].to));
+        }
+        return after;
+    });
 }
 
 // The text a caret deletes, reaching from where it is.
@@ -173,14 +284,6 @@ std::vector<LineRange> covered_lines(const Selections& selections) {
         }
     }
     return ranges;
-}
-
-// The spaces and tabs line `index` begins with.
-std::string_view leading_space(const Buffer& buffer, std::size_t index) {
-    const std::string_view line = buffer.line(index);
-    std::size_t end = 0;
-    while (end < line.size() && (line[end] == ' ' || line[end] == '\t')) ++end;
-    return line.substr(0, end);
 }
 
 // The whole of lines `range`, without the break after the last.
@@ -597,7 +700,7 @@ const std::array COMMANDS = {
     Command{"cursor.single", "Leave one cursor", single},
 
     Command{"edit.type", "Type", [](CommandContext& c) { type(c, c.text); }},
-    Command{"edit.newline", "New line", [](CommandContext& c) { type(c, "\n"); }},
+    Command{"edit.newline", "New line", newline},
     Command{"edit.tab", "Indent", tab},
     Command{"edit.outdent", "Outdent", outdent},
     Command{"edit.backspace", "Delete the character before", [](CommandContext& c) { erase(c, to_char_left); }},

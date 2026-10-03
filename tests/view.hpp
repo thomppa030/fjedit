@@ -10,6 +10,7 @@
 //     REQUIRE(view.shown() == "|b\n|d");
 
 #include "fjedit/core/commands.hpp"
+#include "fjedit/core/language.hpp"
 
 #include "print.hpp"
 
@@ -27,6 +28,8 @@ struct TestView {
     fjedit::Selections selections;
     fjedit::MonospaceLayout layout{4, 3};
     fjedit::Indent indent{};
+    /// The file the text is in, which picks the language its syntax is lexed in.
+    std::string file{"x.cpp"};
     std::string clipboard_text;
     fjedit::Clipboard clipboard{
         .get = [this] { return clipboard_text; },
@@ -60,8 +63,10 @@ struct TestView {
     TestView& operator=(const TestView&) = delete;
 
     void run(std::string_view name, std::string_view text = {}) {
+        const fjedit::Syntax syntax(fjedit::language_for(file).lexer, buffer);
         fjedit::CommandContext context{.buffer = buffer, .history = history, .selections = selections,
-                                       .layout = layout, .indent = indent, .clipboard = &clipboard, .text = text};
+                                       .layout = layout, .indent = indent, .clipboard = &clipboard, .text = text,
+                                       .syntax = &syntax};
         REQUIRE(fjedit::run_command(name, context));
     }
 

@@ -15,6 +15,7 @@
 #include "fjedit/core/history.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/selections.hpp"
+#include "fjedit/core/syntax.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -49,6 +50,9 @@ struct CommandContext {
     Clipboard* clipboard{nullptr};
     /// What `edit.type` types.
     std::string_view text{};
+    /// The text's syntax as it is before the command. With it, indenting
+    /// passes over brackets in strings and comments.
+    const Syntax* syntax{nullptr};
 };
 
 struct Command {

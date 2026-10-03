@@ -73,6 +73,12 @@ std::optional<Position> pair_of(const Buffer& buffer, const Syntax& syntax, Posi
     return std::nullopt;
 }
 
+// Whether the character at `byte` of `line` counts as code: outside strings
+// and comments, as far as `syntax` (when there is one) tells.
+bool code_at(const Syntax* syntax, std::size_t line, std::size_t byte) {
+    return syntax == nullptr || !in_string_or_comment(*syntax, line, byte);
+}
+
 // Whether `line` holds nothing but spaces and tabs.
 bool blank(std::string_view line) {
     return line.find_first_not_of(" \t") == std::string_view::npos;
@@ -174,6 +180,29 @@ std::vector<FoldRange> fold_ranges(const Buffer& buffer, const Syntax& syntax, F
     ranges.reserve(folds.size());
     for (const auto& [first, last] : folds) ranges.push_back({.first = first, .last = last});
     return ranges;
+}
+
+std::optional<Position> enclosing_opener(const Buffer& buffer, const Syntax* syntax, Position at, char open) {
+    const std::optional<Kind> kind = bracket_kind(open);
+    if (!kind || open != kind->open) return std::nullopt;
+    std::size_t depth = 0;
+    std::size_t line = at.line;
+    for (std::size_t searched = 0; searched < SEARCH_LINES; ++searched) {
+        const std::string_view text = buffer.line(line);
+        for (std::size_t byte = line == at.line ? std::min(at.byte, text.size()) : text.size(); byte-- > 0;) {
+            const char c = text[byte];
+            if ((c != kind->open && c != kind->close) || !code_at(syntax, line, byte)) continue;
+            if (c == kind->close) {
+                ++depth;
+            } else if (depth == 0) {
+                return Position{line, byte};
+            } else {
+                --depth;
+            }
+        }
+        if (line-- == 0) break;
+    }
+    return std::nullopt;
 }
 
 bool in_string_or_comment(const Syntax& syntax, std::size_t line, std::size_t byte) {

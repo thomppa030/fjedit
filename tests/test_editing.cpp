@@ -168,3 +168,78 @@ TEST_CASE("Pasting other text puts all of it at every caret", "[editing]") {
     view.run("edit.paste");
     REQUIRE(view.shown() == "a1\n2\n3|\nb1\n2\n3|");
 }
+
+TEST_CASE("Enter keeps the line's indent", "[editing][indent]") {
+    TestView view("    foo();|");
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "    foo();\n    |");
+}
+
+TEST_CASE("Enter after an opener goes a level deeper", "[editing][indent]") {
+    TestView view("  if (a) {|");
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "  if (a) {\n      |");
+}
+
+TEST_CASE("Enter between brackets puts the closer on a line of its own", "[editing][indent]") {
+    TestView view("void f() {|}");
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "void f() {\n    |\n}");
+    view.run("edit.undo");
+    REQUIRE(view.shown() == "void f() {|}");
+}
+
+TEST_CASE("Enter after an opener in a string stays level", "[editing][indent]") {
+    TestView view("  s = \"{|\";");
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "  s = \"{\n  |\";");
+}
+
+TEST_CASE("Enter inside the indent keeps only the indent before the caret", "[editing][indent]") {
+    TestView view("  |  foo");
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "  \n  |  foo");
+}
+
+TEST_CASE("Enter indents with tabs when the file does", "[editing][indent]") {
+    TestView view("\tif (a) {|");
+    view.indent.tabs = true;
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "\tif (a) {\n\t\t|");
+}
+
+TEST_CASE("Enter at every caret", "[editing][indent]") {
+    TestView view("a {|\n  b|");
+    view.run("edit.newline");
+    REQUIRE(view.shown() == "a {\n    |\n  b\n  |");
+}
+
+TEST_CASE("A closer typed on a line of spaces goes back to its opener's indent", "[editing][indent]") {
+    TestView view("  f() {\n    g();\n    |");
+    view.type("}");
+    REQUIRE(view.shown() == "  f() {\n    g();\n  }|");
+}
+
+TEST_CASE("A closer after other text, or with no opener, stays where it is typed", "[editing][indent]") {
+    TestView after("  {\n    x|");
+    after.type("}");
+    REQUIRE(after.shown() == "  {\n    x}|");
+
+    TestView alone("    |");
+    alone.type(")");
+    REQUIRE(alone.shown() == "    )|");
+}
+
+TEST_CASE("A closer passes over brackets in strings to find its opener", "[editing][indent]") {
+    TestView view("call(\n  \"(\",\n      |");
+    view.type(")");
+    REQUIRE(view.shown() == "call(\n  \"(\",\n)|");
+}
+
+TEST_CASE("Typing on after Enter is one step to undo", "[editing][indent]") {
+    TestView view("x {|");
+    view.run("edit.newline");
+    view.type("y();");
+    view.run("edit.undo");
+    REQUIRE(view.shown() == "x {|");
+}

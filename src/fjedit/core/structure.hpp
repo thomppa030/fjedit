@@ -29,6 +29,13 @@ struct BracketPair {
 /// lines.
 [[nodiscard]] std::optional<BracketPair> matching_bracket(const Buffer& buffer, const Syntax& syntax, Position at);
 
+/// The nearest `open` bracket before `at` that nothing between it and `at`
+/// closes: the opener of the block `at` is in. Brackets in strings and
+/// comments are passed over when `syntax` is given; nothing when there is no
+/// such bracket within 10,000 lines.
+[[nodiscard]] std::optional<Position> enclosing_opener(const Buffer& buffer, const Syntax* syntax, Position at,
+                                                       char open);
+
 /// Lines that fold away under the first: folded, line `first` stays and the
 /// lines after it, through `last`, are hidden. For a bracket's block,
 /// `last` is the line with its closer, whose text a view shows after the
