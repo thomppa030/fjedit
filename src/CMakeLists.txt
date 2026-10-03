@@ -2,6 +2,7 @@
 # It needs no UI, so its tests run headless.
 add_library(fjedit-core STATIC
     fjedit/core/buffer.cpp
+    fjedit/core/history.cpp
     fjedit/core/selections.cpp)
 add_library(fjedit::core ALIAS fjedit-core)
 ftk_target_defaults(fjedit-core)
