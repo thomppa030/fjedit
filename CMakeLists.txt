@@ -12,6 +12,9 @@ if(PROJECT_IS_TOP_LEVEL)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CXX_EXTENSIONS OFF)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    # fjedit uses no C++ modules. Scanning for them puts GCC's module flags
+    # into compile_commands.json, and clangd, which reads it, rejects them.
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 endif()
 
 # ftk: a program that builds fjedit beside its own ftk (Fjell) has the
