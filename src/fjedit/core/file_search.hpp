@@ -1,0 +1,55 @@
+#pragma once
+
+// Finding text across a folder's files (sheet 39, W3): which files to look
+// in, and the matches in each, found as find_all() finds them in one. Files
+// open are searched as they stand, unsaved changes and all.
+//
+//     const auto files = fjedit::files_to_search(root, "*.cpp, shaders/");
+//     const auto hits = fjedit::search_files(files, "spin_speed", {.whole_word = true}, open_texts);
+
+#include "fjedit/core/buffer.hpp"
+#include "fjedit/core/find.hpp"
+
+#include <cstddef>
+#include <filesystem>
+#include <map>
+#include <span>
+#include <stop_token>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace fjedit {
+
+/// A match in a file: where it is, and the line it is on as it was found.
+struct FileHit {
+    std::filesystem::path path;
+    Span span;
+    std::string line;
+
+    bool operator==(const FileHit&) const = default;
+};
+
+/// Whether the file at `relative`, a path within the folder searched, is
+/// one `include` names: patterns apart by commas, each a file name with *
+/// and ? ("*.cpp"), a path within the folder with them ("scripts/*.hpp"),
+/// or a folder ending in a slash ("shaders/"). An empty `include` names
+/// every file.
+[[nodiscard]] bool included(const std::filesystem::path& relative, std::string_view include);
+
+/// The files under `root` to search, in order of their paths: folders whose
+/// names begin with a dot are left out, and only the files `include` names
+/// are kept (included()).
+[[nodiscard]] std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& root,
+                                                                 std::string_view include = {});
+
+/// Every match of `needle` in `files`, in their order and each file's in
+/// order. A file in `open` is searched as the bytes given there, any other
+/// as it is on disk; one that isn't text is passed over. It stops at
+/// `limit` matches, or early when `stop` asks, with what it has found.
+[[nodiscard]] std::vector<FileHit> search_files(std::span<const std::filesystem::path> files, std::string_view needle,
+                                                FindOptions options,
+                                                const std::map<std::filesystem::path, std::string>& open = {},
+                                                std::stop_token stop = {}, std::size_t limit = 10'000);
+
+} // namespace fjedit
