@@ -17,6 +17,7 @@ add_library(fjedit-core STATIC
     fjedit/core/lex/glsl.cpp
     fjedit/core/lex/json.cpp
     fjedit/core/motion.cpp
+    fjedit/core/recovery.cpp
     fjedit/core/selections.cpp
     fjedit/core/structure.cpp
     fjedit/core/syntax.cpp

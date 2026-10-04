@@ -1,4 +1,5 @@
 #include "fjedit/core/commands.hpp"
+#include "fjedit/core/recovery.hpp"
 #include "fjedit/core/text_file.hpp"
 #include "fjedit/core/workspace.hpp"
 
@@ -172,4 +173,23 @@ TEST_CASE("A reload takes a file's new line breaks and mark", "[workspace]") {
     write_later(file, "\xEF\xBB\xBFone\r\ntwo");
     REQUIRE(workspace.reload(file).has_value());
     REQUIRE(document.buffer().text() == "\xEF\xBB\xBFone\r\ntwo");
+}
+
+TEST_CASE("Kept work comes back with the file it is for, the latest kept", "[recovery]") {
+    const TempFolder folder;
+    Recovery recovery(folder.path / "recovery");
+    REQUIRE(recovery.kept().empty());
+    REQUIRE(recovery.keep("/work/a.cpp", "one").has_value());
+    REQUIRE(recovery.keep("/work/b.cpp", "two\r\n").has_value());
+    REQUIRE(recovery.keep("/work/a.cpp", "three").has_value());
+    std::vector<Recovery::Kept> kept = recovery.kept();
+    REQUIRE(kept.size() == 2);
+    const auto a = std::ranges::find(kept, fs::path("/work/a.cpp"), &Recovery::Kept::path);
+    REQUIRE(a != kept.end());
+    REQUIRE(a->bytes == "three");
+
+    recovery.forget("/work/a.cpp");
+    kept = recovery.kept();
+    REQUIRE(kept.size() == 1);
+    REQUIRE(kept[0].bytes == "two\r\n");
 }
