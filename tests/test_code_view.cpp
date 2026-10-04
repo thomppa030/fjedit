@@ -1,4 +1,5 @@
 #include "fjedit/widget/code_view.hpp"
+#include "fjedit/widget/minimap.hpp"
 
 #include "print.hpp"
 
@@ -64,15 +65,27 @@ constexpr Modifiers SHIFT{.shift = true};
 // Across the fold chevrons, between the line numbers and the text.
 constexpr float FOLD_X = 30.0f;
 
+// Right of every test line's end, left of the minimap and scrollbar the
+// code stops short of.
+constexpr float PAST_END = 640.0f;
+constexpr float CODE_RIGHT = 800.0f - MINIMAP_WIDTH - 10.0f;
+
+// What the last frame drew in `colour` in the code, left of its side.
+std::vector<ftk::ui::core::Rect> drawn_in_code(const ftk::test::UiHarness& h, ftk::ui::Color colour) {
+    std::vector<ftk::ui::core::Rect> out = drawn(h, colour);
+    std::erase_if(out, [](const ftk::ui::core::Rect& r) { return r.max.x > CODE_RIGHT; });
+    return out;
+}
+
 // Halfway down row `row`.
 float row_y(std::size_t row) {
     return (static_cast<float>(row) + 0.5f) * CODE_LINE;
 }
 
-// The closed folds' pills: shapes in their colour wider than an indent
-// guide, which shares it.
+// The closed folds' pills: shapes in their colour in the code wider than an
+// indent guide, which shares it.
 std::vector<ftk::ui::core::Rect> pills(const ftk::test::UiHarness& h) {
-    std::vector<ftk::ui::core::Rect> out = drawn(h, ftk::theme::surface_raised());
+    std::vector<ftk::ui::core::Rect> out = drawn_in_code(h, ftk::theme::surface_raised());
     std::erase_if(out, [](const ftk::ui::core::Rect& r) { return r.max.x - r.min.x <= 1.0f; });
     return out;
 }
@@ -90,7 +103,7 @@ TEST_CASE("The view records itself, by its label", "[code_view]") {
 TEST_CASE("A click gives the view the keyboard and places the caret", "[code_view]") {
     Editor e("abc");
     // Far right of the only line: its end.
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     REQUIRE(e.caret() == Position{0, 3});
     e.h.type("de");
     REQUIRE(e.text() == "abcde");
@@ -99,13 +112,13 @@ TEST_CASE("A click gives the view the keyboard and places the caret", "[code_vie
 
 TEST_CASE("A click below the last line places the caret on it", "[code_view]") {
     Editor e("one\ntwo");
-    e.h.click_at({780.0f, 500.0f});
+    e.h.click_at({PAST_END, 500.0f});
     REQUIRE(e.caret() == Position{1, 3});
 }
 
 TEST_CASE("Keys run their commands through the keymap", "[code_view]") {
     Editor e("abc");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.press(Key::Left);
     e.h.press(Key::Left, SHIFT);
     REQUIRE(e.view.selections.primary().span() == Span{{0, 1}, {0, 2}});
@@ -117,14 +130,14 @@ TEST_CASE("Keys run their commands through the keymap", "[code_view]") {
 
 TEST_CASE("Enter indents a new line through the view", "[code_view]") {
     Editor e("f() {");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.press(Key::Enter);
     REQUIRE(e.text() == "f() {\n    ");
 }
 
 TEST_CASE("Tab indents, and the keyboard stays with the view", "[code_view]") {
     Editor e("x");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.press(Key::Tab);
     e.h.type("y");
     REQUIRE(e.text() == "x   y");
@@ -132,7 +145,7 @@ TEST_CASE("Tab indents, and the keyboard stays with the view", "[code_view]") {
 
 TEST_CASE("Text typed with Ctrl is a shortcut's, with Ctrl and Alt AltGr's", "[code_view]") {
     Editor e("");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.hold(CTRL);
     e.h.type("q");
     e.h.hold({.ctrl = true, .alt = true});
@@ -143,7 +156,7 @@ TEST_CASE("Text typed with Ctrl is a shortcut's, with Ctrl and Alt AltGr's", "[c
 
 TEST_CASE("Copy and paste go through the core's clipboard", "[code_view]") {
     Editor e("ab");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.press(Key::A, CTRL);
     e.h.press(Key::C, CTRL);
     REQUIRE(e.h.ui().clipboard() == "ab");
@@ -154,9 +167,9 @@ TEST_CASE("Copy and paste go through the core's clipboard", "[code_view]") {
 
 TEST_CASE("A shift-click selects from the caret to where it lands", "[code_view]") {
     Editor e("one\ntwo");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.hold(SHIFT);
-    e.h.click_at({780.0f, 30.0f});
+    e.h.click_at({PAST_END, 30.0f});
     e.h.hold({});
     REQUIRE(e.view.selections.primary().span() == Span{{0, 3}, {1, 3}});
 }
@@ -175,7 +188,7 @@ TEST_CASE("A caret moved out of sight brings the view after it", "[code_view]") 
     std::string text;
     for (int i = 0; i < 100; ++i) text += "line\n";
     Editor e(text);
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.press(Key::End, CTRL);
     REQUIRE(e.caret().line == 100);
     const float top = 100.0f * CODE_LINE - e.view.scroll.y;
@@ -206,15 +219,15 @@ TEST_CASE("A second view of the document follows its edits", "[code_view]") {
 
 TEST_CASE("A double click selects the word, a triple click the line", "[code_view][mouse]") {
     Editor e("alpha beta\ngamma");
-    e.h.double_click_at({780.0f, 10.0f});
+    e.h.double_click_at({PAST_END, 10.0f});
     REQUIRE(e.view.selections.primary().span() == Span{{0, 6}, {0, 10}});
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     REQUIRE(e.view.selections.primary().span() == Span{{0, 0}, {1, 0}});
 }
 
 TEST_CASE("A drag selects from where it was pressed", "[code_view][mouse]") {
     Editor e("one\ntwo\nthree");
-    e.h.drag({780.0f, 10.0f}, {780.0f, 50.0f});
+    e.h.drag({PAST_END, 10.0f}, {PAST_END, 50.0f});
     REQUIRE(e.view.selections.primary() == Selection{.anchor = {0, 3}, .caret = {2, 5}});
 }
 
@@ -228,9 +241,9 @@ TEST_CASE("A press on the line numbers selects the line, a drag there more lines
 
 TEST_CASE("Alt and a click adds a caret", "[code_view][mouse]") {
     Editor e("one\ntwo");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     e.h.hold({.alt = true});
-    e.h.click_at({780.0f, 30.0f});
+    e.h.click_at({PAST_END, 30.0f});
     e.h.hold({});
     REQUIRE(e.view.selections.size() == 2);
     e.h.type("!");
@@ -257,14 +270,14 @@ TEST_CASE("A drag past the bottom scrolls the view on", "[code_view][mouse]") {
     std::string text;
     for (int i = 0; i < 100; ++i) text += "line\n";
     Editor e(text);
-    e.h.drag({780.0f, 10.0f}, {780.0f, 700.0f});
+    e.h.drag({PAST_END, 10.0f}, {PAST_END, 700.0f});
     REQUIRE(e.view.scroll.y > 0.0f);
     REQUIRE(e.caret().line > 29);
 }
 
 TEST_CASE("The bracket paired with the one at the caret is outlined, both", "[code_view][marks]") {
     Editor e("f(a)");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     REQUIRE(drawn_in(e.h, ftk::theme::code_bracket()) == 2);
     e.h.press(Key::Home);
     e.h.step();
@@ -273,15 +286,15 @@ TEST_CASE("The bracket paired with the one at the caret is outlined, both", "[co
 
 TEST_CASE("The other uses of the word at the caret are boxed", "[code_view][marks]") {
     Editor e("spin + spinning + spin\nspin");
-    e.h.click_at({780.0f, 30.0f});
+    e.h.click_at({PAST_END, 30.0f});
     REQUIRE(drawn_in(e.h, ftk::theme::code_occurrence()) == 2);
 }
 
 TEST_CASE("Indent guides, the caret's block brighter", "[code_view][marks]") {
     Editor e("a {\n    b {\n        c;\n    }\n}");
-    e.h.click_at({780.0f, 10.0f});
+    e.h.click_at({PAST_END, 10.0f});
     // Line 1 and 3 one level in, line 2 two: four guides, none active.
-    REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide()) == 4);
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_indent_guide()).size() == 4);
     REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide_active()) == 0);
     e.h.press(Key::Down);
     e.h.press(Key::Down);
@@ -294,7 +307,7 @@ TEST_CASE("A fold's chevron closes it, and the rows after it move up", "[code_vi
     Editor e(FUNCTION);
     e.h.click_at({FOLD_X, row_y(0)});
     REQUIRE(e.view.folds.closed_at(0));
-    e.h.click_at({780.0f, row_y(1)});
+    e.h.click_at({PAST_END, row_y(1)});
     REQUIRE(e.caret() == Position{3, 6});
 
     e.h.click_at({FOLD_X, row_y(0)});
@@ -329,7 +342,7 @@ TEST_CASE("A closed fold draws a pill, the closer after it, and opens at a click
 TEST_CASE("Up and down step over a closed fold, and a caret that comes into one opens it", "[code_view][folds]") {
     Editor e(FUNCTION);
     e.h.click_at({FOLD_X, row_y(0)});
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     REQUIRE(e.caret() == Position{0, 10});
     e.h.press(Key::Down);
     REQUIRE(e.caret() == Position{3, 6});
@@ -344,7 +357,7 @@ TEST_CASE("Up and down step over a closed fold, and a caret that comes into one 
 
 TEST_CASE("A fold closed over the caret takes it to the end of the fold's first line", "[code_view][folds]") {
     Editor e(FUNCTION);
-    e.h.click_at({780.0f, row_y(1)});
+    e.h.click_at({PAST_END, row_y(1)});
     REQUIRE(e.caret() == Position{1, 8});
     e.h.click_at({FOLD_X, row_y(0)});
     REQUIRE(e.view.folds.closed_at(0));
@@ -360,7 +373,7 @@ TEST_CASE("A press on a folded row's number selects every line it holds", "[code
 
 TEST_CASE("Folds close and open from the keys", "[code_view][folds]") {
     Editor e(FUNCTION);
-    e.h.click_at({780.0f, row_y(1)});
+    e.h.click_at({PAST_END, row_y(1)});
     e.h.press(Key::LeftBracket, {.ctrl = true, .shift = true});
     REQUIRE(e.view.folds.closed_at(0));
     e.h.press(Key::RightBracket, {.ctrl = true, .shift = true});
@@ -429,7 +442,7 @@ TEST_CASE("Ctrl F opens the find with the word at the caret, its matches washed"
 
 TEST_CASE("Enter goes on to the next match and Shift Enter back, going round", "[code_view][find]") {
     Editor e(BANDS);
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     e.h.press(Key::F, CTRL);
     e.h.type("band");
     e.h.press(Key::Enter);
@@ -447,7 +460,7 @@ TEST_CASE("Enter goes on to the next match and Shift Enter back, going round", "
 
 TEST_CASE("Escape in the find closes it and gives the code the keyboard back", "[code_view][find]") {
     Editor e(BANDS);
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     e.h.press(Key::F, CTRL);
     e.h.type("wide");
     e.h.press(Key::Escape);
@@ -460,7 +473,7 @@ TEST_CASE("Escape in the find closes it and gives the code the keyboard back", "
 
 TEST_CASE("Escape in the code closes its find before anything else", "[code_view][find]") {
     Editor e(BANDS);
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     e.h.press(Key::F, CTRL);
     e.h.type("band");
     // Clear of the plate over the top right.
@@ -474,7 +487,7 @@ TEST_CASE("Escape in the code closes its find before anything else", "[code_view
 
 TEST_CASE("Replace replaces the match selected and goes on, Replace all in one step", "[code_view][find]") {
     Editor e(BANDS);
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     e.h.press(Key::F, CTRL);
     e.h.type("band");
     e.view.find.toggles.whole_word = true;
@@ -495,7 +508,7 @@ TEST_CASE("Replace replaces the match selected and goes on, Replace all in one s
 
 TEST_CASE("F3 goes on to the next match with the find closed", "[code_view][find]") {
     Editor e(BANDS);
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     e.h.press(Key::F, CTRL);
     e.h.type("band");
     e.h.press(Key::Escape);
@@ -507,7 +520,7 @@ TEST_CASE("F3 goes on to the next match with the find closed", "[code_view][find
 
 TEST_CASE("A press on the find's plate never reaches the code under it", "[code_view][find]") {
     Editor e(BANDS);
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     e.h.press(Key::F, CTRL);
     e.h.step();
     const Selections before = e.view.selections;
@@ -533,7 +546,7 @@ TEST_CASE("Go to line reads a line, or a line and a column, counted from 1", "[c
 
 TEST_CASE("Ctrl G goes to the line typed, Enter taking the code back the keyboard", "[code_view][go_to_line]") {
     Editor e(FUNCTION);
-    e.h.click_at({780.0f, row_y(0)});
+    e.h.click_at({PAST_END, row_y(0)});
     e.h.press(Key::G, CTRL);
     REQUIRE(e.view.go_to_line.open);
     e.h.type("2:5");
@@ -547,7 +560,7 @@ TEST_CASE("Ctrl G goes to the line typed, Enter taking the code back the keyboar
 
 TEST_CASE("Go to line names the function the line is in", "[code_view][go_to_line]") {
     Editor e(FUNCTION);
-    e.h.click_at({780.0f, row_y(3)});
+    e.h.click_at({PAST_END, row_y(3)});
     e.h.press(Key::G, CTRL);
     e.h.step();
     REQUIRE_FALSE(e.view.go_to_line.function.has_value());
@@ -558,7 +571,7 @@ TEST_CASE("Go to line names the function the line is in", "[code_view][go_to_lin
 
 TEST_CASE("Escape leaves go to line where the caret was", "[code_view][go_to_line]") {
     Editor e(FUNCTION);
-    e.h.click_at({780.0f, row_y(3)});
+    e.h.click_at({PAST_END, row_y(3)});
     e.h.press(Key::G, CTRL);
     e.h.type("1");
     e.h.press(Key::Escape);
@@ -571,13 +584,82 @@ TEST_CASE("Escape leaves go to line where the caret was", "[code_view][go_to_lin
 
 TEST_CASE("Enter on a line there isn't closes go to line and goes nowhere", "[code_view][go_to_line]") {
     Editor e(FUNCTION);
-    e.h.click_at({780.0f, row_y(3)});
+    e.h.click_at({PAST_END, row_y(3)});
     e.h.press(Key::G, CTRL);
     e.h.type("99");
     e.h.press(Key::Enter);
     e.h.step();
     REQUIRE_FALSE(e.view.go_to_line.open);
     REQUIRE(e.caret() == Position{3, 6});
+}
+
+namespace {
+
+// `colour` at `share` of its strength, as the minimap draws code in it.
+ftk::ui::Color faint(ftk::ui::Color colour, float share) {
+    colour.a *= share;
+    return colour;
+}
+
+// Three hundred numbered lines, for scrolling.
+std::string many_lines() {
+    std::string text;
+    for (int i = 0; i < 300; ++i) text += "int line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("The minimap draws a bar for each word in its token's colour, comments fainter", "[code_view][minimap]") {
+    Editor e("int a; // two words");
+    e.h.step();
+    REQUIRE(drawn(e.h, faint(ftk::theme::code_keyword(), 0.8f)).size() == 1);
+    REQUIRE(drawn(e.h, faint(ftk::theme::code_comment(), 0.55f)).size() == 3);
+}
+
+TEST_CASE("A press on the minimap scrolls the view there", "[code_view][minimap]") {
+    Editor e(many_lines());
+    e.h.click_at({CODE_RIGHT + 40.0f, 590.0f});
+    e.h.step();
+    REQUIRE(e.view.scroll.y > 5000.0f);
+    e.h.click_at({CODE_RIGHT + 40.0f, 5.0f});
+    e.h.step();
+    REQUIRE(e.view.scroll.y < 100.0f);
+}
+
+TEST_CASE("The scrollbar and the wheel over the minimap scroll the view", "[code_view][minimap]") {
+    Editor e(many_lines());
+    e.h.drag({795.0f, 5.0f}, {795.0f, 300.0f});
+    e.h.step();
+    REQUIRE(e.view.scroll.y > 2000.0f);
+    const float scrolled = e.view.scroll.y;
+    e.h.wheel({CODE_RIGHT + 40.0f, 300.0f}, -3.0f);
+    e.h.step();
+    REQUIRE(e.view.scroll.y > scrolled);
+}
+
+TEST_CASE("The minimap ticks the find's matches and the caret", "[code_view][minimap]") {
+    Editor e(BANDS);
+    e.h.click_at({PAST_END, row_y(0)});
+    e.h.press(Key::F, CTRL);
+    e.h.type("band");
+    e.h.step();
+    const auto ticks = [&](ftk::ui::Color colour) {
+        return std::ranges::count_if(drawn(e.h, colour), [](const ftk::ui::core::Rect& r) {
+            return r.max.x == 790.0f && r.max.x - r.min.x == 6.0f;
+        });
+    };
+    // Matches on all three lines; the caret's own tick on the first match's.
+    REQUIRE(ticks(ftk::theme::accent()) == 3);
+    REQUIRE(ticks(ftk::theme::text()) == 1);
+}
+
+TEST_CASE("Without the minimap the code reaches the scrollbar", "[code_view][minimap]") {
+    Editor e(std::string(100, 'x'));
+    e.view.minimap = false;
+    e.h.step();
+    e.h.click_at({760.0f, 10.0f});
+    REQUIRE(e.caret().byte > 80);
 }
 
 TEST_CASE("Two views' finds are their own, open at once", "[code_view][find]") {

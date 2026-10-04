@@ -3,11 +3,14 @@
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/find.hpp"
 #include "fjedit/core/structure.hpp"
+#include "fjedit/widget/code_colours.hpp"
+#include "fjedit/widget/minimap.hpp"
 #include "fjedit/widget/text_layout.hpp"
 
 #include "ftk/ui/core/context.hpp"
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/scope.hpp"
+#include "ftk/ui/kit/scrollbar.hpp"
 #include "ftk/ui/kit/text.hpp"
 #include "ftk/ui/theme.hpp"
 
@@ -37,6 +40,8 @@ constexpr float TEXT_PAD = 6.0f;
 // How much room the caret keeps from the text's edge as it scrolls along.
 constexpr float REVEAL_MARGIN = 24.0f;
 constexpr float CARET_WIDTH = 2.0f;
+// The scrollbar down the view's right edge (sheet 39).
+constexpr float SCROLLBAR_WIDTH = 10.0f;
 
 // A closed fold's mark: a pill holding an ellipsis in a smaller face, set
 // off from the text either side.
@@ -45,25 +50,6 @@ constexpr float PILL_HEIGHT = 16.0f;
 constexpr float PILL_PAD = 6.0f;
 constexpr float PILL_MARGIN = 4.0f;
 constexpr std::string_view ELLIPSIS = "\xE2\x8B\xAF"; // ⋯
-
-// The colour of a kind of token (sheet 39, K1).
-Color colour_of(TokenKind kind) {
-    switch (kind) {
-    case TokenKind::Text: return theme::text();
-    case TokenKind::Keyword: return theme::code_keyword();
-    case TokenKind::Type: return theme::code_type();
-    case TokenKind::Function: return theme::code_function();
-    case TokenKind::String: return theme::code_string();
-    case TokenKind::Number: return theme::code_number();
-    case TokenKind::Comment: return theme::code_comment();
-    case TokenKind::Meta: return theme::code_meta();
-    case TokenKind::Punctuation: return theme::code_punctuation();
-    case TokenKind::Member:
-    case TokenKind::Uniform: return theme::code_member();
-    case TokenKind::Builtin: return theme::code_builtin();
-    }
-    return theme::text();
-}
 
 // The kit's mono face at `size`, on the code's lines.
 core::TextStyle mono(float size) {
@@ -400,6 +386,52 @@ void take_find_plate(const FindPlate& plate, Document& document, EditorView& vie
     if (plate.closed) find.open = false;
 }
 
+// The wheel scrolls: down the text, or along it with Shift. A notch up or
+// left is positive; the scroll grows down and right.
+void take_wheel(core::Context& ui, EditorView& view) {
+    if (const core::Pointer* mouse = ui.find_pointer(core::PointerType::Mouse, 0)) {
+        const float step = ui.pointer_style().wheel_step;
+        const bool along = ui.modifiers().shift;
+        view.scroll.x += (along ? -mouse->wheel.y : mouse->wheel.x) * step;
+        view.scroll.y += (along ? 0.0f : -mouse->wheel.y) * step;
+    }
+}
+
+// The minimap and the scrollbar down the view's right side, `side`, with
+// ticks for the find's matches and the caret. They scroll the view, as the
+// wheel does over the minimap; what they do shows from the next frame.
+void draw_side(core::Context& ui, const Document& document, EditorView& view, core::Rect rect, core::Rect side) {
+    const Folds& folds = view.folds;
+    const std::size_t rows = folds.row_count(document.buffer().line_count());
+    std::vector<MinimapMark> ticks;
+    std::vector<ftk::ui::ScrollMark> marks;
+    const auto mark = [&](std::size_t row, ftk::ui::Color colour) {
+        if (!ticks.empty() && ticks.back().row == row && ticks.back().colour == colour) return;
+        ticks.push_back({.row = row, .colour = colour});
+        marks.push_back({.at = static_cast<float>(row) * CODE_LINE, .colour = colour});
+    };
+    if (view.find.open) {
+        for (const Span& match : view.find.matches) mark(folds.row_of(match.from.line), theme::accent());
+    }
+    mark(folds.row_of(view.selections.primary().caret.line), theme::text());
+
+    const glm::vec2 scrolled = view.scroll;
+    ui.draw_list().rect_filled(side.min, side.max, theme::surface_base());
+    if (view.minimap) {
+        const core::Rect map{.min = side.min, .max = {side.max.x - SCROLLBAR_WIDTH, side.max.y}};
+        const Minimap drawn = minimap(ui.id("##minimap"), document, folds, map, view.scroll.y, rect.height(), CODE_LINE, ticks);
+        if (drawn.scroll) view.scroll.y = *drawn.scroll;
+        if (drawn.hovered) take_wheel(ui, view);
+    }
+    float offset = view.scroll.y;
+    const float room = static_cast<float>(rows - 1) * CODE_LINE;
+    if (ftk::ui::vertical_scrollbar("##scrollbar", {side.max.x - SCROLLBAR_WIDTH, side.min.y}, side.max, offset,
+                                    rect.height(), room, marks)) {
+        view.scroll.y = offset;
+    }
+    if (view.scroll != scrolled) ui.request_frame();
+}
+
 // Scrolls so the primary caret is in sight, then keeps the scroll inside
 // the text.
 void reveal(EditorView& view, const Frame& frame, const Buffer& buffer, const TextLayout& layout) {
@@ -455,7 +487,7 @@ float draw_tokens(core::Context& ui, const Document& document, const TextLayout&
         if (token.end <= at) continue;
         const std::size_t begin = std::max<std::size_t>(token.begin, at);
         x = draw_run(ui, layout, text, at, begin, x, origin_x, y, theme::text());
-        x = draw_run(ui, layout, text, begin, token.end, x, origin_x, y, colour_of(token.kind));
+        x = draw_run(ui, layout, text, begin, token.end, x, origin_x, y, code_colour(token.kind));
         at = token.end;
     }
     return draw_run(ui, layout, text, at, text.size(), x, origin_x, y, theme::text());
@@ -749,12 +781,17 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     faces.pill_width = ui.text().caret_x(ELLIPSIS, faces.pill, ELLIPSIS.size()) + 2.0f * PILL_PAD;
     const Buffer& buffer = document.buffer();
 
+    // The code, and down its right side the minimap and the scrollbar.
+    const float side_width = (view.minimap ? MINIMAP_WIDTH : 0.0f) + SCROLLBAR_WIDTH;
+    const core::Rect code{.min = rect.min, .max = {std::max(rect.min.x, rect.max.x - side_width), rect.max.y}};
+    const core::Rect side{.min = {code.max.x, rect.min.y}, .max = rect.max};
+
     catch_up(document, view);
-    const Frame frame = place(rect, view, buffer, faces.digit_width);
+    const Frame frame = place(code, view, buffer, faces.digit_width);
     layout.set_page_lines(std::max<std::size_t>(1, static_cast<std::size_t>(rect.height() / CODE_LINE) - 1));
 
     // Beneath what is placed after it over it: the find's plate.
-    const core::Interaction in = ui.interact(id, rect, {.beneath = true, .overlap = true});
+    const core::Interaction in = ui.interact(id, code, {.beneath = true, .overlap = true});
     const core::Focus focus = ui.focusable(id, {.text = true});
     if (in.hovered && in.position.x >= frame.text.min.x) ui.set_cursor_shape(ftk::ui::MouseCursor::Text);
 
@@ -786,16 +823,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
 
     take_mouse(ui, in, frame, document, view, layout, faces.pill_width);
 
-    // The wheel scrolls: down the text, or along it with Shift. A notch up
-    // or left is positive; the scroll grows down and right.
-    if (in.hovered) {
-        if (const core::Pointer* mouse = ui.find_pointer(core::PointerType::Mouse, 0)) {
-            const float step = ui.pointer_style().wheel_step;
-            const bool along = ui.modifiers().shift;
-            view.scroll.x += (along ? -mouse->wheel.y : mouse->wheel.x) * step;
-            view.scroll.y += (along ? 0.0f : -mouse->wheel.y) * step;
-        }
-    }
+    if (in.hovered) take_wheel(ui, view);
 
     // A caret that came into a closed fold opens it.
     view.folds.catch_up(document);
@@ -809,12 +837,13 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     view.seen = document.version();
     reveal(view, frame, buffer, layout);
     if (view.find.open) refresh_matches(view.find, document);
-    const Frame drawn = place(rect, view, buffer, faces.digit_width);
+    const Frame drawn = place(code, view, buffer, faces.digit_width);
     draw(ui, document, view, drawn, layout, faces, focus.focused);
 
     // The kit's pieces from here are the view's: their ids are under its
     // label.
     const ftk::ui::IdScope scope(label);
+    draw_side(ui, document, view, rect, side);
 
     if (focus.focused) {
         // The input method's window goes at the primary caret, and the
@@ -833,7 +862,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     if (view.find.open) {
         const Selections shown = view.selections;
         const uint64_t shown_version = document.version();
-        take_find_plate(find_plate(view.find, view.selections, rect), document, view, layout);
+        take_find_plate(find_plate(view.find, view.selections, code), document, view, layout);
         if (!view.find.open) ui.set_focus(id);
         if (view.selections != shown || document.version() != shown_version) {
             view.moved = ui.time();
@@ -848,7 +877,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     // where that went.
     if (view.go_to_line.open) {
         const GoToLinePlate plate =
-            go_to_line_plate(view.go_to_line, document, view.selections.primary().caret, rect);
+            go_to_line_plate(view.go_to_line, document, view.selections.primary().caret, code);
         if (plate.go) {
             view.selections = Selections(Selection::at(*plate.go));
             view.moved = ui.time();

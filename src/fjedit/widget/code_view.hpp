@@ -60,6 +60,9 @@ struct EditorView {
     double moved{0.0};
     /// The primary caret is to be scrolled into sight.
     bool reveal{true};
+    /// The minimap is shown down the view's right side, before the
+    /// scrollbar.
+    bool minimap{true};
 
     /// What a press of the mouse began, which dragging goes on with.
     struct Drag {
@@ -97,11 +100,13 @@ struct CodeViewResult {
     bool focused{false};
 };
 
-/// Draws `view` of `document` filling `rect`, and takes the mouse there and
-/// the keyboard while it has it, running commands through `keymap`; with its
+/// Draws `view` of `document` filling `rect`: the code, then the minimap
+/// and a scrollbar down its right side. It takes the mouse there and the
+/// keyboard while it has it, running commands through `keymap`; with its
 /// find open, the keymap's finding bindings come first. `label` names it to
-/// tests and screen readers and is never drawn. Kit items placed after it
-/// over `rect` take the pointer there before it does.
+/// tests and screen readers and is never drawn, and holds the ids of the
+/// kit's pieces it draws. Kit items placed after it over `rect` take the
+/// pointer there before it does.
 CodeViewResult code_view(std::string_view label, Document& document, EditorView& view, const Keymap& keymap,
                          ftk::ui::core::Rect rect);
 
