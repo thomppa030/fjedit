@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -69,6 +70,10 @@ private:
     void draw_status();
     void draw_prompts();
     void take_keys();
+    // Every few seconds: files another program changed, reloaded when they
+    // have no unsaved changes here and noted when they do; and the tree
+    // read again.
+    void check_disk(double now);
 
     // The tab in front, when there is one.
     [[nodiscard]] Tab* front_tab();
@@ -92,6 +97,10 @@ private:
     bool asking_{false};
     // The views show the minimap.
     bool minimap_{true};
+    // Files changed on disk while they had unsaved changes here, until
+    // answered; and when the disk is next looked at.
+    std::set<std::filesystem::path> changed_;
+    double next_check_{0.0};
     // What went wrong last, for the status bar.
     std::string note_;
 };

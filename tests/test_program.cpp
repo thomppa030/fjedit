@@ -7,6 +7,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -139,4 +141,63 @@ TEST_CASE("The menus' entries run on the view in front", "[program]") {
     run.h.step();
     REQUIRE(run.document("coin.cpp").buffer().text() == "int a;\n");
     REQUIRE_FALSE(run.program->run("no.such_command"));
+}
+
+namespace {
+
+// Writes `bytes` over `file` and dates it a little later, as another
+// program writing it a moment after would, whatever the file system's clock
+// steps.
+void write_later(const std::filesystem::path& file, std::string_view bytes) {
+    const auto before = std::filesystem::last_write_time(file);
+    std::ofstream(file, std::ios::binary | std::ios::trunc).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    std::filesystem::last_write_time(file, before + std::chrono::seconds(2));
+}
+
+// Long enough for the program to look at the disk again.
+constexpr int DISK_FRAMES = 150;
+
+} // namespace
+
+TEST_CASE("A file changed elsewhere with nothing unsaved here comes in as it is", "[program][disk]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    write_later(run.folder.path / "coin.cpp", "int b;\n");
+    run.h.step(DISK_FRAMES);
+    REQUIRE(run.document("coin.cpp").buffer().text() == "int b;\n");
+    REQUIRE_FALSE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+}
+
+TEST_CASE("A file changed elsewhere with unsaved changes here asks, and Load from disk takes it", "[program][disk]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    write_later(run.folder.path / "coin.cpp", "int b;\n");
+    run.h.step(DISK_FRAMES);
+    REQUIRE(run.document("coin.cpp").buffer().text() == "xint a;\n");
+    const auto* load = run.h.find("Load from disk", Role::Button);
+    REQUIRE(load != nullptr);
+    run.h.click_at(load->rect.centre());
+    run.h.step();
+    REQUIRE(run.document("coin.cpp").buffer().text() == "int b;\n");
+    REQUIRE(run.h.find("Load from disk", Role::Button) == nullptr);
+}
+
+TEST_CASE("Keep mine leaves the changes here as they are", "[program][disk]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    write_later(run.folder.path / "coin.cpp", "int b;\n");
+    run.h.step(DISK_FRAMES);
+    run.h.click_at(run.h.find("Keep mine", Role::Button)->rect.centre());
+    run.h.step(DISK_FRAMES);
+    REQUIRE(run.document("coin.cpp").buffer().text() == "xint a;\n");
+    REQUIRE(run.h.find("Keep mine", Role::Button) == nullptr);
+}
+
+TEST_CASE("A file made elsewhere shows in the tree", "[program][disk]") {
+    Running run({{"coin.cpp", ""}});
+    run.folder.write("rotator.cpp", "");
+    run.h.step(DISK_FRAMES);
+    REQUIRE(run.h.find("rotator.cpp", Role::TreeItem) != nullptr);
 }

@@ -33,6 +33,8 @@ using ftk::ui::Key;
 
 // The side bar's width (sheet 39).
 constexpr float SIDE_WIDTH = 260.0f;
+// How often the disk is looked at for files changed elsewhere.
+constexpr double DISK_CHECK = 2.0;
 
 // The standard keys, with the program's own in its mode.
 Keymap program_keys() {
@@ -135,7 +137,22 @@ void Program::save(const std::filesystem::path& path) {
         note_ = saved.error();
         return;
     }
+    changed_.erase(workspace_.name(path));
     note_.clear();
+}
+
+void Program::check_disk(double now) {
+    ui::core::current().request_frame_at(std::max(next_check_, now));
+    if (now < next_check_) return;
+    next_check_ = now + DISK_CHECK;
+    for (const std::filesystem::path& path : workspace_.changed_on_disk()) {
+        if (workspace_.unsaved(path)) {
+            changed_.insert(path);
+        } else if (const ftk::Result<> reloaded = workspace_.reload(path); !reloaded) {
+            note_ = reloaded.error();
+        }
+    }
+    tree_.forget_listings();
 }
 
 void Program::close_front() {
@@ -178,6 +195,7 @@ void Program::take_keys() {
 }
 
 void Program::draw() {
+    check_disk(ui::core::current().time());
     take_keys();
     draw_menus();
     const ui::WorkArea work = ui::work_area();
@@ -263,9 +281,21 @@ void Program::draw_group(Group& group, std::size_t index) {
     }
     group.select.reset();
 
-    // The code of the tab in front, in the space under the tabs.
+    // The code of the tab in front, in the space under the tabs, under a
+    // strip while its file changed on disk with unsaved changes here.
     if (group.front < group.tabs.size()) {
         Tab& tab = group.tabs[group.front];
+        if (changed_.contains(tab.path)) {
+            const std::string text =
+                std::format("{} changed on disk. It has unsaved changes here.", tab.path.filename().string());
+            const char* answers[] = {"Keep mine", "Load from disk"};
+            if (const std::optional<std::size_t> answer = ui::notice_strip(ui::Severity::Warning, text.c_str(), answers)) {
+                changed_.erase(tab.path);
+                if (*answer == 1) {
+                    if (const ftk::Result<> reloaded = workspace_.reload(tab.path); !reloaded) note_ = reloaded.error();
+                }
+            }
+        }
         tab.view->minimap = minimap_;
         Document* document = workspace_.find(tab.path);
         const glm::vec2 at = ui::cursor();
