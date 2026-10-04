@@ -1,8 +1,9 @@
 #pragma once
 
 // How the code view lays its text out: the UI core's text, in one face and
-// size, with a tab reaching on to the next stop. What moving a caret up and
-// down asks of the text (fjedit::Layout), and what the view draws by.
+// size, with a tab reaching on to the next stop, and the lines of the view's
+// closed folds hidden. What moving a caret up and down asks of the text
+// (fjedit::Layout), and what the view draws by.
 
 #include "fjedit/core/layout.hpp"
 
@@ -22,9 +23,17 @@ public:
     [[nodiscard]] float x_of(const Buffer& buffer, Position at) const override;
     [[nodiscard]] Position position_at(const Buffer& buffer, std::size_t line, float x) const override;
     [[nodiscard]] std::size_t page_lines() const override { return page_lines_; }
+    [[nodiscard]] std::optional<std::size_t> line_below(const Buffer& buffer, std::size_t line,
+                                                        std::size_t count) const override;
+    [[nodiscard]] std::optional<std::size_t> line_above(const Buffer& buffer, std::size_t line,
+                                                        std::size_t count) const override;
 
     /// How many lines a page moves: as many as the view shows.
     void set_page_lines(std::size_t lines) { page_lines_ = lines; }
+
+    /// Hides the lines of the folds `folds` has closed, while it lives; null
+    /// shows every line.
+    void set_folds(const Folds* folds) { folds_ = folds; }
 
     /// How far along `line` byte `to` is, given byte `from` is at `x`: the
     /// characters between, and each tab on to its next stop.
@@ -46,6 +55,7 @@ private:
     std::size_t tab_width_;
     std::size_t page_lines_{20};
     float space_;
+    const Folds* folds_{nullptr};
 };
 
 } // namespace fjedit

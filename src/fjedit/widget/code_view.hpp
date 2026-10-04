@@ -3,14 +3,15 @@
 // The code view: one view of a document, drawn into a rectangle with ftk's UI
 // core in the theme's code colours (sheet 39), taking the keyboard through a
 // keymap, and the mouse. A document may have several views, a split: each
-// keeps its own selections and scroll, and catches up with the edits made in
-// another through the document's note of them.
+// keeps its own selections, scroll and closed folds, and catches up with the
+// edits made in another through the document's note of them.
 //
 //     fjedit::EditorView view(document);
 //     // each frame:
 //     fjedit::code_view("Code", document, view, keymap, rect);
 
 #include "fjedit/core/document.hpp"
+#include "fjedit/core/folds.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/selections.hpp"
 
@@ -38,8 +39,10 @@ struct EditorView {
     explicit EditorView(const Document& document) : seen(document.version()) {}
 
     Selections selections;
+    /// The folds it has closed; a caret that comes into one opens it.
+    Folds folds;
     /// How far the text is scrolled, in layout units: down past the top of
-    /// the first line, and along past the start of every line.
+    /// the first row, and along past the start of every line.
     glm::vec2 scroll{0.0f};
     /// The keys pressed so far of a binding that takes several, and the mode
     /// keys are looked up in.
@@ -59,7 +62,8 @@ struct EditorView {
             Character,
             /// By whole words: a double click.
             Word,
-            /// By whole lines: a triple click, or a press on the line numbers.
+            /// By whole rows, a closed fold's lines with its first: a triple
+            /// click, or a press on the line numbers.
             Line,
             /// A column, with Alt; a click that doesn't drag adds a caret.
             Column,

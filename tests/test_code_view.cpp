@@ -7,8 +7,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <vector>
 
 using namespace fjedit;
 using ftk::ui::Key;
@@ -43,8 +45,39 @@ std::size_t drawn_in(const ftk::test::UiHarness& h, ftk::ui::Color colour) {
     return count;
 }
 
+// The shapes the last frame drew in `colour`, where it drew them.
+std::vector<ftk::ui::core::Rect> drawn(const ftk::test::UiHarness& h, ftk::ui::Color colour) {
+    const uint32_t packed = ftk::ui::core::pack_colour(colour);
+    std::vector<ftk::ui::core::Rect> out;
+    for (const ftk::ui::core::RootOutput& root : h.output().roots) {
+        for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+            if (p.colour == packed) out.push_back({.min = p.min, .max = p.max});
+        }
+    }
+    return out;
+}
+
 constexpr Modifiers CTRL{.ctrl = true};
 constexpr Modifiers SHIFT{.shift = true};
+
+// Across the fold chevrons, between the line numbers and the text.
+constexpr float FOLD_X = 30.0f;
+
+// Halfway down row `row`.
+float row_y(std::size_t row) {
+    return (static_cast<float>(row) + 0.5f) * CODE_LINE;
+}
+
+// The closed folds' pills: shapes in their colour wider than an indent
+// guide, which shares it.
+std::vector<ftk::ui::core::Rect> pills(const ftk::test::UiHarness& h) {
+    std::vector<ftk::ui::core::Rect> out = drawn(h, ftk::theme::surface_raised());
+    std::erase_if(out, [](const ftk::ui::core::Rect& r) { return r.max.x - r.min.x <= 1.0f; });
+    return out;
+}
+
+// A function folding on lines 0..2, then a line after it.
+constexpr std::string_view FUNCTION = "void f() {\n    x();\n}\nint a;";
 
 } // namespace
 
@@ -254,4 +287,109 @@ TEST_CASE("Indent guides, the caret's block brighter", "[code_view][marks]") {
     e.h.step();
     // On c: the second guide of line 2 is the caret's block's.
     REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide_active()) == 1);
+}
+
+TEST_CASE("A fold's chevron closes it, and the rows after it move up", "[code_view][folds]") {
+    Editor e(FUNCTION);
+    e.h.click_at({FOLD_X, row_y(0)});
+    REQUIRE(e.view.folds.closed_at(0));
+    e.h.click_at({780.0f, row_y(1)});
+    REQUIRE(e.caret() == Position{3, 6});
+
+    e.h.click_at({FOLD_X, row_y(0)});
+    REQUIRE_FALSE(e.view.folds.closed_at(0));
+}
+
+TEST_CASE("Without a fold there, a press on the chevrons' column selects the line", "[code_view][folds]") {
+    Editor e(FUNCTION);
+    e.h.click_at({FOLD_X, row_y(3)});
+    REQUIRE(e.view.selections.primary().span() == Span{{3, 0}, {3, 6}});
+}
+
+TEST_CASE("A closed fold draws a pill, the closer after it, and opens at a click on it", "[code_view][folds]") {
+    Editor e(FUNCTION);
+    e.h.click_at({FOLD_X, row_y(0)});
+    e.h.step();
+    const std::vector<ftk::ui::core::Rect> shown = pills(e.h);
+    REQUIRE(shown.size() == 1);
+    const auto closer = std::ranges::count_if(drawn(e.h, ftk::theme::code_punctuation()), [&](const auto& glyph) {
+        return glyph.min.x >= shown[0].max.x && glyph.max.y <= CODE_LINE;
+    });
+    REQUIRE(closer == 1);
+
+    const Position caret = e.caret();
+    e.h.click_at((shown[0].min + shown[0].max) * 0.5f);
+    REQUIRE_FALSE(e.view.folds.closed_at(0));
+    REQUIRE(e.caret() == caret);
+    e.h.step();
+    REQUIRE(pills(e.h).empty());
+}
+
+TEST_CASE("Up and down step over a closed fold, and a caret that comes into one opens it", "[code_view][folds]") {
+    Editor e(FUNCTION);
+    e.h.click_at({FOLD_X, row_y(0)});
+    e.h.click_at({780.0f, row_y(0)});
+    REQUIRE(e.caret() == Position{0, 10});
+    e.h.press(Key::Down);
+    REQUIRE(e.caret() == Position{3, 6});
+    e.h.press(Key::Up);
+    REQUIRE(e.caret() == Position{0, 10});
+    REQUIRE(e.view.folds.closed_at(0));
+
+    e.h.press(Key::Right);
+    REQUIRE(e.caret() == Position{1, 0});
+    REQUIRE_FALSE(e.view.folds.closed_at(0));
+}
+
+TEST_CASE("A fold closed over the caret takes it to the end of the fold's first line", "[code_view][folds]") {
+    Editor e(FUNCTION);
+    e.h.click_at({780.0f, row_y(1)});
+    REQUIRE(e.caret() == Position{1, 8});
+    e.h.click_at({FOLD_X, row_y(0)});
+    REQUIRE(e.view.folds.closed_at(0));
+    REQUIRE(e.caret() == Position{0, 10});
+}
+
+TEST_CASE("A press on a folded row's number selects every line it holds", "[code_view][folds]") {
+    Editor e(FUNCTION);
+    e.h.click_at({FOLD_X, row_y(0)});
+    e.h.click_at({12.0f, row_y(0)});
+    REQUIRE(e.view.selections.primary().span() == Span{{0, 0}, {3, 0}});
+}
+
+TEST_CASE("Folds close and open from the keys", "[code_view][folds]") {
+    Editor e(FUNCTION);
+    e.h.click_at({780.0f, row_y(1)});
+    e.h.press(Key::LeftBracket, {.ctrl = true, .shift = true});
+    REQUIRE(e.view.folds.closed_at(0));
+    e.h.press(Key::RightBracket, {.ctrl = true, .shift = true});
+    REQUIRE_FALSE(e.view.folds.closed_at(0));
+    e.h.press(Key::K, CTRL);
+    e.h.press(Key::Digit0, CTRL);
+    REQUIRE(e.view.folds.closed_at(0));
+    e.h.press(Key::K, CTRL);
+    e.h.press(Key::J, CTRL);
+    REQUIRE_FALSE(e.view.folds.closed_at(0));
+}
+
+TEST_CASE("Each view keeps its own folds, and they follow edits made in another", "[code_view][folds]") {
+    ftk::test::KitHarness h;
+    Document document(FUNCTION, language_for("x.cpp"));
+    EditorView left(document);
+    EditorView right(document);
+    const Keymap keys = Keymap::standard();
+    h.set_ui([&] {
+        (void)code_view("Left", document, left, keys, {.min = {0.0f, 0.0f}, .max = {400.0f, 600.0f}});
+        (void)code_view("Right", document, right, keys, {.min = {400.0f, 0.0f}, .max = {800.0f, 600.0f}});
+    });
+    h.step(2);
+    h.click_at({400.0f + FOLD_X, row_y(0)});
+    REQUIRE(right.folds.closed_at(0));
+    REQUIRE_FALSE(left.folds.closed_at(0));
+
+    h.click_at({200.0f, row_y(0)});
+    h.press(Key::Home);
+    h.press(Key::Enter);
+    h.step();
+    REQUIRE(right.folds.closed_at(1));
 }

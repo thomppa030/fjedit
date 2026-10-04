@@ -1,5 +1,7 @@
 #include "fjedit/widget/text_layout.hpp"
 
+#include "fjedit/core/folds.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -63,6 +65,14 @@ std::size_t TextLayout::byte_at(std::string_view line, float x) const {
 
 Position TextLayout::position_at(const Buffer& buffer, std::size_t line, float x) const {
     return {.line = line, .byte = byte_at(buffer.line(line), x)};
+}
+
+std::optional<std::size_t> TextLayout::line_below(const Buffer& buffer, std::size_t line, std::size_t count) const {
+    return folds_ != nullptr ? folds_->line_below(buffer, line, count) : Layout::line_below(buffer, line, count);
+}
+
+std::optional<std::size_t> TextLayout::line_above(const Buffer& buffer, std::size_t line, std::size_t count) const {
+    return folds_ != nullptr ? folds_->line_above(line, count) : Layout::line_above(buffer, line, count);
 }
 
 } // namespace fjedit
