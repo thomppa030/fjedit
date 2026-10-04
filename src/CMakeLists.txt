@@ -43,3 +43,15 @@ ftk_target_defaults(fjedit-widget)
 target_link_libraries(fjedit-widget PUBLIC fjedit::core ftk::app-ui)
 # Its look comes from ftk's theme and kit alone, as every editor UI's does.
 ftk_check_editor_ui(fjedit-widget ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widget)
+
+# fjedit-program is fjedit as a program: a folder open in a window, its files
+# down the side, tabs over the code, menus and a status bar. The executable
+# runs it in a window of its own; its tests run it in the kit's harness.
+add_library(fjedit-program STATIC
+    fjedit/program/file_tree.cpp
+    fjedit/program/program.cpp)
+add_library(fjedit::program ALIAS fjedit-program)
+ftk_target_defaults(fjedit-program)
+target_link_libraries(fjedit-program PUBLIC fjedit::widget ftk::app-ui)
+ftk_check_editor_ui(fjedit-program ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program
+                    ICONS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program/icons.hpp)

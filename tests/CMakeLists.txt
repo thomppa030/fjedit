@@ -43,7 +43,14 @@ add_executable(fjedit-widget-tests
 ftk_target_defaults(fjedit-widget-tests)
 target_link_libraries(fjedit-widget-tests PRIVATE fjedit::widget ftk::kit-harness Catch2::Catch2WithMain)
 
+# The program, on folders of the tests' own, through the same harness.
+add_executable(fjedit-program-tests
+    test_program.cpp)
+ftk_target_defaults(fjedit-program-tests)
+target_link_libraries(fjedit-program-tests PRIVATE fjedit::program ftk::kit-harness Catch2::Catch2WithMain)
+
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 catch_discover_tests(fjedit-tests)
 catch_discover_tests(fjedit-widget-tests TEST_PREFIX "view: ")
+catch_discover_tests(fjedit-program-tests TEST_PREFIX "program: ")
