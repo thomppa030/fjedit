@@ -579,3 +579,22 @@ TEST_CASE("Enter on a line there isn't closes go to line and goes nowhere", "[co
     REQUIRE_FALSE(e.view.go_to_line.open);
     REQUIRE(e.caret() == Position{3, 6});
 }
+
+TEST_CASE("Two views' finds are their own, open at once", "[code_view][find]") {
+    ftk::test::KitHarness h;
+    Document document(BANDS, language_for("x.cpp"));
+    EditorView left(document);
+    EditorView right(document);
+    const Keymap keys = Keymap::standard();
+    h.set_ui([&] {
+        (void)code_view("Left", document, left, keys, {.min = {0.0f, 0.0f}, .max = {500.0f, 600.0f}});
+        (void)code_view("Right", document, right, keys, {.min = {500.0f, 0.0f}, .max = {1000.0f, 600.0f}});
+    });
+    h.step(2);
+    right.find.open = true;
+    h.click_at({100.0f, row_y(4)});
+    h.press(Key::F, CTRL);
+    h.type("wide");
+    REQUIRE(left.find.query == "wide");
+    REQUIRE(right.find.query.empty());
+}

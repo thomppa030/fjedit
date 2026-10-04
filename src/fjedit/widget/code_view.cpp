@@ -7,6 +7,7 @@
 
 #include "ftk/ui/core/context.hpp"
 #include "ftk/ui/kit/icons.hpp"
+#include "ftk/ui/kit/scope.hpp"
 #include "ftk/ui/kit/text.hpp"
 #include "ftk/ui/theme.hpp"
 
@@ -810,6 +811,10 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     if (view.find.open) refresh_matches(view.find, document);
     const Frame drawn = place(rect, view, buffer, faces.digit_width);
     draw(ui, document, view, drawn, layout, faces, focus.focused);
+
+    // The kit's pieces from here are the view's: their ids are under its
+    // label.
+    const ftk::ui::IdScope scope(label);
 
     if (focus.focused) {
         // The input method's window goes at the primary caret, and the
