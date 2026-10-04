@@ -193,6 +193,9 @@ Keymap Keymap::standard() {
     }
     keymap.bind(FINDING, {chord(Key::Escape)}, "find.close");
     keymap.bind(EDITING, {chord(Key::Space, CTRL)}, "completion.open");
+    keymap.bind(EDITING, {chord(Key::F12)}, "definition.go");
+    keymap.bind(EDITING, {chord(Key::F2)}, "symbol.rename");
+    keymap.bind(EDITING, {chord(Key::I, CTRL, SHIFT)}, "format.document");
     const Default completing[] = {
         {chord(Key::Up), "completion.previous"},     {chord(Key::Down), "completion.next"},
         {chord(Key::PageUp), "completion.page_up"},  {chord(Key::PageDown), "completion.page_down"},

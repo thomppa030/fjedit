@@ -857,6 +857,9 @@ constexpr std::array VIEW_COMMANDS = {
     ViewCommand{"completion.page_up", "Completions a page up"},
     ViewCommand{"completion.accept", "Accept completion"},
     ViewCommand{"completion.close", "Close completions"},
+    ViewCommand{"definition.go", "Go to definition"},
+    ViewCommand{"symbol.rename", "Rename"},
+    ViewCommand{"format.document", "Format"},
 };
 
 } // namespace

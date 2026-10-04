@@ -27,10 +27,17 @@ struct Editor {
     Document document;
     EditorView view;
     Keymap keys = Keymap::standard();
+    // What the view handed out, in whichever frame it did.
+    std::optional<Location> went{};
+    std::optional<Position> renamed{};
 
     explicit Editor(std::string_view text, std::string_view file = "x.cpp")
         : document(text, language_for(file)), view(document) {
-        h.set_ui([this] { (void)code_view("Code", document, view, keys, {.min = {0.0f, 0.0f}, .max = {800.0f, 600.0f}}); });
+        h.set_ui([this] {
+            const CodeViewResult result = code_view("Code", document, view, keys, {.min = {0.0f, 0.0f}, .max = {800.0f, 600.0f}});
+            if (result.go) went = result.go;
+            if (result.rename) renamed = result.rename;
+        });
         h.step(2);
     }
 
@@ -1022,3 +1029,88 @@ TEST_CASE("A list said to be incomplete asks again as more is typed, and a space
     c.e.h.step();
     REQUIRE(listed(c.e).empty());
 }
+
+namespace {
+
+// An editor on FUNCTION with `language`, the keyboard in it, the caret at
+// the end of "    x();".
+struct Asking {
+    FakeLanguage language;
+    Editor e{FUNCTION};
+
+    Asking() {
+        e.view.service = &language;
+        e.view.path = "x.cpp";
+        e.h.click_at({PAST_END, row_y(1)});
+        e.h.step();
+    }
+};
+
+} // namespace
+
+TEST_CASE("F12 asks where the name at the caret is defined, and selects it there in the same file", "[code_view][definition]") {
+    Asking a;
+    a.e.h.press(Key::F12);
+    a.e.h.step();
+    REQUIRE(a.language.definitions.size() == 1);
+    REQUIRE(a.language.definitions.front().at == Position{1, 8});
+    FakeLanguage::answer(a.language.definitions.front(), std::vector<Location>{{"x.cpp", {{3, 4}, {3, 5}}}});
+    a.e.h.step(2);
+    REQUIRE(a.e.view.selections.primary().span() == Span{{3, 4}, {3, 5}});
+    REQUIRE_FALSE(a.e.went.has_value());
+}
+
+TEST_CASE("A definition in another file is handed out for the program to open", "[code_view][definition]") {
+    Asking a;
+    a.e.h.press(Key::F12);
+    a.e.h.step();
+    const Location elsewhere{"coin.hpp", {{10, 2}, {10, 6}}};
+    FakeLanguage::answer(a.language.definitions.front(), std::vector<Location>{elsewhere});
+    a.e.h.step();
+    REQUIRE(a.e.went == elsewhere);
+    REQUIRE(a.e.caret() == Position{1, 8});
+}
+
+TEST_CASE("Ctrl and a click asks where the word clicked is defined, the caret left where it is", "[code_view][definition]") {
+    Asking a;
+    const glm::vec2 x_at = x_called(a.e.h);
+    a.e.h.hold(CTRL);
+    a.e.h.click_at(x_at);
+    a.e.h.hold({});
+    a.e.h.step();
+    REQUIRE(a.language.definitions.size() == 1);
+    REQUIRE(a.language.definitions.front().at.line == 1);
+    REQUIRE(a.e.caret() == Position{1, 8});
+}
+
+TEST_CASE("Format makes the service's edit as one step, while the text is as it was asked about", "[code_view][format]") {
+    Asking a;
+    a.e.h.press(Key::I, {.ctrl = true, .shift = true});
+    a.e.h.step();
+    REQUIRE(a.language.formats.size() == 1);
+    const Edit indent{.changes = {{.span = {{1, 0}, {1, 4}}, .text = "  "}}};
+    FakeLanguage::answer(a.language.formats.front(),
+                         std::optional<VersionedEdit>(VersionedEdit{.version = a.e.document.version(), .edit = indent}));
+    a.e.h.step(2);
+    REQUIRE(a.e.document.buffer().line(1) == "  x();");
+    a.e.h.press(Key::Z, CTRL);
+    a.e.h.step();
+    REQUIRE(a.e.document.buffer().line(1) == "    x();");
+
+    // An answer for a text since changed is let go.
+    a.e.h.press(Key::I, {.ctrl = true, .shift = true});
+    a.e.h.step();
+    const uint64_t asked = a.e.document.version();
+    a.e.h.type("y");
+    a.e.h.step();
+    FakeLanguage::answer(a.language.formats.back(), std::optional<VersionedEdit>(VersionedEdit{.version = asked, .edit = indent}));
+    a.e.h.step(2);
+    REQUIRE(a.e.document.buffer().line(1) == "    x();y");
+}
+
+TEST_CASE("F2 hands out where a rename was asked for", "[code_view][rename]") {
+    Asking a;
+    a.e.h.press(Key::F2);
+    REQUIRE(a.e.renamed == Position{1, 8});
+}
+

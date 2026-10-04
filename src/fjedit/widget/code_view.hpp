@@ -104,6 +104,10 @@ struct EditorView {
     Hovering hovering{};
     /// Its completion list, while one is open (sheet 39, P1).
     CompletionState completing{};
+    /// Where what is named at the caret or a Ctrl click is defined, asked
+    /// and not yet answered; the format of the whole file, the same.
+    Asked<std::vector<Location>> going{};
+    Asked<std::optional<VersionedEdit>> formatting{};
 
     /// What a press of the mouse began, which dragging goes on with.
     struct Drag {
@@ -139,6 +143,12 @@ struct CodeViewResult {
     bool edited{false};
     /// It has the keyboard.
     bool focused{false};
+    /// Where what was asked about is defined, in another file: for the one
+    /// drawing the view to open there.
+    std::optional<Location> go{};
+    /// Where a rename was asked for: the name there is for the one drawing
+    /// the view to ask a new name for, and rename everywhere.
+    std::optional<Position> rename{};
 };
 
 /// Draws `view` of `document` filling `rect`: the code, then the minimap

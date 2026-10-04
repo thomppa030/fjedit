@@ -287,6 +287,12 @@ void take_mouse(core::Context& ui, const core::Interaction& in, const Frame& fra
                                             line_under(frame, view, buffer, point.y), point);
     if (in.pressed && in.button == ftk::ui::MouseButton::Left && !fold_press) {
         const Position at = position_under(frame, view, buffer, layout, point);
+        // Ctrl and a click on the code: where what is named there is
+        // defined, the caret left where it is.
+        if (held.ctrl && !held.alt && view.service != nullptr && point.x >= frame.text.min.x) {
+            view.going = view.service->definition(view.path, at);
+            return;
+        }
         const core::Pointer* mouse = ui.find_pointer(core::PointerType::Mouse, 0);
         const int clicks = mouse != nullptr ? mouse->click_count[0] : 1;
         drag = {.active = true, .origin = {at, at}};
@@ -432,6 +438,10 @@ void run_view_command(std::string_view name, const Document& document, EditorVie
         }
     } else if (name == "completion.close") {
         view.completing = {};
+    } else if (name == "definition.go") {
+        if (view.service != nullptr) view.going = view.service->definition(view.path, view.selections.primary().caret);
+    } else if (name == "format.document") {
+        if (view.service != nullptr) view.formatting = view.service->format(view.path);
     } else if (name == "completion.next" || name == "completion.previous") {
         move_completion(view.completing, name == "completion.next" ? 1 : -1);
     } else if (name == "completion.page_down" || name == "completion.page_up") {
@@ -1094,9 +1104,14 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                                .clipboard = &clipboard, .folds = &view.folds, .text = {}};
         accept_completion(view.completing, context, index);
     };
+    std::optional<Position> rename;
     auto run = [&](std::string_view command, std::string_view text = {}) {
         if (command == "completion.accept") {
             accept(std::nullopt);
+            return;
+        }
+        if (command == "symbol.rename") {
+            if (view.service != nullptr) rename = view.selections.primary().caret;
             return;
         }
         if (is_view_command(command)) {
@@ -1110,6 +1125,31 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     };
     // What a menu or a palette asked for, first.
     for (const std::string& command : std::exchange(view.queued, {})) run(command);
+
+    // Answers that came: a format made as one step if the text is as it was
+    // asked about; a definition in this file selected, one in another
+    // handed out.
+    std::optional<Location> go;
+    if (view.formatting && view.formatting->answered) {
+        const std::optional<VersionedEdit> formatted = view.formatting->answer;
+        view.formatting.reset();
+        if (formatted && formatted->version == document.version() && !formatted->edit.changes.empty()) {
+            CommandContext context{.document = document, .selections = view.selections, .layout = layout,
+                                   .clipboard = &clipboard, .folds = &view.folds, .text = {}};
+            (void)apply_edit(context, formatted->edit);
+        }
+    }
+    if (view.going && view.going->answered) {
+        if (!view.going->answer.empty()) {
+            const Location& found = view.going->answer.front();
+            if (found.path == view.path) {
+                view.selections = Selections({.anchor = buffer.clamp(found.span.from), .caret = buffer.clamp(found.span.to)});
+            } else {
+                go = found;
+            }
+        }
+        view.going.reset();
+    }
 
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
@@ -1241,7 +1281,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     }
 
     ui.semantics(id, core::Role::TextField, label, {}, {.focused = focus.focused}, rect);
-    return {.edited = document.version() != version, .focused = focus.focused};
+    return {.edited = document.version() != version, .focused = focus.focused, .go = std::move(go), .rename = rename};
 }
 
 } // namespace fjedit
