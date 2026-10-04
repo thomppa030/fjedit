@@ -60,3 +60,13 @@ find_package(Threads REQUIRED)
 target_link_libraries(fjedit-program PUBLIC fjedit::widget ftk::app-ui ftk::platform Threads::Threads)
 ftk_check_editor_ui(fjedit-program ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program
                     ICONS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program/icons.hpp)
+
+# fjedit-lsp talks to language servers: the protocol's messages framed over
+# a server's standard streams, a thread each way, answers handed out on the
+# caller's thread.
+add_library(fjedit-lsp STATIC
+    fjedit/lsp/connection.cpp
+    fjedit/lsp/frames.cpp)
+add_library(fjedit::lsp ALIAS fjedit-lsp)
+ftk_target_defaults(fjedit-lsp)
+target_link_libraries(fjedit-lsp PUBLIC fjedit::core ftk::platform nlohmann_json::nlohmann_json Threads::Threads)

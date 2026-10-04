@@ -54,8 +54,23 @@ add_executable(fjedit-program-tests
 ftk_target_defaults(fjedit-program-tests)
 target_link_libraries(fjedit-program-tests PRIVATE fjedit::program ftk::kit-harness Catch2::Catch2WithMain)
 
+# The language server connection, against a fake server of the tests' own,
+# and clangd when it is installed.
+add_executable(fjedit-fake-server
+    fake_server.cpp)
+ftk_target_defaults(fjedit-fake-server)
+target_link_libraries(fjedit-fake-server PRIVATE fjedit::lsp)
+add_executable(fjedit-lsp-tests
+    log_for_tests.cpp
+    test_lsp.cpp)
+ftk_target_defaults(fjedit-lsp-tests)
+target_link_libraries(fjedit-lsp-tests PRIVATE fjedit::lsp Catch2::Catch2WithMain)
+add_dependencies(fjedit-lsp-tests fjedit-fake-server)
+target_compile_definitions(fjedit-lsp-tests PRIVATE FJEDIT_FAKE_SERVER="$<TARGET_FILE:fjedit-fake-server>")
+
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 catch_discover_tests(fjedit-tests)
 catch_discover_tests(fjedit-widget-tests TEST_PREFIX "view: ")
 catch_discover_tests(fjedit-program-tests TEST_PREFIX "program: ")
+catch_discover_tests(fjedit-lsp-tests TEST_PREFIX "lsp: ")
