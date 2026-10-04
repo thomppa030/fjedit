@@ -65,6 +65,7 @@ ftk_check_editor_ui(fjedit-program ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/prog
 # a server's standard streams, a thread each way, answers handed out on the
 # caller's thread.
 add_library(fjedit-lsp STATIC
+    fjedit/lsp/client.cpp
     fjedit/lsp/connection.cpp
     fjedit/lsp/convert.cpp
     fjedit/lsp/frames.cpp)
