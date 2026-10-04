@@ -61,12 +61,14 @@ bool included(const std::filesystem::path& relative, std::string_view include) {
     return false;
 }
 
-std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& root, std::string_view include) {
+std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& root, std::string_view include,
+                                                   std::stop_token stop) {
     std::vector<std::filesystem::path> files;
     std::error_code error;
     std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied,
                                                      error);
     for (const std::filesystem::recursive_directory_iterator end; !error && it != end; it.increment(error)) {
+        if (stop.stop_requested()) break;
         const std::filesystem::path& path = it->path();
         std::error_code kind_error;
         if (it->is_directory(kind_error)) {

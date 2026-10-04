@@ -39,9 +39,11 @@ struct FileHit {
 
 /// The files under `root` to search, in order of their paths: folders whose
 /// names begin with a dot are left out, and only the files `include` names
-/// are kept (included()).
+/// are kept (included()). It stops early when `stop` asks, with what it has
+/// found.
 [[nodiscard]] std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& root,
-                                                                 std::string_view include = {});
+                                                                 std::string_view include = {},
+                                                                 std::stop_token stop = {});
 
 /// Every match of `needle` in `files`, in their order and each file's in
 /// order. A file in `open` is searched as the bytes given there, any other

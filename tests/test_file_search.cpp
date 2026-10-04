@@ -36,6 +36,15 @@ TEST_CASE("The files to search leave out folders and files whose names begin wit
     REQUIRE(files_to_search(folder.path, "*.cpp").size() == 2);
 }
 
+TEST_CASE("The walk for the files to search stops when asked", "[file_search]") {
+    const TempFolder folder;
+    folder.write("a.cpp", "");
+    folder.write("scripts/coin.cpp", "");
+    std::stop_source stop;
+    stop.request_stop();
+    REQUIRE(files_to_search(folder.path, "", stop.get_token()).empty());
+}
+
 TEST_CASE("Every match in every file, in order, open files as they stand", "[file_search]") {
     const TempFolder folder;
     folder.write("a.cpp", "float spin_speed;\nspin();\n");

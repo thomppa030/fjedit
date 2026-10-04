@@ -176,8 +176,11 @@ private:
     bool quitting_{false};
     // Where the program's dialogs hang from: under the tabs.
     glm::vec2 dialog_at_{0.0f};
+    // The threads work is done on away from the frames: searches. Before
+    // what uses them, so it goes first.
+    ftk::ThreadPool pool_;
     // Find in files, over the code.
-    FindInFiles find_in_files_{workspace_};
+    FindInFiles find_in_files_{workspace_, pool_};
     // What went wrong last, for the status bar.
     std::string note_;
 };

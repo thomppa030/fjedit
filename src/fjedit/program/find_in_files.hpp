@@ -5,26 +5,28 @@
 // look and which files, the matches as one flat list, and the code around
 // the match picked, editable, under them. Ctrl Shift F, or the search on
 // the files, opens it; Enter opens the file at the match, Up and Down go
-// through the matches, Escape closes it. The search runs on a thread of its
-// own, again whenever what it looks for changes.
+// through the matches, Escape closes it. The search runs on the program's
+// threads, again whenever what it looks for changes: a new search stops the
+// one before it and never waits for it to end.
 
 #include "fjedit/core/file_search.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/workspace.hpp"
 #include "fjedit/widget/code_view.hpp"
 
+#include "ftk/base/thread_pool.hpp"
 #include "ftk/ui/core/rect.hpp"
 #include "ftk/ui/kit/find.hpp"
 
 #include <cstddef>
 #include <filesystem>
+#include <future>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 namespace fjedit {
@@ -43,14 +45,16 @@ public:
     /// Where it looks.
     enum class Scope : int { Project, Folder, OpenFiles };
 
-    explicit FindInFiles(Workspace& workspace) : workspace_(&workspace) {}
+    /// Searches `workspace`'s files on `pool`, which outlives it.
+    FindInFiles(Workspace& workspace, ftk::ThreadPool& pool) : workspace_(&workspace), pool_(&pool) {}
 
-    // The search's thread holds what it is given; the window stays put.
+    // A search under way holds copies of what it was given, never the
+    // window; going, the window stops it.
     FindInFiles(const FindInFiles&) = delete;
     FindInFiles& operator=(const FindInFiles&) = delete;
     FindInFiles(FindInFiles&&) = delete;
     FindInFiles& operator=(FindInFiles&&) = delete;
-    ~FindInFiles() = default;
+    ~FindInFiles() { stop_.request_stop(); }
 
     /// Opens it with the keyboard in the search, looking for `seed` when it
     /// isn't empty.
@@ -77,13 +81,6 @@ private:
         bool operator==(const Asked&) const = default;
     };
 
-    // What the search's thread hands back.
-    struct Found {
-        std::mutex lock;
-        std::vector<FileHit> hits;
-        bool done{false};
-    };
-
     void search(const Asked& asked);
     void take_found();
     void replace_all();
@@ -92,6 +89,7 @@ private:
     void preview(const FileHit& hit);
 
     Workspace* workspace_;
+    ftk::ThreadPool* pool_;
     bool open_{false};
     bool focus_{false};
     std::string query_;
@@ -100,9 +98,10 @@ private:
     ftk::ui::FindToggles toggles_;
     Scope scope_{Scope::Project};
 
+    // The search asked for last, what stops it, and what it will find.
     std::optional<Asked> searched_;
-    std::shared_ptr<Found> found_;
-    std::jthread worker_;
+    std::stop_source stop_;
+    std::future<std::vector<FileHit>> found_;
     std::vector<FileHit> hits_;
     bool searching_{false};
     std::size_t selected_{0};

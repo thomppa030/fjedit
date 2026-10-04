@@ -19,6 +19,7 @@
 #include "ftk/ui/theme.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <format>
 #include <map>
 
@@ -67,8 +68,10 @@ void FindInFiles::search(const Asked& asked) {
     selected_ = 0;
     preview_.reset();
     previewed_.clear();
-    worker_ = {};
-    found_.reset();
+    // The search before goes on until it sees it is stopped, unwaited for.
+    stop_.request_stop();
+    stop_ = {};
+    found_ = {};
     searching_ = false;
     if (asked.query.empty()) return;
 
@@ -77,36 +80,27 @@ void FindInFiles::search(const Asked& asked) {
     const std::vector<std::filesystem::path> open_files = workspace_->files();
     for (const std::filesystem::path& path : open_files) open_texts[path] = workspace_->find(path)->buffer().text();
 
-    auto found = std::make_shared<Found>();
-    found_ = found;
     searching_ = true;
     const FindOptions options = find_options(asked.toggles);
     const std::filesystem::path root = workspace_->root();
-    worker_ = std::jthread([found, asked, options, root, open_texts = std::move(open_texts),
-                            open_files](std::stop_token stop) {
+    found_ = pool_->submit([asked, options, root, open_texts = std::move(open_texts), open_files,
+                            stop = stop_.get_token()] {
         std::vector<std::filesystem::path> files;
         if (asked.scope == Scope::OpenFiles) {
             for (const std::filesystem::path& path : open_files) {
                 if (included(path.lexically_relative(root), asked.include)) files.push_back(path);
             }
         } else {
-            files = files_to_search(asked.scope == Scope::Folder ? asked.folder : root, asked.include);
+            files = files_to_search(asked.scope == Scope::Folder ? asked.folder : root, asked.include, stop);
         }
-        std::vector<FileHit> hits = search_files(files, asked.query, options, open_texts, stop, LIMIT);
-        if (stop.stop_requested()) return;
-        const std::lock_guard held(found->lock);
-        found->hits = std::move(hits);
-        found->done = true;
+        return search_files(files, asked.query, options, open_texts, stop, LIMIT);
     });
 }
 
 void FindInFiles::take_found() {
-    if (!found_ || !searching_) return;
-    {
-        const std::lock_guard held(found_->lock);
-        if (!found_->done) return;
-        hits_ = std::move(found_->hits);
-    }
+    if (!searching_ || !found_.valid()) return;
+    if (found_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    hits_ = found_.get();
     searching_ = false;
     selected_ = 0;
     if (!hits_.empty()) preview(hits_.front());
@@ -159,8 +153,8 @@ void FindInFiles::replace_all() {
 
 void FindInFiles::close(FindInFilesAsk& ask) {
     open_ = false;
-    worker_ = {};
-    found_.reset();
+    stop_.request_stop();
+    found_ = {};
     searching_ = false;
     searched_.reset();
     hits_.clear();
