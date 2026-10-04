@@ -43,7 +43,8 @@ target_link_libraries(fjedit-tests PRIVATE fjedit::core Catch2::Catch2WithMain)
 # keys and text into the UI core with no window.
 add_executable(fjedit-widget-tests
     log_for_tests.cpp
-    test_code_view.cpp)
+    test_code_view.cpp
+    test_markdown.cpp)
 ftk_target_defaults(fjedit-widget-tests)
 target_link_libraries(fjedit-widget-tests PRIVATE fjedit::widget ftk::kit-harness Catch2::Catch2WithMain)
 

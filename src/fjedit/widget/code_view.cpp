@@ -9,6 +9,8 @@
 
 #include "ftk/ui/core/context.hpp"
 #include "ftk/ui/kit/icons.hpp"
+#include "ftk/ui/kit/layout.hpp"
+#include "ftk/ui/kit/plate.hpp"
 #include "ftk/ui/kit/scope.hpp"
 #include "ftk/ui/kit/scrollbar.hpp"
 #include "ftk/ui/kit/text.hpp"
@@ -66,6 +68,18 @@ constexpr float MESSAGE_ICON_GAP = 5.0f;
 constexpr float WAVE_HEIGHT = 1.5f;
 constexpr float WAVE_STEP = 2.0f;
 constexpr float WAVE_RISE = 3.0f;
+// The hover card (sheet 39, H): asked for once the mouse has rested this
+// long on a word; its prose at 12.5 and code at 12 on lines 18 apart beside
+// code at 13; padded 12 by 10, as wide as it needs between 160 and 480,
+// and its edge 4 left of the word's.
+constexpr double HOVER_DELAY = 0.5;
+constexpr float CARD_TEXT = 12.5f;
+constexpr float CARD_CODE = 12.0f;
+constexpr float CARD_LINE = 18.0f;
+constexpr glm::vec2 CARD_PAD{12.0f, 10.0f};
+constexpr float CARD_NARROWEST = 160.0f;
+constexpr float CARD_WIDEST = 480.0f;
+constexpr float CARD_SHIFT = 4.0f;
 
 // The kit's mono face at `size`, on lines `line` apart.
 core::TextStyle face(ftk::ui::Font font, float size, float line) {
@@ -329,6 +343,48 @@ void take_mouse(core::Context& ui, const core::Interaction& in, const Frame& fra
 
 // What the keys pressed so far come to: in the finding mode first while
 // the find is open, then in the view's mode.
+// The word the mouse rests on, asked of the language service once it has
+// rested there long enough, and read into a card when answered. The card
+// goes when the mouse leaves both the word and the card, and when
+// `changed`: the text, the carets or the scroll moved under it.
+void take_hover(core::Context& ui, const core::Interaction& in, const Frame& frame, const Document& document,
+                EditorView& view, const TextLayout& layout, bool changed) {
+    EditorView::Hovering& hovering = view.hovering;
+    if (view.service == nullptr || changed) {
+        hovering = {};
+        return;
+    }
+    const core::Pointer* mouse = ui.find_pointer(core::PointerType::Mouse, 0);
+    const bool resting = mouse != nullptr && mouse->present && mouse->buttons == 0;
+    const glm::vec2 point = resting ? mouse->now.position : glm::vec2{0.0f};
+    if (resting && hovering.card_rect && hovering.card_rect->contains(point)) return;
+
+    std::optional<Span> word;
+    Position at;
+    if (resting && in.hovered && point.x >= frame.text.min.x && !view.drag.active) {
+        const Buffer& buffer = document.buffer();
+        at = position_under(frame, view, buffer, layout, point);
+        const Span found = word_or_place(buffer, at);
+        if (!found.empty() && found.from.line == found.to.line) {
+            const float left = frame.origin_x + layout.x_of(buffer, found.from);
+            const float right = frame.origin_x + layout.x_of(buffer, found.to);
+            if (point.x >= left && point.x <= right) word = found;
+        }
+    }
+    if (word != hovering.word) {
+        hovering = {.word = word, .at = at, .since = ui.time()};
+        if (word) ui.request_frame_at(ui.time() + HOVER_DELAY);
+        return;
+    }
+    if (!word) return;
+    if (!hovering.asked && ui.time() - hovering.since >= HOVER_DELAY) {
+        hovering.asked = view.service->hover(view.path, hovering.at);
+    }
+    if (hovering.asked && hovering.asked->answered && hovering.card.empty() && hovering.asked->answer) {
+        hovering.card = read_markdown(hovering.asked->answer->markdown);
+    }
+}
+
 KeyMatch match_keys(const Keymap& keymap, const EditorView& view) {
     KeyMatch match = keymap.find(view.mode, view.pending);
     if (view.find.open) {
@@ -950,6 +1006,34 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
     dl.pop_clip();
 }
 
+// The hover card under the word the mouse rests on, the service's answer
+// drawn in it.
+void draw_hover_card(core::Context& ui, const Buffer& buffer, EditorView& view, const Frame& frame,
+                     const TextLayout& layout, core::Rect code, const Sizes& sizes) {
+    EditorView::Hovering& hovering = view.hovering;
+    const Span word = *hovering.word;
+    const float scale = sizes.text / CODE_TEXT;
+    const float line = CARD_LINE * scale;
+    const MarkdownLook look{.body = face(ftk::ui::Font::Body, CARD_TEXT * scale, line),
+                            .mono = face(theme::mono_font(), CARD_CODE * scale, line),
+                            .strong = face(theme::bold_font(), CARD_TEXT * scale, line)};
+    const glm::vec2 pad = CARD_PAD * scale;
+    const float inner = std::clamp(markdown_width(ui, hovering.card, look), CARD_NARROWEST * scale, CARD_WIDEST * scale);
+    const float top = frame.rect.min.y + static_cast<float>(view.folds.row_of(word.from.line)) * sizes.line - view.scroll.y;
+    const glm::vec2 anchor_min{frame.origin_x + layout.x_of(buffer, word.from) - CARD_SHIFT * scale, top};
+    const glm::vec2 anchor_max{frame.origin_x + layout.x_of(buffer, word.to), top + sizes.line};
+    const ftk::ui::Card card("##hover", {.view_min = code.min,
+                                         .view_max = code.max,
+                                         .anchor_min = anchor_min,
+                                         .anchor_max = anchor_max,
+                                         .width = inner + 2.0f * pad.x,
+                                         .padding = pad});
+    const glm::vec2 at = card.inner_min();
+    const float height = draw_markdown(ui, hovering.card, at, card.inner_width(), look);
+    ftk::ui::reserve({card.inner_width(), height});
+    hovering.card_rect = core::Rect{.min = at - pad, .max = at + glm::vec2{card.inner_width(), height} + pad};
+}
+
 } // namespace
 
 float code_line(float text_size) {
@@ -1020,6 +1104,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
 
     take_mouse(ui, in, frame, document, view, layout, faces.pill_width);
 
+    const glm::vec2 scrolled = view.scroll;
     if (in.hovered) take_wheel(ui, view);
 
     // A caret that came into a closed fold opens it.
@@ -1031,6 +1116,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         view.moved = ui.time();
         view.reveal = true;
     }
+    take_hover(ui, in, frame, document, view, layout, edited || view.selections != before || view.scroll != scrolled);
     view.seen = document.version();
     reveal(view, frame, buffer, layout);
     if (view.find.open) refresh_matches(view.find, document);
@@ -1089,6 +1175,13 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             view.go_to_line.open = false;
             if (plate.go || ui.focused() == 0) ui.set_focus(id);
         }
+    }
+
+    // The hover card over everything else the view draws.
+    if (view.hovering.word && !view.hovering.card.empty()) {
+        draw_hover_card(ui, buffer, view, drawn, layout, code, sizes);
+    } else {
+        view.hovering.card_rect.reset();
     }
 
     ui.semantics(id, core::Role::TextField, label, {}, {.focused = focus.focused}, rect);

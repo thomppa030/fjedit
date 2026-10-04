@@ -807,3 +807,86 @@ TEST_CASE("A line is drawn in its service's colours over its lexer's", "[code_vi
     REQUIRE(member.size() == 1);
     REQUIRE(on_row(member, 3));
 }
+
+namespace {
+
+// Steps `e` through `seconds` of frames.
+void wait(Editor& e, double seconds) {
+    e.h.step(static_cast<int>(seconds * 60.0) + 1);
+}
+
+// The card's surface: shapes in the sunken colour in the code.
+std::vector<ftk::ui::core::Rect> cards(const ftk::test::UiHarness& h) {
+    return drawn_in_code(h, ftk::theme::surface_sunken());
+}
+
+// The middle of the x of FUNCTION's "    x();", where it was drawn in the
+// colour of a function called.
+glm::vec2 x_called(const ftk::test::UiHarness& h) {
+    std::vector<ftk::ui::core::Rect> glyphs = drawn_in_code(h, ftk::theme::code_function());
+    std::erase_if(glyphs, [](const auto& r) { return r.max.y < static_cast<float>(1) * CODE_LINE || r.min.y > 2.0f * CODE_LINE; });
+    REQUIRE(glyphs.size() == 1);
+    return glyphs.front().centre();
+}
+
+} // namespace
+
+TEST_CASE("Resting on a word asks what it is, and the answer hangs under it", "[code_view][hover]") {
+    FakeLanguage language;
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    e.view.path = "x.cpp";
+    const glm::vec2 x_at = x_called(e.h);
+    e.h.move_to(x_at);
+    e.h.step(2);
+    REQUIRE(language.hovers.empty());
+    wait(e, 0.6);
+    REQUIRE(language.hovers.size() == 1);
+    REQUIRE(language.hovers.front().path == "x.cpp");
+    REQUIRE(language.hovers.front().at.line == 1);
+    REQUIRE(cards(e.h).empty());
+
+    FakeLanguage::answer(language.hovers.front(),
+                         std::optional<Hover>(Hover{.markdown = "### function `x`\n\n---\n→ `void`", .span = {}}));
+    e.h.step(2);
+    const std::vector<ftk::ui::core::Rect> card = cards(e.h);
+    REQUIRE(card.size() == 1);
+    REQUIRE(card.front().min.y >= static_cast<float>(2) * CODE_LINE);
+    // The heading's name in the text colour, on the card.
+    REQUIRE(std::ranges::any_of(drawn_in_code(e.h, ftk::theme::text()),
+                                [&](const auto& r) { return card.front().contains(r.centre()); }));
+
+    // Onto the card it stays; away from the word and the card it goes.
+    e.h.move_to(card.front().centre());
+    e.h.step(2);
+    REQUIRE(cards(e.h).size() == 1);
+    e.h.move_to({PAST_END, row_y(3)});
+    e.h.step(2);
+    REQUIRE(cards(e.h).empty());
+}
+
+TEST_CASE("Typing takes the hover card away, and resting on space asks nothing", "[code_view][hover]") {
+    FakeLanguage language;
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    // The keyboard to the view, the caret on the last line.
+    e.h.click_at({PAST_END, row_y(3)});
+    e.h.step();
+    const glm::vec2 x_at = x_called(e.h);
+    e.h.move_to(x_at);
+    wait(e, 0.6);
+    REQUIRE(language.hovers.size() == 1);
+    FakeLanguage::answer(language.hovers.front(), std::optional<Hover>(Hover{.markdown = "x", .span = {}}));
+    e.h.step(2);
+    REQUIRE(cards(e.h).size() == 1);
+    e.h.type("a");
+    e.h.step(2);
+    REQUIRE(cards(e.h).empty());
+
+    // Past the end of a line, and over the indent, there is nothing to ask.
+    e.h.move_to({PAST_END, row_y(2)});
+    wait(e, 0.6);
+    e.h.move_to({x_at.x - 20.0f, x_at.y});
+    wait(e, 0.6);
+    REQUIRE(language.hovers.size() == 1);
+}

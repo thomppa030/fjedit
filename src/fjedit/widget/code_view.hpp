@@ -17,6 +17,7 @@
 #include "fjedit/core/selections.hpp"
 #include "fjedit/widget/find.hpp"
 #include "fjedit/widget/go_to_line.hpp"
+#include "fjedit/widget/markdown.hpp"
 
 #include "ftk/ui/core/rect.hpp"
 
@@ -24,6 +25,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -82,6 +84,23 @@ struct EditorView {
     /// G1). None when nothing does.
     LanguageService* service{nullptr};
     std::filesystem::path path;
+
+    /// The word the mouse rests on, and what the language service says it
+    /// is: its hover card (sheet 39).
+    struct Hovering {
+        /// The word, the place in it the mouse is over, and since when.
+        std::optional<Span> word{};
+        Position at{};
+        double since{0.0};
+        /// What the service was asked once the mouse had rested long
+        /// enough, and the card read from its answer.
+        Asked<std::optional<Hover>> asked{};
+        std::vector<MarkdownBlock> card{};
+        /// Where the card was drawn: the mouse may move onto it from the
+        /// word without it going.
+        std::optional<ftk::ui::core::Rect> card_rect{};
+    };
+    Hovering hovering{};
 
     /// What a press of the mouse began, which dragging goes on with.
     struct Drag {
