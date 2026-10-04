@@ -50,6 +50,9 @@ class Keymap {
 public:
     /// Plain editing, the mode a view starts in.
     static constexpr std::string_view EDITING = "editing";
+    /// While a view's find is open: its bindings are looked up before the
+    /// view's mode, and win over it.
+    static constexpr std::string_view FINDING = "finding";
 
     /// fjedit's own keys, the ones VS Code has.
     [[nodiscard]] static Keymap standard();

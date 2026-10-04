@@ -830,6 +830,26 @@ Selections column_selection(const Buffer& buffer, const Layout& layout, std::siz
     return out;
 }
 
+namespace {
+
+constexpr std::array VIEW_COMMANDS = {
+    ViewCommand{"find.open", "Find"},
+    ViewCommand{"find.replace", "Replace"},
+    ViewCommand{"find.next", "Find next"},
+    ViewCommand{"find.previous", "Find previous"},
+    ViewCommand{"find.close", "Close find"},
+};
+
+} // namespace
+
+std::span<const ViewCommand> view_commands() {
+    return VIEW_COMMANDS;
+}
+
+bool is_view_command(std::string_view name) {
+    return std::ranges::any_of(VIEW_COMMANDS, [&](const ViewCommand& command) { return command.name == name; });
+}
+
 bool run_command(std::string_view name, CommandContext& context) {
     const Command* command = find_command(name);
     if (command == nullptr) return false;

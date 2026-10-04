@@ -8,7 +8,8 @@
 //
 // Names are `group.action`: `caret.*` moves carets, `select.*` extends or
 // picks selections, `cursor.*` adds and removes carets, `edit.*` changes the
-// text, `fold.*` opens and closes folds.
+// text, `fold.*` opens and closes folds. A keymap also names what a view does
+// itself, `find.*` (view_commands()), which run_command() leaves to the view.
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/document.hpp"
@@ -64,6 +65,19 @@ struct Command {
 
 /// Runs the command called `name`; false when there is none.
 bool run_command(std::string_view name, CommandContext& context);
+
+/// What a view does itself rather than to its text, named in a keymap as a
+/// command is: its find.
+struct ViewCommand {
+    std::string_view name;
+    std::string_view title;
+};
+
+/// Every view command, in the order a palette lists them.
+[[nodiscard]] std::span<const ViewCommand> view_commands();
+
+/// Whether `name` is a view command.
+[[nodiscard]] bool is_view_command(std::string_view name);
 
 /// Replaces each of `matches`, places find_all() found `needle` at with
 /// `options`, with what replacement() gives for `with`, as one step of the

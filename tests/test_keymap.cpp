@@ -49,14 +49,20 @@ TEST_CASE("A key finds its command", "[keymap]") {
 
 TEST_CASE("Every standard binding runs a command fjedit has", "[keymap]") {
     const Keymap keys = Keymap::standard();
-    for (std::size_t key = 0; key < ftk::ui::KEY_COUNT; ++key) {
-        for (unsigned held = 0; held < 16; ++held) {
-            const Chord chord{.key = static_cast<Key>(key),
-                              .modifiers = {.ctrl = (held & 1) != 0, .shift = (held & 2) != 0,
-                                            .alt = (held & 4) != 0, .super = (held & 8) != 0}};
-            const KeyMatch match = keys.find(Keymap::EDITING, std::vector<Chord>{chord});
-            if (match.command) REQUIRE(find_command(*match.command) != nullptr);
+    for (const std::string_view mode : {Keymap::EDITING, Keymap::FINDING}) {
+        for (std::size_t key = 0; key < ftk::ui::KEY_COUNT; ++key) {
+            for (unsigned held = 0; held < 16; ++held) {
+                const Chord chord{.key = static_cast<Key>(key),
+                                  .modifiers = {.ctrl = (held & 1) != 0, .shift = (held & 2) != 0,
+                                                .alt = (held & 4) != 0, .super = (held & 8) != 0}};
+                const KeyMatch match = keys.find(mode, std::vector<Chord>{chord});
+                if (match.command) REQUIRE((find_command(*match.command) != nullptr || is_view_command(*match.command)));
+            }
         }
+    }
+    for (const ViewCommand& command : view_commands()) {
+        REQUIRE(find_command(command.name) == nullptr);
+        REQUIRE_FALSE(command.title.empty());
     }
     for (const char* name : {"caret.left", "edit.undo", "edit.redo", "select.all", "cursor.single"}) {
         REQUIRE(find_command(name) != nullptr);

@@ -172,6 +172,11 @@ Keymap Keymap::standard() {
 
         {chord(Key::LeftBracket, CTRL, SHIFT), "fold.close"},
         {chord(Key::RightBracket, CTRL, SHIFT), "fold.open"},
+
+        {chord(Key::F, CTRL), "find.open"},
+        {chord(Key::H, CTRL), "find.replace"},
+        {chord(Key::F3), "find.next"},
+        {chord(Key::F3, false, SHIFT), "find.previous"},
     };
     // Ctrl K, then a second key.
     const Default after_ctrl_k[] = {
@@ -185,6 +190,7 @@ Keymap Keymap::standard() {
     for (const Default& binding : after_ctrl_k) {
         keymap.bind(EDITING, {chord(Key::K, CTRL), binding.keys}, std::string(binding.command));
     }
+    keymap.bind(FINDING, {chord(Key::Escape)}, "find.close");
     return keymap;
 }
 
