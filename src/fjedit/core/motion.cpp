@@ -90,13 +90,15 @@ Position line_end(const Buffer& buffer, Position at) {
 }
 
 Position lines_up(const Buffer& buffer, const Layout& layout, Position at, float x, std::size_t lines) {
-    if (lines > at.line) return {.line = 0, .byte = 0};
-    return layout.position_at(buffer, at.line - lines, x);
+    const std::optional<std::size_t> line = layout.line_above(buffer, at.line, lines);
+    if (!line) return {.line = 0, .byte = 0};
+    return layout.position_at(buffer, *line, x);
 }
 
 Position lines_down(const Buffer& buffer, const Layout& layout, Position at, float x, std::size_t lines) {
-    if (at.line + lines >= buffer.line_count()) return buffer.end();
-    return layout.position_at(buffer, at.line + lines, x);
+    const std::optional<std::size_t> line = layout.line_below(buffer, at.line, lines);
+    if (!line) return buffer.end();
+    return layout.position_at(buffer, *line, x);
 }
 
 } // namespace fjedit

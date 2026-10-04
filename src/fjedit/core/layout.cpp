@@ -1,5 +1,7 @@
 #include "fjedit/core/layout.hpp"
 
+#include "fjedit/core/folds.hpp"
+
 #include "ftk/base/utf8.hpp"
 
 namespace fjedit {
@@ -29,6 +31,14 @@ Position MonospaceLayout::position_at(const Buffer& buffer, std::size_t line, fl
         cells = next;
     }
     return {.line = line, .byte = text.size()};
+}
+
+std::optional<std::size_t> MonospaceLayout::line_below(const Buffer& buffer, std::size_t line, std::size_t count) const {
+    return folds_ != nullptr ? folds_->line_below(buffer, line, count) : Layout::line_below(buffer, line, count);
+}
+
+std::optional<std::size_t> MonospaceLayout::line_above(const Buffer& buffer, std::size_t line, std::size_t count) const {
+    return folds_ != nullptr ? folds_->line_above(line, count) : Layout::line_above(buffer, line, count);
 }
 
 } // namespace fjedit

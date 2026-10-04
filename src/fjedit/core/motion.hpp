@@ -50,12 +50,14 @@ enum class CharKind : uint8_t {
 
 [[nodiscard]] Position line_end(const Buffer& buffer, Position at);
 
-/// The position `lines` lines up from `at` nearest `x` along it; the start
-/// of the text when there are not that many lines above.
+/// The position `lines` shown lines up from `at` nearest `x` along it, past
+/// lines the layout hides; the start of the text when there are not that many
+/// lines above.
 [[nodiscard]] Position lines_up(const Buffer& buffer, const Layout& layout, Position at, float x, std::size_t lines);
 
-/// The position `lines` lines down from `at` nearest `x` along it; the end
-/// of the text when there are not that many lines below.
+/// The position `lines` shown lines down from `at` nearest `x` along it, past
+/// lines the layout hides; the end of the text when there are not that many
+/// lines below.
 [[nodiscard]] Position lines_down(const Buffer& buffer, const Layout& layout, Position at, float x, std::size_t lines);
 
 } // namespace fjedit

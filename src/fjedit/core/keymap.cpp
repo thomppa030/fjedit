@@ -169,10 +169,22 @@ Keymap Keymap::standard() {
         {chord(Key::Z, CTRL), "edit.undo"},
         {chord(Key::Y, CTRL), "edit.redo"},
         {chord(Key::Z, CTRL, SHIFT), "edit.redo"},
+
+        {chord(Key::LeftBracket, CTRL, SHIFT), "fold.close"},
+        {chord(Key::RightBracket, CTRL, SHIFT), "fold.open"},
+    };
+    // Ctrl K, then a second key.
+    const Default after_ctrl_k[] = {
+        {chord(Key::L, CTRL), "fold.toggle"},
+        {chord(Key::Digit0, CTRL), "fold.close_all"},
+        {chord(Key::J, CTRL), "fold.open_all"},
     };
 
     Keymap keymap;
     for (const Default& binding : defaults) keymap.bind(EDITING, {binding.keys}, std::string(binding.command));
+    for (const Default& binding : after_ctrl_k) {
+        keymap.bind(EDITING, {chord(Key::K, CTRL), binding.keys}, std::string(binding.command));
+    }
     return keymap;
 }
 

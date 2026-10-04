@@ -26,6 +26,7 @@ struct TestView {
     fjedit::Document document;
     fjedit::Selections selections;
     fjedit::MonospaceLayout layout{4, 3};
+    fjedit::Folds folds;
     std::string clipboard_text;
     fjedit::Clipboard clipboard{
         .get = [this] { return clipboard_text; },
@@ -51,6 +52,7 @@ struct TestView {
             }
         }
         if (!marks.empty()) selections.set(marks, marks.size() - 1);
+        layout.set_folds(&folds);
     }
 
     /// `marked` without its marks.
@@ -64,14 +66,17 @@ struct TestView {
 
     [[nodiscard]] const fjedit::Buffer& buffer() const { return document.buffer(); }
 
-    // The clipboard holds `this`: the view stays where it was made.
+    // The clipboard and the layout hold `this`: the view stays where it was
+    // made.
     TestView(const TestView&) = delete;
     TestView& operator=(const TestView&) = delete;
 
     void run(std::string_view name, std::string_view text = {}) {
+        folds.catch_up(document);
         fjedit::CommandContext context{.document = document, .selections = selections, .layout = layout,
-                                       .clipboard = &clipboard, .text = text};
+                                       .clipboard = &clipboard, .folds = &folds, .text = text};
         REQUIRE(fjedit::run_command(name, context));
+        folds.catch_up(document);
     }
 
     /// Types `text` a character at a time.

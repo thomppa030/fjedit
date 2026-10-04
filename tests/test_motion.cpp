@@ -1,5 +1,10 @@
 #include "fjedit/core/motion.hpp"
 
+#include "fjedit/core/document.hpp"
+#include "fjedit/core/folds.hpp"
+#include "fjedit/core/language.hpp"
+#include "fjedit/core/layout.hpp"
+
 #include "print.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -97,4 +102,15 @@ TEST_CASE("A monospace layout counts cells, tabs to the next stop", "[motion]") 
     REQUIRE(layout.position_at(buffer, 0, 2.0f) == Position{0, 1});
     REQUIRE(layout.position_at(buffer, 0, 6.4f) == Position{0, 3});
     REQUIRE(layout.position_at(buffer, 0, 99.0f) == Position{0, 5});
+}
+
+TEST_CASE("Up and down step over the lines a closed fold hides", "[motion]") {
+    const Document document("a {\n  b\n  c\n}\nd", language_for("x.cpp"));
+    Folds folds;
+    REQUIRE(folds.close(document, 0));
+    MonospaceLayout layout;
+    layout.set_folds(&folds);
+    const Buffer& buffer = document.buffer();
+    REQUIRE(lines_down(buffer, layout, {0, 1}, 1.0f, 1) == Position{4, 1});
+    REQUIRE(lines_up(buffer, layout, {4, 0}, 0.0f, 1) == Position{0, 0});
 }

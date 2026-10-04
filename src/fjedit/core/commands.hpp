@@ -8,10 +8,11 @@
 //
 // Names are `group.action`: `caret.*` moves carets, `select.*` extends or
 // picks selections, `cursor.*` adds and removes carets, `edit.*` changes the
-// text.
+// text, `fold.*` opens and closes folds.
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/document.hpp"
+#include "fjedit/core/folds.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/selections.hpp"
 
@@ -38,6 +39,9 @@ struct CommandContext {
     const Layout& layout;
     /// Cut, copy and paste do nothing without one.
     Clipboard* clipboard{nullptr};
+    /// The folds the view has closed, caught up with the document; the
+    /// fold commands do nothing without them.
+    Folds* folds{nullptr};
     /// What `edit.type` types.
     std::string_view text{};
 };

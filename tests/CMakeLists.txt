@@ -19,6 +19,7 @@ add_executable(fjedit-tests
     test_edit.cpp
     test_editing.cpp
     test_find.cpp
+    test_folds.cpp
     test_history.cpp
     test_keymap.cpp
     test_lex_cpp.cpp

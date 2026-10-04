@@ -662,6 +662,60 @@ void single(CommandContext& c) {
     c.document.history().close();
 }
 
+// ── Folding ─────────────────────────────────────────────────────────────────
+
+// The innermost fold around `line` that is open: of those beginning on it or
+// before and ending on it or after, the one beginning last.
+std::optional<FoldRange> open_fold_around(const CommandContext& c, std::size_t line) {
+    std::optional<FoldRange> around;
+    for (const FoldRange& fold : c.document.folds()) {
+        if (fold.first > line) break;
+        if (fold.last >= line && !c.folds->closed_at(fold.first)) around = fold;
+    }
+    return around;
+}
+
+// At each caret, the innermost open fold around it closed; carets it hides
+// go to its first line's end.
+void close_fold(CommandContext& c) {
+    if (c.folds == nullptr) return;
+    for (const Selection& selection : c.selections.all()) {
+        if (const std::optional<FoldRange> fold = open_fold_around(c, selection.caret.line)) {
+            (void)c.folds->close(c.document, fold->first);
+        }
+    }
+    move_out_of_folds(c.selections, *c.folds, c.document.buffer());
+}
+
+// At each caret, the folds closed on its row opened.
+void open_fold(CommandContext& c) {
+    if (c.folds == nullptr) return;
+    for (const Selection& selection : c.selections.all()) (void)c.folds->open_row(selection.caret.line);
+}
+
+// At each caret, its row's folds opened, or where none is closed, the
+// innermost fold around it closed.
+void toggle_fold(CommandContext& c) {
+    if (c.folds == nullptr) return;
+    for (const Selection& selection : c.selections.all()) {
+        if (c.folds->open_row(selection.caret.line)) continue;
+        if (const std::optional<FoldRange> fold = open_fold_around(c, selection.caret.line)) {
+            (void)c.folds->close(c.document, fold->first);
+        }
+    }
+    move_out_of_folds(c.selections, *c.folds, c.document.buffer());
+}
+
+void close_all_folds(CommandContext& c) {
+    if (c.folds == nullptr) return;
+    c.folds->close_all(c.document);
+    move_out_of_folds(c.selections, *c.folds, c.document.buffer());
+}
+
+void open_all_folds(CommandContext& c) {
+    if (c.folds != nullptr) c.folds->open_all();
+}
+
 const std::array COMMANDS = {
     Command{"caret.left", "Move left", [](CommandContext& c) { step(c, false, false); }},
     Command{"caret.right", "Move right", [](CommandContext& c) { step(c, true, false); }},
@@ -722,6 +776,12 @@ const std::array COMMANDS = {
     Command{"edit.paste", "Paste", paste},
     Command{"edit.undo", "Undo", undo},
     Command{"edit.redo", "Redo", redo},
+
+    Command{"fold.close", "Fold", close_fold},
+    Command{"fold.open", "Unfold", open_fold},
+    Command{"fold.toggle", "Fold or unfold", toggle_fold},
+    Command{"fold.close_all", "Fold everything", close_all_folds},
+    Command{"fold.open_all", "Unfold everything", open_all_folds},
 };
 
 } // namespace
@@ -743,7 +803,8 @@ Selections column_selection(const Buffer& buffer, const Layout& layout, std::siz
 
     std::vector<Selection> selections;
     std::size_t primary = 0;
-    for (std::size_t line = first; line <= last; ++line) {
+    for (std::optional<std::size_t> shown = first; shown && *shown <= last; shown = layout.line_below(buffer, *shown, 1)) {
+        const std::size_t line = *shown;
         if (line != caret_line && layout.x_of(buffer, {line, buffer.line(line).size()}) < left) continue;
         if (line == caret_line) primary = selections.size();
         selections.push_back({.anchor = layout.position_at(buffer, line, anchor_x),

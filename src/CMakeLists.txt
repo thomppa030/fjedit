@@ -5,6 +5,7 @@ add_library(fjedit-core STATIC
     fjedit/core/commands.cpp
     fjedit/core/document.cpp
     fjedit/core/find.cpp
+    fjedit/core/folds.cpp
     fjedit/core/history.cpp
     fjedit/core/keymap.cpp
     fjedit/core/language.cpp
