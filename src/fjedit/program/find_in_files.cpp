@@ -22,6 +22,7 @@
 #include <chrono>
 #include <format>
 #include <map>
+#include <utility>
 
 namespace fjedit {
 
@@ -65,6 +66,7 @@ void FindInFiles::open(std::string_view seed) {
 void FindInFiles::search(const Asked& asked) {
     searched_ = asked;
     hits_.clear();
+    files_found_ = 0;
     selected_ = 0;
     preview_.reset();
     previewed_.clear();
@@ -101,6 +103,11 @@ void FindInFiles::take_found() {
     if (!searching_ || !found_.valid()) return;
     if (found_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
     hits_ = found_.get();
+    // The matches come file by file.
+    files_found_ = 0;
+    for (std::size_t i = 0; i < hits_.size(); ++i) {
+        if (i == 0 || hits_[i].path != hits_[i - 1].path) ++files_found_;
+    }
     searching_ = false;
     selected_ = 0;
     if (!hits_.empty()) preview(hits_.front());
@@ -195,14 +202,12 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
         }
         ui::same_line();
         ui::align_text_to_frame();
-        std::set<std::filesystem::path> files;
-        for (const FileHit& hit : hits_) files.insert(hit.path);
         const std::string count =
             query_.empty()   ? std::string()
             : searching_     ? std::string("Searching\xE2\x80\xA6")
             : hits_.empty()  ? std::string("No results")
                              : std::format("{}{} results in {} files", hits_.size(), hits_.size() >= LIMIT ? "+" : "",
-                                           files.size());
+                                           files_found_);
         ui::text(count, theme::text_secondary());
         ui::same_line();
         ui::set_cursor({top.x + inner - SCOPE_WIDTH, top.y});
@@ -225,10 +230,13 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
         ui::next_width(INCLUDE_WIDTH);
         (void)ui::text_entry("##include", include_, {.hint = "Files to include"});
 
-        // The matches, one row each.
+        // The matches, one row each, those in view drawn; the one picked by
+        // the keys brought into view.
         if (auto list = ui::Region("##hits", {inner, RESULT_ROWS * theme::TREE_ROW})) {
             if (auto tree = ui::Tree("##hits")) {
-                for (std::size_t i = 0; i < hits_.size(); ++i) {
+                const ui::RowsInView rows(hits_.size(),
+                                          std::exchange(reveal_, false) ? std::optional(selected_) : std::nullopt);
+                for (std::size_t i = rows.first(); i < rows.end(); ++i) {
                     const FileHit& hit = hits_[i];
                     const std::string id = std::to_string(i);
                     const std::string_view line = trimmed_front(hit.line);
@@ -287,7 +295,11 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
         const std::size_t before = selected_;
         if (context.key_repeated(ui::Key::Down) && selected_ + 1 < hits_.size()) ++selected_;
         if (context.key_repeated(ui::Key::Up) && selected_ > 0) --selected_;
-        if (selected_ != before) preview(hits_[selected_]);
+        if (selected_ != before) {
+            preview(hits_[selected_]);
+            reveal_ = true;
+            context.request_frame();
+        }
     }
     if (go && selected_ < hits_.size()) {
         ask.go = hits_[selected_];

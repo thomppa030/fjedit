@@ -103,8 +103,12 @@ private:
     std::stop_source stop_;
     std::future<std::vector<FileHit>> found_;
     std::vector<FileHit> hits_;
+    // How many files the matches are in.
+    std::size_t files_found_{0};
     bool searching_{false};
     std::size_t selected_{0};
+    // The keys moved the match picked: the list brings it into view.
+    bool reveal_{false};
 
     // The file in the preview and its view; the files opened only to be
     // shown there.

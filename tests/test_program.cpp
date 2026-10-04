@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <functional>
+#include <format>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -338,6 +339,23 @@ TEST_CASE("Find in files finds in every file, and Enter opens the first at its m
     run.h.step(2);
     REQUIRE_FALSE(run.program->find_in_files().is_open());
     REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "a.cpp"));
+}
+
+TEST_CASE("Find in files draws the matches in view, and Down brings the one picked into it", "[program][find_in_files]") {
+    Running run({}, [](const TempFolder& folder) {
+        for (int i = 0; i < 40; ++i) folder.write(std::format("f{:02}.txt", i), std::format("match {}\n", i));
+    });
+    run.h.press(Key::F, CTRL_SHIFT);
+    run.h.type("match");
+    wait_for_hits(run);
+    REQUIRE(run.program->find_in_files().hits().size() == 40);
+    REQUIRE(run.h.find("match 0", Role::TreeItem) != nullptr);
+    REQUIRE(run.h.find("match 30", Role::TreeItem) == nullptr);
+
+    for (int i = 0; i < 30; ++i) run.h.press(Key::Down);
+    run.h.step(2);
+    REQUIRE(run.h.find("match 30", Role::TreeItem) != nullptr);
+    REQUIRE(run.h.find("match 0", Role::TreeItem) == nullptr);
 }
 
 TEST_CASE("Find in files searches open files with their unsaved changes", "[program][find_in_files]") {
