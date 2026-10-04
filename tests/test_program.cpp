@@ -1,14 +1,18 @@
 #include "fjedit/program/program.hpp"
 
+#include "fake_language.hpp"
 #include "print.hpp"
 #include "temp_folder.hpp"
 
+#include "ftk/platform/child_process.hpp"
 #include "ftk/test/kit_harness.hpp"
+#include "ftk/ui/theme.hpp"
 #include "ftk/ui/kit/icons.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <thread>
 #include <functional>
 #include <format>
 #include <fstream>
@@ -29,11 +33,31 @@ struct Running {
     std::unique_ptr<Program> program;
     ftk::test::KitHarness h{{1280.0f, 800.0f}};
 
+    // The language service made for C++ files, when the test gives one.
+    FakeLanguage* language{nullptr};
+
+    // What answers for C++: nothing, so no test runs a server it didn't ask
+    // for; a fake; or clangd, as the program runs it.
+    enum class Languages { None, Fake, Clangd };
+
     explicit Running(std::initializer_list<std::pair<const char*, const char*>> files,
-                     const std::function<void(const TempFolder&)>& before = {}) {
+                     const std::function<void(const TempFolder&)>& before = {}, Languages languages = Languages::None) {
         for (const auto& [name, bytes] : files) folder.write(name, bytes);
         if (before) before(folder);
-        program = std::make_unique<Program>(folder.path, ProgramOptions{.recovery = recovery_folder()});
+        std::vector<ServiceMaker> services;
+        if (languages == Languages::Fake) {
+            services.push_back({.extensions = {"cpp", "hpp"},
+                                .make = [this](const std::filesystem::path&) -> std::unique_ptr<LanguageService> {
+                                    auto made = std::make_unique<FakeLanguage>();
+                                    language = made.get();
+                                    return made;
+                                }});
+        }
+        program = std::make_unique<Program>(
+            folder.path,
+            ProgramOptions{.recovery = recovery_folder(),
+                           .services = languages == Languages::Clangd ? std::nullopt : std::optional(std::move(services)),
+                           .wake = {}});
         h.set_ui([this] { program->draw(); });
         h.step(3);
     }
@@ -464,3 +488,63 @@ TEST_CASE("The preferences are kept in the settings file and read back held to t
     reading.read("Other", "TextSize=12");
     REQUIRE(read.text_size == TEXT_SIZE_MAX);
 }
+
+TEST_CASE("A C++ file opened is told to its language service, closed and saved too", "[program][language]") {
+    Running run({{"coin.cpp", "int a;\n"}, {"notes.txt", "a\n"}}, {}, Running::Languages::Fake);
+    run.press_row("notes.txt");
+    REQUIRE(run.language == nullptr);
+    run.press_row("coin.cpp");
+    REQUIRE(run.language != nullptr);
+    const std::filesystem::path coin = run.program->workspace().name(run.folder.path / "coin.cpp");
+    REQUIRE(run.language->opened == std::vector<std::filesystem::path>{coin});
+
+    run.h.type("x");
+    run.h.press(Key::S, CTRL);
+    REQUIRE(run.language->saved_paths == std::vector<std::filesystem::path>{coin});
+    run.h.press(Key::W, CTRL);
+    run.h.step(2);
+    REQUIRE(run.language->closed == std::vector<std::filesystem::path>{coin});
+}
+
+TEST_CASE("A definition in another file opens it there, the place selected", "[program][language]") {
+    Running run({{"coin.cpp", "#include \"coin.hpp\"\nint a = speed;\n"}, {"coin.hpp", "// coin\nint speed;\n"}}, {}, Running::Languages::Fake);
+    run.press_row("coin.cpp");
+    run.h.press(Key::F12);
+    run.h.step();
+    REQUIRE(run.language->definitions.size() == 1);
+    const std::filesystem::path header = run.program->workspace().name(run.folder.path / "coin.hpp");
+    FakeLanguage::answer(run.language->definitions.front(), std::vector<Location>{{header, {{1, 4}, {1, 9}}}});
+    run.h.step(3);
+    REQUIRE(run.program->front() == header);
+    REQUIRE(run.document("coin.hpp").buffer().line(1) == "int speed;");
+    // The keyboard in it, the definition selected: typing replaces it.
+    run.h.type("pace");
+    run.h.step();
+    REQUIRE(run.document("coin.hpp").buffer().line(1) == "int pace;");
+}
+
+TEST_CASE("clangd, run by the program, finds the problems in a C++ file opened", "[program][language][clangd]") {
+    const std::vector<std::string> probe{"clangd", "--version"};
+    if (!ftk::platform::ChildProcess::start(probe)) SKIP("clangd isn't installed");
+    Running run({{"compile_flags.txt", "-std=c++20\n"}, {"coin.cpp", "int spin() {\n    return speed;\n}\n"}}, {},
+                Running::Languages::Clangd);
+    run.press_row("coin.cpp");
+    // clangd parses the file on a thread of its own; the program draws its
+    // problem when it comes: the line's tint in the error colour.
+    const auto tinted = [&] {
+        const uint32_t tint = ftk::ui::core::pack_colour(ftk::theme::code_error_line());
+        for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+            for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+                if (p.colour == tint) return true;
+            }
+        }
+        return false;
+    };
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!tinted() && std::chrono::steady_clock::now() < until) {
+        run.h.step();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(tinted());
+}
+

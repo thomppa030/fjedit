@@ -9,6 +9,7 @@
 //     app.run({.ui = [&](ftk::ui::core::Context&, glm::vec2) { program.draw(); }});
 
 #include "fjedit/core/keymap.hpp"
+#include "fjedit/core/language_service.hpp"
 #include "fjedit/core/recovery.hpp"
 #include "fjedit/core/workspace.hpp"
 #include "fjedit/program/file_tree.hpp"
@@ -23,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -33,11 +35,25 @@
 
 namespace fjedit {
 
+/// A language service the program runs: made when the first file it
+/// answers for is opened, and told of every such file open after.
+struct ServiceMaker {
+    /// The extensions of the files it answers for, lower case ("cpp").
+    std::vector<std::string> extensions{};
+    /// Makes it for the folder `root`; null when it can't be.
+    std::function<std::unique_ptr<LanguageService>(const std::filesystem::path& root)> make{};
+};
+
 /// What a program starts with besides its folder.
 struct ProgramOptions {
     /// Where unsaved work is kept against a crash, and offered back from at
     /// the start; none keeps nothing.
     std::filesystem::path recovery{};
+    /// Its language services. Not given, it runs clangd for C and C++.
+    std::optional<std::vector<ServiceMaker>> services{};
+    /// Wakes the frame loop from another thread, when a language service's
+    /// answer comes: ftk::Window::wake() for a window.
+    std::function<void()> wake{};
 };
 
 class Program {
@@ -143,6 +159,18 @@ private:
     // of the files it opened only to show them.
     void take_find_in_files(const FindInFilesAsk& ask);
     void save(const std::filesystem::path& path);
+    // The service that answers for the file at `path`, made when first
+    // wanted; none when none does, or it couldn't be made.
+    [[nodiscard]] LanguageService* service_for(const std::filesystem::path& path);
+    // A view of `document`, the file at `path`, joined to its language
+    // service, which is told of the file the first time.
+    [[nodiscard]] std::unique_ptr<EditorView> make_view(const std::filesystem::path& path, Document& document);
+    // Lets the file at `path` go: its service first, then the workspace.
+    void let_go(const std::filesystem::path& path);
+    // Opens the file at `path` with `span` selected, the keyboard in it.
+    void go_to(const std::filesystem::path& path, Span span);
+    // clangd for C and C++, at the path the preferences give it.
+    [[nodiscard]] ServiceMaker clangd();
 
     Workspace workspace_;
     Keymap keymap_;
@@ -181,6 +209,18 @@ private:
     ftk::ThreadPool pool_;
     // Find in files, over the code.
     FindInFiles find_in_files_{workspace_, pool_};
+    // The language services, each running once wanted, and the files each
+    // was told of; and what wakes the frame loop when one answers.
+    struct Service {
+        ServiceMaker maker;
+        std::unique_ptr<LanguageService> running;
+        std::set<std::filesystem::path> told;
+    };
+    std::vector<Service> services_;
+    std::function<void()> wake_;
+    // A place a view asked to go to in another file, taken once the views
+    // are drawn.
+    std::optional<Location> going_;
     // What went wrong last, for the status bar.
     std::string note_;
 };

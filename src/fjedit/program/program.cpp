@@ -3,6 +3,7 @@
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/text_file.hpp"
+#include "fjedit/lsp/client.hpp"
 #include "fjedit/program/icons.hpp"
 
 #include "ftk/platform/platform.hpp"
@@ -113,8 +114,74 @@ ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem:
 } // namespace
 
 Program::Program(std::filesystem::path root, ProgramOptions options)
-    : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1) {
+    : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1),
+      wake_(std::move(options.wake)) {
     if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
+    for (ServiceMaker& maker : options.services ? *options.services : std::vector<ServiceMaker>{clangd()}) {
+        services_.push_back({.maker = std::move(maker), .running = nullptr, .told = {}});
+    }
+}
+
+ServiceMaker Program::clangd() {
+    static const std::vector<std::string> EXTENSIONS{"c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "inl", "ipp"};
+    return {.extensions = EXTENSIONS,
+            .make = [this](const std::filesystem::path& root) -> std::unique_ptr<LanguageService> {
+                return std::make_unique<lsp::Client>(lsp::ClientOptions{
+                    // No mark before a completion's name for whether it
+                    // brings an #include: the name is the name.
+                    .command = {preferences_.clangd, "--log=error", "--header-insertion-decorators=0"},
+                    .root = root,
+                    .extensions = EXTENSIONS,
+                    .language_id = [](const std::filesystem::path& path) {
+                        return path.extension() == ".c" ? std::string("c") : std::string("cpp");
+                    },
+                    .arrived = wake_,
+                });
+            }};
+}
+
+LanguageService* Program::service_for(const std::filesystem::path& path) {
+    std::string extension = path.extension().string();
+    if (extension.empty()) return nullptr;
+    extension.erase(0, 1);
+    for (char& c : extension) c = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+    for (Service& service : services_) {
+        if (!std::ranges::contains(service.maker.extensions, extension)) continue;
+        if (!service.running && service.maker.make) service.running = service.maker.make(workspace_.root());
+        return service.running.get();
+    }
+    return nullptr;
+}
+
+std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
+    auto view = std::make_unique<EditorView>(document);
+    view->minimap = preferences_.minimap;
+    view->text_size = static_cast<float>(preferences_.text_size);
+    if (LanguageService* service = service_for(path)) {
+        view->service = service;
+        view->path = path;
+        for (Service& running : services_) {
+            if (running.running.get() == service && running.told.insert(path).second) service->open(path, document);
+        }
+    }
+    return view;
+}
+
+void Program::let_go(const std::filesystem::path& path) {
+    for (Service& service : services_) {
+        if (service.told.erase(path) > 0 && service.running) service.running->close(path);
+    }
+    workspace_.close(path);
+}
+
+void Program::go_to(const std::filesystem::path& path, Span span) {
+    open(path);
+    Tab* tab = front_tab();
+    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    if (document == nullptr) return;
+    const Buffer& buffer = document->buffer();
+    tab->view->selections = Selections({.anchor = buffer.clamp(span.from), .caret = buffer.clamp(span.to)});
+    tab->view->reveal = true;
 }
 
 std::filesystem::path Program::recovery_folder(const std::filesystem::path& root) {
@@ -148,7 +215,7 @@ void Program::open(const std::filesystem::path& path) {
     const std::filesystem::path named = workspace_.name(path);
     auto found = std::ranges::find(group.tabs, named, &Tab::path);
     if (found == group.tabs.end()) {
-        group.tabs.push_back({.path = named, .view = std::make_unique<EditorView>(**document)});
+        group.tabs.push_back({.path = named, .view = make_view(named, **document)});
         found = std::prev(group.tabs.end());
     }
     const auto index = static_cast<std::size_t>(std::distance(group.tabs.begin(), found));
@@ -196,6 +263,9 @@ void Program::save(const std::filesystem::path& path) {
     }
     changed_.erase(workspace_.name(path));
     forget_kept(workspace_.name(path));
+    for (Service& service : services_) {
+        if (service.running && service.told.contains(workspace_.name(path))) service.running->saved(workspace_.name(path));
+    }
     note_.clear();
 }
 
@@ -273,7 +343,7 @@ void Program::close_tab(Group& group, std::size_t index) {
         return std::ranges::contains(other.tabs, path, &Tab::path);
     });
     if (!shown) {
-        workspace_.close(path);
+        let_go(path);
         forget_kept(path);
     }
     if (group.tabs.empty() && groups_.size() > 1) {
@@ -291,7 +361,7 @@ void Program::split(std::size_t index) {
     Document* document = workspace_.find(shown.path);
     if (document == nullptr) return;
     Group beside;
-    auto view = std::make_unique<EditorView>(*document);
+    auto view = make_view(shown.path, *document);
     view->selections = shown.view->selections;
     view->scroll = shown.view->scroll;
     view->focus = true;
@@ -324,19 +394,12 @@ void Program::take_find_in_files(const FindInFilesAsk& ask) {
         // it goes.
         if (workspace_.unsaved(path)) {
             Group& group = groups_[active_];
-            group.tabs.push_back({.path = path, .view = std::make_unique<EditorView>(*workspace_.find(path))});
+            group.tabs.push_back({.path = path, .view = make_view(path, *workspace_.find(path))});
         } else {
-            workspace_.close(path);
+            let_go(path);
         }
     }
-    if (ask.go) {
-        open(ask.go->path);
-        if (Tab* tab = front_tab(); tab != nullptr && workspace_.find(tab->path) != nullptr) {
-            const Buffer& buffer = workspace_.find(tab->path)->buffer();
-            tab->view->selections = Selections({.anchor = buffer.clamp(ask.go->span.from), .caret = buffer.clamp(ask.go->span.to)});
-            tab->view->reveal = true;
-        }
-    }
+    if (ask.go) go_to(ask.go->path, ask.go->span);
 }
 
 void Program::take_keys() {
@@ -351,6 +414,10 @@ void Program::take_keys() {
 }
 
 void Program::draw() {
+    // What the language services found since, before anything shows it.
+    for (Service& service : services_) {
+        if (service.running) service.running->update();
+    }
     check_disk(ui::core::current().time());
     take_keys();
     draw_menus();
@@ -391,6 +458,7 @@ void Program::draw() {
         take_find_in_files(find_in_files_.draw({.min = {code_min.x, code_min.y + tabs}, .max = code_max}, folder, keymap_,
                                                static_cast<float>(preferences_.text_size)));
     }
+    if (const std::optional<Location> going = std::exchange(going_, std::nullopt)) go_to(going->path, going->span);
     ui::end_host_window();
     draw_status();
     preferences_window_.draw(preferences_);
@@ -420,7 +488,8 @@ void Program::draw_menus() {
                  entry("Copy", "edit.copy", open_file),     entry("Paste", "edit.paste", open_file),
                  ui::MenuEntry::separator(),                entry("Find", "find.open", open_file),
                  entry("Replace", "find.replace", open_file), ui::MenuEntry::separator(),
-                 entry("Preferences", "edit.preferences")};
+                 entry("Rename", "symbol.rename", open_file), entry("Format", "format.document", open_file),
+                 ui::MenuEntry::separator(),                entry("Preferences", "edit.preferences")};
          }},
         {.label = "View",
          .entries = [&] {
@@ -434,6 +503,7 @@ void Program::draw_menus() {
         {.label = "Go",
          .entries = [&] {
              return std::vector<ui::MenuEntry>{entry("Go to line", "goto.open", open_file),
+                                               entry("Go to definition", "definition.go", open_file),
                                                entry("Find in files", "files.find")};
          }},
     };
@@ -520,6 +590,7 @@ void Program::draw_group(Group& group, std::size_t index) {
         if (document != nullptr && room.x > 0.0f && room.y > 0.0f) {
             const CodeViewResult result = code_view("Code", *document, *tab.view, keymap_, {.min = at, .max = at + room});
             if (result.focused) active_ = index;
+            if (result.go) going_ = result.go;
             ui::reserve(room);
         }
     }

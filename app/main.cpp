@@ -40,7 +40,11 @@ int run(const std::filesystem::path& folder) {
         FTK_CORE_CRITICAL("fjedit could not find its fonts beside it");
         return EXIT_FAILURE;
     }
-    fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder)});
+    // A language server's answer comes on a thread of its own: it wakes the
+    // window to draw it.
+    fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder),
+                                     .services = std::nullopt,
+                                     .wake = [] { ftk::Window::wake(); }});
 
     // fjedit's settings file, this machine's: where its windows were left
     // and its preferences. The window's UI is the current one from here on,

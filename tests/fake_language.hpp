@@ -40,6 +40,7 @@ struct FakeLanguage final : fjedit::LanguageService {
     std::vector<std::string> new_names;
     std::vector<Question<std::optional<fjedit::VersionedEdit>>> formats;
     std::vector<std::filesystem::path> opened;
+    std::vector<std::filesystem::path> closed;
     std::vector<std::filesystem::path> saved_paths;
 
     // Answers `question` with `answer`.
@@ -51,7 +52,7 @@ struct FakeLanguage final : fjedit::LanguageService {
 
     [[nodiscard]] bool serves(const std::filesystem::path&) const override { return true; }
     void open(const std::filesystem::path& path, const fjedit::Document&) override { opened.push_back(path); }
-    void close(const std::filesystem::path&) override {}
+    void close(const std::filesystem::path& path) override { closed.push_back(path); }
     void saved(const std::filesystem::path& path) override { saved_paths.push_back(path); }
     void update() override {}
     [[nodiscard]] fjedit::ServiceStatus status() const override { return state; }

@@ -30,6 +30,7 @@ namespace theme = ftk::theme;
 //     [fjedit][Code]
 //     TextSize=13
 //     Minimap=1
+//     Clangd=clangd
 constexpr const char* SECTION = "fjedit";
 constexpr std::string_view ENTRY = "Code";
 
@@ -42,6 +43,10 @@ void read_line(Preferences& preferences, std::string_view entry, std::string_vie
     if (equals == std::string_view::npos) return;
     const std::string_view key = line.substr(0, equals);
     const std::string_view value = line.substr(equals + 1);
+    if (key == "Clangd") {
+        if (!value.empty()) preferences.clangd = value;
+        return;
+    }
     int number = 0;
     if (std::from_chars(value.data(), value.data() + value.size(), number).ec != std::errc{}) return;
     if (key == "TextSize") {
@@ -77,7 +82,8 @@ ui::SettingsSection preferences_section(Preferences& preferences) {
                 return std::vector<ui::SettingsEntry>{
                     {std::string(ENTRY),
                      {std::format("TextSize={}", preferences.text_size),
-                      std::format("Minimap={}", preferences.minimap ? 1 : 0)}}};
+                      std::format("Minimap={}", preferences.minimap ? 1 : 0),
+                      std::format("Clangd={}", preferences.clangd)}}};
             }};
 }
 

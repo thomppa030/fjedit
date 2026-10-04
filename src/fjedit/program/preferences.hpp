@@ -26,6 +26,9 @@ struct Preferences {
     int text_size{static_cast<int>(CODE_TEXT)};
     /// The views show the minimap.
     bool minimap{true};
+    /// clangd, which answers for C and C++: a path, or a name looked for
+    /// along the PATH.
+    std::string clangd{"clangd"};
 };
 
 /// The settings file's section that keeps `preferences`, read back as the
