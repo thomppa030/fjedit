@@ -130,6 +130,12 @@ private:
     void ask_close();
     void ask_quit();
     void ask_recover();
+    // A new name for what a view asked to rename, then the service's
+    // edits for it, made once they come.
+    void ask_rename();
+    // Makes `edits`: in the files open, as one step each while they are as
+    // the edits were made for; in the others, on disk.
+    void make_edits(const WorkspaceEdit& edits);
     void take_keys();
     // Every few seconds: files another program changed, reloaded when they
     // have no unsaved changes here and noted when they do; the tree read
@@ -221,6 +227,17 @@ private:
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;
+    // A rename asked for: where, and what is named there; the new name
+    // typed, whether its prompt is open, and the service's answer to come.
+    struct Renaming {
+        std::filesystem::path path;
+        Position at;
+        std::string name;
+        std::string typed;
+        bool prompting{false};
+        Asked<ftk::Result<WorkspaceEdit>> asked;
+    };
+    std::optional<Renaming> renaming_;
     // What went wrong last, for the status bar.
     std::string note_;
 };

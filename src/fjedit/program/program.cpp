@@ -1,6 +1,8 @@
 #include "fjedit/program/program.hpp"
 
 #include "fjedit/core/commands.hpp"
+#include "fjedit/core/find.hpp"
+#include "fjedit/core/language.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/text_file.hpp"
 #include "fjedit/lsp/client.hpp"
@@ -591,6 +593,15 @@ void Program::draw_group(Group& group, std::size_t index) {
             const CodeViewResult result = code_view("Code", *document, *tab.view, keymap_, {.min = at, .max = at + room});
             if (result.focused) active_ = index;
             if (result.go) going_ = result.go;
+            if (result.rename && tab.view->service != nullptr) {
+                const Span word = word_at(document->buffer(), *result.rename);
+                if (word.empty()) {
+                    note_ = "Nothing to rename there";
+                } else {
+                    renaming_ = Renaming{.path = tab.path, .at = word.from, .name = document->buffer().text(word),
+                                         .typed = {}, .prompting = false, .asked = {}};
+                }
+            }
             ui::reserve(room);
         }
     }
@@ -626,6 +637,68 @@ void Program::draw_prompts() {
     ask_recover();
     ask_close();
     ask_quit();
+    ask_rename();
+}
+
+void Program::ask_rename() {
+    if (!renaming_) return;
+    Renaming& renaming = *renaming_;
+    if (!renaming.asked) {
+        if (!renaming.prompting) {
+            ui::open_dialog("##rename", {dialog_at_, 0.5f});
+            renaming.prompting = true;
+        }
+        const std::string title = "Rename " + renaming.name;
+        const ui::DialogAnswer answer = ui::prompt_dialog(
+            "##rename", {.title = title.c_str(), .hint = "Its new name", .confirm = "Rename"}, renaming.typed);
+        if (answer == ui::DialogAnswer::Cancel) {
+            renaming_.reset();
+        } else if (answer == ui::DialogAnswer::Confirm) {
+            LanguageService* service = service_for(renaming.path);
+            if (service == nullptr) {
+                renaming_.reset();
+                return;
+            }
+            renaming.asked = service->rename(renaming.path, renaming.at, renaming.typed);
+        }
+        return;
+    }
+    if (!renaming.asked->answered) return;
+    const ftk::Result<WorkspaceEdit> edits = renaming.asked->answer;
+    renaming_.reset();
+    if (!edits) {
+        note_ = edits.error();
+        return;
+    }
+    make_edits(*edits);
+}
+
+void Program::make_edits(const WorkspaceEdit& edits) {
+    for (const auto& [path, file] : edits) {
+        if (Document* document = workspace_.find(path)) {
+            if (file.version && *file.version != document->version()) {
+                note_ = std::format("{} changed while it was being renamed in", path.filename().string());
+                continue;
+            }
+            // Its views catch up through the edit, as with any made elsewhere.
+            Selections selections;
+            const MonospaceLayout layout;
+            CommandContext context{.document = *document, .selections = selections, .layout = layout};
+            (void)apply_edit(context, file.edit);
+            continue;
+        }
+        const ftk::Result<std::string> bytes = read_text_file(path);
+        if (!bytes) {
+            note_ = bytes.error();
+            continue;
+        }
+        Document document(*bytes, language_for(path.filename().string()));
+        Selections selections;
+        const MonospaceLayout layout;
+        CommandContext context{.document = document, .selections = selections, .layout = layout};
+        (void)apply_edit(context, file.edit);
+        if (const ftk::Result<> written = write_text_file(path, document.buffer().text()); !written) note_ = written.error();
+    }
 }
 
 void Program::ask_close() {

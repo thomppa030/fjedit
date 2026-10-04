@@ -548,3 +548,59 @@ TEST_CASE("clangd, run by the program, finds the problems in a C++ file opened",
     REQUIRE(tinted());
 }
 
+
+TEST_CASE("F2 asks for a new name, and the rename's edits are made in every file", "[program][language][rename]") {
+    Running run({{"coin.cpp", "int speed;\nint f() { return speed; }\n"}, {"other.cpp", "extern int speed;\n"}}, {},
+                Running::Languages::Fake);
+    run.press_row("coin.cpp");
+    for (int i = 0; i < 5; ++i) run.h.press(Key::Right);
+    run.h.press(Key::F2);
+    run.h.step(2);
+    run.h.type("pace");
+    run.h.press(Key::Enter);
+    run.h.step(2);
+    REQUIRE(run.language->renames.size() == 1);
+    REQUIRE(run.language->new_names == std::vector<std::string>{"pace"});
+    REQUIRE(run.language->renames.front().at == Position{0, 4});
+
+    const std::filesystem::path coin = run.program->workspace().name(run.folder.path / "coin.cpp");
+    const std::filesystem::path other = run.program->workspace().name(run.folder.path / "other.cpp");
+    WorkspaceEdit edits;
+    edits[coin] = {.version = run.document("coin.cpp").version(),
+                   .edit = {.changes = {{.span = {{0, 4}, {0, 9}}, .text = "pace"}, {.span = {{1, 17}, {1, 22}}, .text = "pace"}}}};
+    edits[other] = {.version = std::nullopt, .edit = {.changes = {{.span = {{0, 11}, {0, 16}}, .text = "pace"}}}};
+    FakeLanguage::answer(run.language->renames.front(), ftk::Result<WorkspaceEdit>(edits));
+    run.h.step(2);
+    REQUIRE(run.document("coin.cpp").buffer().text() == "int pace;\nint f() { return pace; }\n");
+    REQUIRE(run.program->workspace().unsaved(coin));
+    REQUIRE(run.folder.read("other.cpp") == "extern int pace;\n");
+}
+
+TEST_CASE("Escape leaves the rename's prompt with nothing asked", "[program][language][rename]") {
+    Running run({{"coin.cpp", "int speed;\n"}}, {}, Running::Languages::Fake);
+    run.press_row("coin.cpp");
+    for (int i = 0; i < 5; ++i) run.h.press(Key::Right);
+    run.h.press(Key::F2);
+    run.h.step(2);
+    run.h.press(Key::Escape);
+    run.h.step(2);
+    REQUIRE(run.language->renames.empty());
+    // The keyboard is the code's again.
+    run.h.type("x");
+    run.h.step();
+    REQUIRE(run.document("coin.cpp").buffer().line(0) == "int sxpeed;");
+}
+
+TEST_CASE("Cancelling the question about closing gives the keyboard back to the code", "[program]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    run.h.press(Key::W, CTRL);
+    run.h.step(2);
+    run.h.press(Key::Escape);
+    run.h.step(2);
+    REQUIRE(run.program->front().has_value());
+    run.h.type("y");
+    run.h.step();
+    REQUIRE(run.document("coin.cpp").buffer().line(0) == "xyint a;");
+}
