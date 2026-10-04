@@ -73,7 +73,9 @@ public:
     /// for after an edit.
     [[nodiscard]] const std::vector<FoldRange>& folds() const;
 
-    /// How many of the latest edits the document keeps a note of.
+    /// How many of the latest edits the document keeps a note of, at the
+    /// least: the note is trimmed in batches, so it may hold up to twice as
+    /// many.
     static constexpr std::size_t JOURNAL = 4096;
 
 private:
