@@ -4,6 +4,7 @@
 #include "temp_folder.hpp"
 
 #include "ftk/test/kit_harness.hpp"
+#include "ftk/ui/kit/icons.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -256,3 +257,36 @@ TEST_CASE("Discard lets the work kept from before go", "[program][recovery]") {
     REQUIRE_FALSE(run.program->front().has_value());
 }
 
+TEST_CASE("Quitting with nothing unsaved goes at once", "[program][quit]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    REQUIRE(run.program->ask_to_quit());
+    REQUIRE(run.program->quitting());
+}
+
+TEST_CASE("Quitting with unsaved files asks: Cancel stays, Don't save goes without them", "[program][quit]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    run.h.step(DISK_FRAMES);
+    REQUIRE_FALSE(run.program->ask_to_quit());
+    run.press("Cancel");
+    REQUIRE_FALSE(run.program->quitting());
+
+    REQUIRE_FALSE(run.program->ask_to_quit());
+    run.press("Don't save");
+    REQUIRE(run.program->quitting());
+    REQUIRE(run.folder.read("coin.cpp") == "int a;\n");
+    REQUIRE(run.kept().empty());
+}
+
+TEST_CASE("Save and quit saves the files that stay ticked", "[program][quit]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    REQUIRE_FALSE(run.program->ask_to_quit());
+    // The save button leads with its icon.
+    run.press(std::string(ftk::ui::icon::save) + "  Save 1 and quit");
+    REQUIRE(run.program->quitting());
+    REQUIRE(run.folder.read("coin.cpp") == "xint a;\n");
+}

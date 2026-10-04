@@ -46,6 +46,7 @@ Keymap program_keys() {
     const auto ctrl = [](Key key) { return Chord{.key = key, .modifiers = {.ctrl = true}}; };
     keys.bind(Program::PROGRAM, {ctrl(Key::S)}, "file.save");
     keys.bind(Program::PROGRAM, {ctrl(Key::W)}, "file.close");
+    keys.bind(Program::PROGRAM, {ctrl(Key::Q)}, "file.quit");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageDown)}, "tab.next");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageUp)}, "tab.previous");
     return keys;
@@ -158,6 +159,8 @@ bool Program::run(std::string_view command) {
         }
     } else if (command == "file.close") {
         close_front();
+    } else if (command == "file.quit") {
+        (void)ask_to_quit();
     } else if (command == "tab.next" || command == "tab.previous") {
         if (group.tabs.empty()) return true;
         const std::size_t count = group.tabs.size();
@@ -201,6 +204,17 @@ void Program::keep_unsaved() {
 
 void Program::forget_kept(const std::filesystem::path& path) {
     if (kept_.erase(path) > 0 && recovery_) recovery_->forget(path);
+}
+
+bool Program::ask_to_quit() {
+    if (quitting_) return true;
+    const std::vector<std::filesystem::path> files = workspace_.files();
+    if (std::ranges::none_of(files, [&](const std::filesystem::path& path) { return workspace_.unsaved(path); })) {
+        quitting_ = true;
+        return true;
+    }
+    quit_asked_ = true;
+    return false;
 }
 
 void Program::check_disk(double now) {
@@ -293,7 +307,8 @@ void Program::draw_menus() {
         {.label = "File",
          .entries = [&] {
              return std::vector<ui::MenuEntry>{entry("Save", "file.save", open_file), entry("Save all", "file.save_all"),
-                                               ui::MenuEntry::separator(), entry("Close", "file.close", open_file)};
+                                               ui::MenuEntry::separator(), entry("Close", "file.close", open_file),
+                                               ui::MenuEntry::separator(), entry("Quit", "file.quit")};
          }},
         {.label = "Edit",
          .entries = [&] {
@@ -410,6 +425,7 @@ void Program::draw_status() {
 void Program::draw_prompts() {
     ask_recover();
     ask_close();
+    ask_quit();
 }
 
 void Program::ask_close() {
@@ -433,6 +449,39 @@ void Program::ask_close() {
     Group& group = groups_[active_];
     const auto found = std::ranges::find(group.tabs, path, &Tab::path);
     if (found != group.tabs.end()) close_tab(group, static_cast<std::size_t>(std::distance(group.tabs.begin(), found)));
+}
+
+void Program::ask_quit() {
+    if (quit_asked_) {
+        quit_asked_ = false;
+        quit_paths_.clear();
+        quit_items_.clear();
+        for (const std::filesystem::path& path : workspace_.files()) {
+            if (!workspace_.unsaved(path)) continue;
+            quit_paths_.push_back(path);
+            quit_items_.push_back(listed(path, workspace_.root(), {}));
+        }
+        if (!quit_items_.empty()) ui::open_dialog("##quit", {dialog_at_, 0.5f});
+    }
+    if (quit_items_.empty()) return;
+    const std::size_t count = quit_items_.size();
+    const std::string title = count == 1 ? std::string("1 file has unsaved changes")
+                                         : std::format("{} files have unsaved changes", count);
+    const ui::UnsavedAnswer answer = ui::unsaved_list_dialog("##quit", title.c_str(), quit_items_);
+    if (answer == ui::UnsavedAnswer::None) return;
+    const std::vector<std::filesystem::path> paths = std::exchange(quit_paths_, {});
+    const std::vector<ui::UnsavedItem> items = std::exchange(quit_items_, {});
+    if (answer == ui::UnsavedAnswer::Cancel) return;
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        if (answer == ui::UnsavedAnswer::Save && items[i].save) {
+            save(paths[i]);
+            // A file that couldn't be saved keeps the program open.
+            if (workspace_.unsaved(paths[i])) return;
+        } else {
+            forget_kept(paths[i]);
+        }
+    }
+    quitting_ = true;
 }
 
 void Program::ask_recover() {

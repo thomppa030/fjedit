@@ -6,6 +6,7 @@
 
 #include "ftk/app/app_window.hpp"
 #include "ftk/base/log.hpp"
+#include "ftk/gpu/window.hpp"
 #include "ftk/platform/platform.hpp"
 #include "ftk/ui/core_kit.hpp"
 
@@ -38,7 +39,17 @@ int run(const std::filesystem::path& folder) {
         return EXIT_FAILURE;
     }
     fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder)});
-    auto ran = app.run({.ui = [&](ftk::ui::core::Context&, glm::vec2) { program.draw(); }});
+    auto ran = app.run({
+        .ui = [&](ftk::ui::core::Context&, glm::vec2) { program.draw(); },
+        // The window waits while the program asks about unsaved files, and
+        // closes once it has its answer.
+        .update =
+            [&] {
+                ftk::Window& window = app.window();
+                if (window.should_close() && !program.ask_to_quit()) window.cancel_close();
+                if (program.quitting()) window.request_close();
+            },
+    });
     if (!ran) {
         FTK_CORE_CRITICAL("fjedit stopped: {}", ran.error());
         return EXIT_FAILURE;

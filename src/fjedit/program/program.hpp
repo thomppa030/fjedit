@@ -59,6 +59,14 @@ public:
     /// there is none.
     bool run(std::string_view command);
 
+    /// Asked to quit, by the window or the menu: true when nothing unsaved
+    /// stands in the way. Otherwise it asks what to do with the unsaved
+    /// files on its next draw and answers false; quitting() then says when
+    /// it may go. Callable between frames.
+    bool ask_to_quit();
+
+    /// Quitting was asked for and answered: the window may close.
+    [[nodiscard]] bool quitting() const { return quitting_; }
 
     [[nodiscard]] const Workspace& workspace() const { return workspace_; }
 
@@ -89,6 +97,7 @@ private:
     void draw_status();
     void draw_prompts();
     void ask_close();
+    void ask_quit();
     void ask_recover();
     void take_keys();
     // Every few seconds: files another program changed, reloaded when they
@@ -135,6 +144,12 @@ private:
     bool recover_looked_{false};
     std::vector<Recovery::Kept> recovering_;
     std::vector<ftk::ui::UnsavedItem> recover_items_;
+    // Quitting: asked for, the unsaved files asked about while asked, and
+    // the answer given.
+    bool quit_asked_{false};
+    std::vector<std::filesystem::path> quit_paths_;
+    std::vector<ftk::ui::UnsavedItem> quit_items_;
+    bool quitting_{false};
     // Where the program's dialogs hang from: under the tabs.
     glm::vec2 dialog_at_{0.0f};
     // What went wrong last, for the status bar.
