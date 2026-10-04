@@ -70,8 +70,12 @@ public:
 
     [[nodiscard]] const Workspace& workspace() const { return workspace_; }
 
-    /// The file in front, when one is open.
+    /// The file in front in the group that last had the keyboard, when one
+    /// is open there.
     [[nodiscard]] std::optional<std::filesystem::path> front() const;
+
+    /// How many groups of tabs stand side by side: one, or more once split.
+    [[nodiscard]] std::size_t groups() const { return groups_.size(); }
 
     /// The keymap mode the program's own keys are bound in.
     static constexpr std::string_view PROGRAM = "program";
@@ -117,8 +121,11 @@ private:
     // changes that no other tab shows.
     void close_front();
     // Closes `group`'s tab `index`, and lets its file go when no tab
-    // shows it any more.
+    // shows it any more. A group split off that has no tab left goes.
     void close_tab(Group& group, std::size_t index);
+    // Opens the file in front of group `index` again in a group of its own
+    // beside it, which then has the keyboard.
+    void split(std::size_t index);
     void save(const std::filesystem::path& path);
 
     Workspace workspace_;

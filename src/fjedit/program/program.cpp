@@ -3,10 +3,13 @@
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/text_file.hpp"
+#include "fjedit/program/icons.hpp"
 
 #include "ftk/platform/platform.hpp"
 
 #include "ftk/ui/core/context.hpp"
+#include "ftk/ui/draw_list.hpp"
+#include "ftk/ui/kit/button.hpp"
 #include "ftk/ui/kit/dialog.hpp"
 #include "ftk/ui/kit/feedback.hpp"
 #include "ftk/ui/kit/icons.hpp"
@@ -39,6 +42,8 @@ using ftk::ui::Key;
 constexpr float SIDE_WIDTH = 260.0f;
 // How often the disk is looked at for files changed elsewhere.
 constexpr double DISK_CHECK = 2.0;
+// The buttons at the end of a tab row, in from its right edge.
+constexpr float TAB_END_PAD = 4.0f;
 
 // The standard keys, with the program's own in its mode.
 Keymap program_keys() {
@@ -47,6 +52,7 @@ Keymap program_keys() {
     keys.bind(Program::PROGRAM, {ctrl(Key::S)}, "file.save");
     keys.bind(Program::PROGRAM, {ctrl(Key::W)}, "file.close");
     keys.bind(Program::PROGRAM, {ctrl(Key::Q)}, "file.quit");
+    keys.bind(Program::PROGRAM, {ctrl(Key::Backslash)}, "view.split");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageDown)}, "tab.next");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageUp)}, "tab.previous");
     return keys;
@@ -161,6 +167,8 @@ bool Program::run(std::string_view command) {
         close_front();
     } else if (command == "file.quit") {
         (void)ask_to_quit();
+    } else if (command == "view.split") {
+        split(active_);
     } else if (command == "tab.next" || command == "tab.previous") {
         if (group.tabs.empty()) return true;
         const std::size_t count = group.tabs.size();
@@ -261,6 +269,29 @@ void Program::close_tab(Group& group, std::size_t index) {
         workspace_.close(path);
         forget_kept(path);
     }
+    if (group.tabs.empty() && groups_.size() > 1) {
+        const auto gone = static_cast<std::size_t>(&group - groups_.data());
+        groups_.erase(groups_.begin() + static_cast<std::ptrdiff_t>(gone));
+        if (active_ >= gone && active_ > 0) --active_;
+    }
+}
+
+void Program::split(std::size_t index) {
+    if (index >= groups_.size()) return;
+    const Group& from = groups_[index];
+    if (from.front >= from.tabs.size()) return;
+    const Tab& shown = from.tabs[from.front];
+    Document* document = workspace_.find(shown.path);
+    if (document == nullptr) return;
+    Group beside;
+    auto view = std::make_unique<EditorView>(*document);
+    view->selections = shown.view->selections;
+    view->scroll = shown.view->scroll;
+    view->focus = true;
+    beside.tabs.push_back({.path = shown.path, .view = std::move(view)});
+    beside.select = 0;
+    groups_.insert(groups_.begin() + static_cast<std::ptrdiff_t>(index + 1), std::move(beside));
+    active_ = index + 1;
 }
 
 void Program::take_keys() {
@@ -288,7 +319,24 @@ void Program::draw() {
         // Dialogs hang from the top of the editor, under the tabs once
         // there are some.
         dialog_at_ = ui::cursor() + glm::vec2{ui::space_left().x * 0.5f, 0.0f};
-        draw_group(groups_[0], 0);
+        // The groups side by side, each but the last as wide as it was left
+        // and a rule after it.
+        const float each = ui::space_left().x / static_cast<float>(groups_.size());
+        for (std::size_t index = 0; index < groups_.size(); ++index) {
+            const bool last = index + 1 == groups_.size();
+            if (index > 0) ui::same_line(0.0f);
+            const std::string id = std::format("##group{}", index);
+            if (auto region = ui::Region(id.c_str(), {last ? 0.0f : each, height},
+                                         {.resize_x = !last, .wheel_scrolls = false})) {
+                draw_group(groups_[index], index);
+                if (!last) {
+                    const glm::vec2 max = ui::window_content_max();
+                    ui::DrawList::window().rect_filled({max.x - 1.0f, ui::window_content_min().y}, max, theme::border());
+                }
+            }
+            // A group may have closed its last tab and gone.
+            if (index >= groups_.size()) break;
+        }
     }
     ui::end_host_window();
     draw_status();
@@ -351,7 +399,10 @@ void Program::draw_group(Group& group, std::size_t index) {
         return;
     }
     std::optional<std::size_t> closed;
-    const float middle = ui::cursor().x + ui::space_left().x * 0.5f;
+    const glm::vec2 row = ui::cursor();
+    const float right = row.x + ui::space_left().x;
+    const float middle = row.x + ui::space_left().x * 0.5f;
+    const std::size_t front_before = group.front;
     if (auto tabs = ui::DocumentTabs("##tabs")) {
         for (std::size_t i = 0; i < group.tabs.size(); ++i) {
             const Tab& tab = group.tabs[i];
@@ -367,7 +418,16 @@ void Program::draw_group(Group& group, std::size_t index) {
         }
     }
     group.select.reset();
+    // A tab pressed makes its group the one in front.
+    if (group.front != front_before) active_ = index;
     dialog_at_ = {middle, ui::cursor().y};
+
+    // At the tab row's right end, the split button.
+    const glm::vec2 below = ui::cursor();
+    const float button = ui::frame_height();
+    ui::set_cursor({right - button - TAB_END_PAD, row.y + (below.y - row.y - button) * 0.5f});
+    if (ui::icon_button("##split", icon::split, "Split (Ctrl \\)")) split(index);
+    ui::set_cursor(below);
 
     // The code of the tab in front, in the space under the tabs, under a
     // strip while its file changed on disk with unsaved changes here.

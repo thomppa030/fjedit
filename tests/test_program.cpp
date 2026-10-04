@@ -290,3 +290,26 @@ TEST_CASE("Save and quit saves the files that stay ticked", "[program][quit]") {
     REQUIRE(run.program->quitting());
     REQUIRE(run.folder.read("coin.cpp") == "xint a;\n");
 }
+
+TEST_CASE("Splitting opens the file in front again beside it, one document between them", "[program][split]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.press(Key::Backslash, CTRL);
+    run.h.step(2);
+    REQUIRE(run.program->groups() == 2);
+    std::size_t tabs = 0;
+    for (const auto& node : run.h.ui().semantics()) tabs += node.role == Role::Tab && node.label == "coin.cpp";
+    REQUIRE(tabs == 2);
+
+    // The new group has the keyboard; what is typed there is the file's.
+    run.h.type("x");
+    REQUIRE(run.document("coin.cpp").buffer().text() == "xint a;\n");
+    REQUIRE(run.program->workspace().files().size() == 1);
+
+    // Closing the split's only tab closes the split, and asks nothing: the
+    // other tab still shows the changes.
+    run.h.press(Key::W, CTRL);
+    run.h.step(2);
+    REQUIRE(run.program->groups() == 1);
+    REQUIRE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+}
