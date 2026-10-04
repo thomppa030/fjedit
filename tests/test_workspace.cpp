@@ -1,9 +1,12 @@
+#include "fjedit/core/commands.hpp"
 #include "fjedit/core/text_file.hpp"
+#include "fjedit/core/workspace.hpp"
 
 #include "print.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -44,7 +47,21 @@ std::string read(const fs::path& file) {
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
 }
 
+// Writes `bytes` over `file` and dates it a little later, as a program
+// writing it a moment after would, whatever the file system's clock steps.
+void write_later(const fs::path& file, std::string_view bytes) {
+    const auto before = fs::last_write_time(file);
+    std::ofstream(file, std::ios::binary | std::ios::trunc).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    fs::last_write_time(file, before + std::chrono::seconds(2));
+}
 
+// Types `text` at the start of `document` as a view would.
+void type_at_start(Document& document, std::string_view text) {
+    Selections selections;
+    const MonospaceLayout layout;
+    CommandContext context{.document = document, .selections = selections, .layout = layout, .text = text};
+    REQUIRE(run_command("edit.type", context));
+}
 
 } // namespace
 
@@ -90,4 +107,69 @@ TEST_CASE("Writing through a link writes the file it names and keeps the link", 
     REQUIRE(write_text_file(folder.path / "link.txt", "two").has_value());
     REQUIRE(fs::is_symlink(folder.path / "link.txt"));
     REQUIRE(read(file) == "two");
+}
+
+TEST_CASE("A file opens once in a workspace, however its path is written", "[workspace]") {
+    const TempFolder folder;
+    folder.write("scripts/coin.cpp", "int a;\n");
+    Workspace workspace(folder.path);
+    const ftk::Result<Document*> first = workspace.open(folder.path / "scripts/coin.cpp");
+    REQUIRE(first.has_value());
+    REQUIRE(*workspace.open("scripts/coin.cpp") == *first);
+    REQUIRE(*workspace.open(folder.path / "scripts" / ".." / "scripts" / "coin.cpp") == *first);
+    REQUIRE(workspace.files().size() == 1);
+    REQUIRE((*first)->language().name == "C++");
+    REQUIRE_FALSE(workspace.open("missing.cpp").has_value());
+}
+
+TEST_CASE("Saving writes the document, which is no longer unsaved and no change on disk", "[workspace]") {
+    const TempFolder folder;
+    const fs::path file = folder.write("a.txt", "one\r\ntwo");
+    Workspace workspace(folder.path);
+    Document& document = **workspace.open(file);
+    REQUIRE_FALSE(workspace.unsaved(file));
+    type_at_start(document, "x");
+    REQUIRE(workspace.unsaved(file));
+    REQUIRE(workspace.save(file).has_value());
+    REQUIRE(read(file) == "xone\r\ntwo");
+    REQUIRE_FALSE(workspace.unsaved(file));
+    REQUIRE(workspace.changed_on_disk().empty());
+
+    workspace.close(file);
+    REQUIRE(workspace.find(file) == nullptr);
+}
+
+TEST_CASE("A change another program makes is named once, and reloaded as one step", "[workspace]") {
+    const TempFolder folder;
+    const fs::path file = folder.write("a.txt", "one\ntwo\nthree\nfour");
+    Workspace workspace(folder.path);
+    Document& document = **workspace.open(file);
+    const uint64_t seen = document.version();
+
+    write_later(file, "one\nTWO\nthree\nfour");
+    REQUIRE(workspace.changed_on_disk() == std::vector<fs::path>{workspace.name(file)});
+    REQUIRE(workspace.changed_on_disk().empty());
+
+    REQUIRE(workspace.reload(file).has_value());
+    REQUIRE(document.buffer().text() == "one\nTWO\nthree\nfour");
+    REQUIRE_FALSE(workspace.unsaved(file));
+    // Only the line that changed was replaced: a caret on another stays.
+    Selections caret(Selection::at({3, 2}));
+    for (const Edit& edit : *document.edits_since(seen)) caret.map(edit);
+    REQUIRE(caret.primary().caret == Position{3, 2});
+
+    // It can be undone, back to what was here, which the file doesn't hold.
+    REQUIRE(document.undo().has_value());
+    REQUIRE(document.buffer().text() == "one\ntwo\nthree\nfour");
+    REQUIRE(workspace.unsaved(file));
+}
+
+TEST_CASE("A reload takes a file's new line breaks and mark", "[workspace]") {
+    const TempFolder folder;
+    const fs::path file = folder.write("a.txt", "one\ntwo");
+    Workspace workspace(folder.path);
+    Document& document = **workspace.open(file);
+    write_later(file, "\xEF\xBB\xBFone\r\ntwo");
+    REQUIRE(workspace.reload(file).has_value());
+    REQUIRE(document.buffer().text() == "\xEF\xBB\xBFone\r\ntwo");
 }

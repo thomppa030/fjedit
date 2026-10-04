@@ -20,7 +20,8 @@ add_library(fjedit-core STATIC
     fjedit/core/selections.cpp
     fjedit/core/structure.cpp
     fjedit/core/syntax.cpp
-    fjedit/core/text_file.cpp)
+    fjedit/core/text_file.cpp
+    fjedit/core/workspace.cpp)
 add_library(fjedit::core ALIAS fjedit-core)
 ftk_target_defaults(fjedit-core)
 target_include_directories(fjedit-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

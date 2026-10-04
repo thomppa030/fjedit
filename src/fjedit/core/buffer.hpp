@@ -114,6 +114,7 @@ public:
     /// Whether the text began with a UTF-8 byte order mark, which text()
     /// gives back and line(0) leaves out.
     [[nodiscard]] bool byte_order_mark() const { return byte_order_mark_; }
+    void set_byte_order_mark(bool mark) { byte_order_mark_ = mark; }
 
     /// `at` moved into the text: onto the last line when past it, onto the
     /// end of its line when past that, and back to the start of a character

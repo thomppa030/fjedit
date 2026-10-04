@@ -50,6 +50,13 @@ public:
     [[nodiscard]] Indent indent() const { return indent_; }
     void set_indent(Indent indent) { indent_ = indent; }
 
+    /// How its file breaks lines and whether it begins with a byte order
+    /// mark: what Buffer::text() writes back.
+    void set_file_format(LineEnding ending, bool byte_order_mark) {
+        buffer_.set_line_ending(ending);
+        buffer_.set_byte_order_mark(byte_order_mark);
+    }
+
     /// Counts the edits made; see Buffer::version().
     [[nodiscard]] uint64_t version() const { return buffer_.version(); }
 
