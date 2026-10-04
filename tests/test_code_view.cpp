@@ -698,3 +698,20 @@ TEST_CASE("What an input method composes shows at the caret, and only its result
     e.h.type("\xE3\x81\x8B");
     REQUIRE(e.text() == "a\xE3\x81\x8B" "b");
 }
+
+TEST_CASE("Commands queued on a view run at its next draw, without the keyboard", "[code_view]") {
+    Editor e("alpha beta");
+    e.view.queued = {"select.all", "find.open"};
+    e.h.step();
+    REQUIRE(e.view.selections.primary().span() == Span{{0, 0}, {0, 10}});
+    REQUIRE(e.view.find.open);
+    REQUIRE(e.view.queued.empty());
+}
+
+TEST_CASE("A view asked to take the keyboard takes it at its next draw", "[code_view]") {
+    Editor e("abc");
+    e.view.focus = true;
+    e.h.step();
+    e.h.type("x");
+    REQUIRE(e.text() == "xabc");
+}

@@ -63,6 +63,11 @@ struct EditorView {
     /// The minimap is shown down the view's right side, before the
     /// scrollbar.
     bool minimap{true};
+    /// Commands to run on its next draw, by name, as a menu or a palette
+    /// asks for them: the core's and the view's own (view_commands()).
+    std::vector<std::string> queued;
+    /// It takes the keyboard on its next draw: a file just opened.
+    bool focus{false};
 
     /// What a press of the mouse began, which dragging goes on with.
     struct Drag {

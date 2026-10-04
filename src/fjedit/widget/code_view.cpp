@@ -18,6 +18,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fjedit {
@@ -823,26 +824,33 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
 
     // Beneath what is placed after it over it: the find's plate.
     const core::Interaction in = ui.interact(id, code, {.beneath = true, .overlap = true});
+    if (view.focus) {
+        ui.set_focus(id);
+        view.focus = false;
+    }
     const core::Focus focus = ui.focusable(id, {.text = true});
     if (in.hovered && in.position.x >= frame.text.min.x) ui.set_cursor_shape(ftk::ui::MouseCursor::Text);
 
     const uint64_t version = document.version();
     const Selections before = view.selections;
 
+    Clipboard clipboard{.get = [&] { return ui.clipboard(); }, .set = [&](std::string text) { ui.set_clipboard(text); }};
+    auto run = [&](std::string_view command, std::string_view text = {}) {
+        if (is_view_command(command)) {
+            run_view_command(command, document, view);
+            return;
+        }
+        view.folds.catch_up(document);
+        CommandContext context{.document = document, .selections = view.selections, .layout = layout,
+                               .clipboard = &clipboard, .folds = &view.folds, .text = text};
+        (void)run_command(command, context);
+    };
+    // What a menu or a palette asked for, first.
+    for (const std::string& command : std::exchange(view.queued, {})) run(command);
+
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
-        Clipboard clipboard{.get = [&] { return ui.clipboard(); }, .set = [&](std::string text) { ui.set_clipboard(text); }};
-        auto run = [&](std::string_view command, std::string_view text = {}) {
-            if (is_view_command(command)) {
-                run_view_command(command, document, view);
-                return;
-            }
-            view.folds.catch_up(document);
-            CommandContext context{.document = document, .selections = view.selections, .layout = layout,
-                                   .clipboard = &clipboard, .folds = &view.folds, .text = text};
-            (void)run_command(command, context);
-        };
         // Typed text first, keys after: what came of the keys in this frame
         // follows what was typed. Text typed with Ctrl alone is a shortcut's;
         // with Ctrl and Alt it is AltGr's, as Windows reports it.
