@@ -5,6 +5,7 @@
 #include "ftk/base/utf8.hpp"
 
 #include <algorithm>
+#include <regex>
 
 namespace fjedit {
 
@@ -74,6 +75,51 @@ Position match_end(const std::vector<std::string_view>& parts, Position from) {
     return {from.line + parts.size() - 1, parts.back().size()};
 }
 
+// `pattern` as a regular expression, or nothing when it doesn't parse.
+std::optional<std::regex> compiled(std::string_view pattern, bool match_case) {
+    auto flags = std::regex::ECMAScript;
+    if (!match_case) flags |= std::regex::icase;
+    try {
+        return std::regex(pattern.begin(), pattern.end(), flags);
+    } catch (const std::regex_error&) {
+        return std::nullopt;
+    }
+}
+
+// Every match of `expression` in `line`, taking text, in order.
+template <typename Found>
+void each_match(std::string_view line, const std::regex& expression, Found&& found) {
+    using Matches = std::regex_iterator<std::string_view::const_iterator>;
+    for (Matches it(line.begin(), line.end(), expression), end; it != end; ++it) {
+        if (it->length(0) == 0) continue;
+        found(*it);
+    }
+}
+
+// A match from `from` to `to` on `line` that a whole word search keeps: a
+// word character at either end doesn't carry on a word of the text.
+bool whole_word_at(std::string_view line, std::size_t from, std::size_t to) {
+    if (word_after(line, from) && word_before(line, from)) return false;
+    return !(word_before(line, to) && word_after(line, to));
+}
+
+std::vector<Span> regex_in_lines(const Buffer& buffer, std::string_view pattern, std::size_t first_line,
+                                 std::size_t end_line, FindOptions options) {
+    std::vector<Span> found;
+    const std::optional<std::regex> expression = compiled(pattern, options.match_case);
+    if (!expression) return found;
+    for (std::size_t line = first_line; line < end_line; ++line) {
+        const std::string_view text = buffer.line(line);
+        each_match(text, *expression, [&](const auto& match) {
+            const auto from = static_cast<std::size_t>(match.position(0));
+            const std::size_t to = from + static_cast<std::size_t>(match.length(0));
+            if (options.whole_word && !whole_word_at(text, from, to)) return;
+            found.push_back({{line, from}, {line, to}});
+        });
+    }
+    return found;
+}
+
 } // namespace
 
 std::vector<Span> find_all(const Buffer& buffer, std::string_view needle, FindOptions options) {
@@ -85,6 +131,7 @@ std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, s
     std::vector<Span> found;
     end_line = std::min(end_line, buffer.line_count());
     if (needle.empty()) return found;
+    if (options.regex) return regex_in_lines(buffer, needle, first_line, end_line, options);
     const std::vector<std::string_view> parts = pieces(needle);
     const bool word_first = word_after(needle, 0);
     const bool word_last = word_before(needle, needle.size());
@@ -127,6 +174,28 @@ std::optional<Span> find_next(const Buffer& buffer, std::string_view needle, Pos
         if (span.from >= from) return span;
     }
     return all.front();
+}
+
+bool regex_valid(std::string_view pattern) {
+    return compiled(pattern, true).has_value();
+}
+
+std::string replacement(const Buffer& buffer, Span match, std::string_view needle, std::string_view with,
+                        FindOptions options) {
+    if (!options.regex) return std::string(with);
+    const std::optional<std::regex> expression = compiled(needle, options.match_case);
+    if (!expression) return std::string(with);
+    // The match found again, from the start of its line, so anchors and
+    // what is around it read as they did when it was found.
+    const std::string_view line = buffer.line(match.from.line);
+    std::string out(with);
+    bool done = false;
+    each_match(line, *expression, [&](const auto& found) {
+        if (done || static_cast<std::size_t>(found.position(0)) != match.from.byte) return;
+        out = found.format(std::string(with));
+        done = true;
+    });
+    return out;
 }
 
 Span word_at(const Buffer& buffer, Position at) {

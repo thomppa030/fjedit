@@ -8,6 +8,7 @@
 #include "fjedit/core/buffer.hpp"
 
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -20,11 +21,15 @@ struct FindOptions {
     /// When true, a match that begins or ends with a word character
     /// (fjedit/core/motion.hpp) must not continue a word on that side.
     bool whole_word{false};
+    /// When true, the needle is a regular expression, as JavaScript reads
+    /// one, matched within a line. Matches that take no text don't count,
+    /// and an expression that doesn't parse (regex_valid()) finds nothing.
+    bool regex{false};
 };
 
 /// Every place `needle` occurs, in order and apart: after a match, the
-/// search goes on from its end. Lines in `needle` break at \n. An empty
-/// needle occurs nowhere.
+/// search goes on from its end. Lines in `needle` break at \n, unless it is
+/// a regular expression. An empty needle occurs nowhere.
 [[nodiscard]] std::vector<Span> find_all(const Buffer& buffer, std::string_view needle, FindOptions options = {});
 
 /// The same, only the places that begin on lines `first_line` up to, not
@@ -36,6 +41,15 @@ struct FindOptions {
 /// first from the start of the text; nothing when it occurs nowhere.
 [[nodiscard]] std::optional<Span> find_next(const Buffer& buffer, std::string_view needle, Position from,
                                             FindOptions options = {});
+
+/// Whether `pattern` parses as a regular expression.
+[[nodiscard]] bool regex_valid(std::string_view pattern);
+
+/// What replaces `match`, a place find_all() found for `needle`: `with` as
+/// it is, or for a regular expression with $1 and the like (`$&` for the
+/// whole match) put in from what the match captured.
+[[nodiscard]] std::string replacement(const Buffer& buffer, Span match, std::string_view needle,
+                                      std::string_view with, FindOptions options = {});
 
 /// The word at `at`: the run of word characters it is in or at either end
 /// of, preferring the one after it; empty when there is none.

@@ -67,3 +67,34 @@ TEST_CASE("A search within lines finds only what begins on them", "[find]") {
     REQUIRE(find_in_lines(buffer, "b\na", 2, 9) == std::vector<Span>{{{2, 1}, {3, 1}}});
     REQUIRE(find_in_lines(buffer, "ab", 3, 3).empty());
 }
+
+TEST_CASE("A regular expression matches within each line", "[find]") {
+    const Buffer buffer("int spin_speed = 90;\nfloat Speed = 1.5;\nspeed();");
+    const FindOptions regex{.regex = true};
+    REQUIRE(find_all(buffer, "[0-9]+(\\.[0-9]+)?", regex) == std::vector<Span>{{{0, 17}, {0, 19}}, {{1, 14}, {1, 17}}});
+    REQUIRE(find_all(buffer, "^speed", regex) == std::vector<Span>{{{2, 0}, {2, 5}}});
+    REQUIRE(find_all(buffer, "speed", {.match_case = false, .regex = true}).size() == 3);
+    // A whole word: spin_speed's speed carries on a word.
+    REQUIRE(find_all(buffer, "[sS]peed", {.whole_word = true, .regex = true}) ==
+            std::vector<Span>{{{1, 6}, {1, 11}}, {{2, 0}, {2, 5}}});
+}
+
+TEST_CASE("Matches that take no text don't count, and a bad expression finds nothing", "[find]") {
+    const Buffer buffer("baa\nb");
+    REQUIRE(find_all(buffer, "a*", {.regex = true}) == std::vector<Span>{{{0, 1}, {0, 3}}});
+    REQUIRE_FALSE(regex_valid("(a"));
+    REQUIRE(regex_valid("(a)"));
+    REQUIRE(find_all(buffer, "(a", {.regex = true}).empty());
+}
+
+TEST_CASE("A replacement puts in what a regular expression captured", "[find]") {
+    const Buffer buffer("set(a, 1); set(b, 2);");
+    const FindOptions regex{.regex = true};
+    const std::string_view needle = "set\\((\\w+), (\\d)\\)";
+    const std::vector<Span> found = find_all(buffer, needle, regex);
+    REQUIRE(found.size() == 2);
+    REQUIRE(replacement(buffer, found[1], needle, "$1 = $2", regex) == "b = 2");
+    REQUIRE(replacement(buffer, found[0], needle, "[$&]", regex) == "[set(a, 1)]");
+    // Text is put in as it is.
+    REQUIRE(replacement(buffer, found[0], "set", "$1", {}) == "$1");
+}
