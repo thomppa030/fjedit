@@ -4,44 +4,19 @@
 #include "fjedit/core/workspace.hpp"
 
 #include "print.hpp"
+#include "temp_folder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <random>
 #include <string>
 
 using namespace fjedit;
 namespace fs = std::filesystem;
 
 namespace {
-
-// A folder of its own for a test, gone with it.
-struct TempFolder {
-    fs::path path;
-
-    TempFolder() {
-        std::random_device random;
-        path = fs::temp_directory_path() / ("fjedit-test-" + std::to_string(random()) + std::to_string(random()));
-        fs::create_directories(path);
-    }
-    ~TempFolder() {
-        std::error_code ignored;
-        fs::remove_all(path, ignored);
-    }
-    TempFolder(const TempFolder&) = delete;
-    TempFolder& operator=(const TempFolder&) = delete;
-
-    // Writes `bytes` to `name` in the folder, as another program would.
-    fs::path write(const fs::path& name, std::string_view bytes) const {
-        const fs::path file = path / name;
-        fs::create_directories(file.parent_path());
-        std::ofstream(file, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        return file;
-    }
-};
 
 std::string read(const fs::path& file) {
     std::ifstream in(file, std::ios::binary);
