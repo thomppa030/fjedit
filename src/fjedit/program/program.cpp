@@ -53,6 +53,7 @@ Keymap program_keys() {
     keys.bind(Program::PROGRAM, {ctrl(Key::W)}, "file.close");
     keys.bind(Program::PROGRAM, {ctrl(Key::Q)}, "file.quit");
     keys.bind(Program::PROGRAM, {ctrl(Key::Backslash)}, "view.split");
+    keys.bind(Program::PROGRAM, {{.key = Key::F, .modifiers = {.ctrl = true, .shift = true}}}, "files.find");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageDown)}, "tab.next");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageUp)}, "tab.previous");
     return keys;
@@ -169,6 +170,8 @@ bool Program::run(std::string_view command) {
         (void)ask_to_quit();
     } else if (command == "view.split") {
         split(active_);
+    } else if (command == "files.find") {
+        open_find_in_files();
     } else if (command == "tab.next" || command == "tab.previous") {
         if (group.tabs.empty()) return true;
         const std::size_t count = group.tabs.size();
@@ -294,6 +297,44 @@ void Program::split(std::size_t index) {
     active_ = index + 1;
 }
 
+void Program::open_find_in_files() {
+    std::string seed;
+    if (const Tab* tab = front_tab()) {
+        const Selection& primary = tab->view->selections.primary();
+        const Span span = primary.span();
+        const Document* document = workspace_.find(tab->path);
+        if (document != nullptr && !primary.empty() && span.from.line == span.to.line) {
+            seed = document->buffer().text(span);
+        }
+    }
+    find_in_files_.open(seed);
+}
+
+void Program::take_find_in_files(const FindInFilesAsk& ask) {
+    for (const std::filesystem::path& path : ask.shown) {
+        const bool in_a_tab = std::ranges::any_of(groups_, [&](const Group& group) {
+            return std::ranges::contains(group.tabs, path, &Tab::path);
+        });
+        if (in_a_tab) continue;
+        // Changed in the preview, it gets a tab to be saved from; otherwise
+        // it goes.
+        if (workspace_.unsaved(path)) {
+            Group& group = groups_[active_];
+            group.tabs.push_back({.path = path, .view = std::make_unique<EditorView>(*workspace_.find(path))});
+        } else {
+            workspace_.close(path);
+        }
+    }
+    if (ask.go) {
+        open(ask.go->path);
+        if (Tab* tab = front_tab(); tab != nullptr && workspace_.find(tab->path) != nullptr) {
+            const Buffer& buffer = workspace_.find(tab->path)->buffer();
+            tab->view->selections = Selections({.anchor = buffer.clamp(ask.go->span.from), .caret = buffer.clamp(ask.go->span.to)});
+            tab->view->reveal = true;
+        }
+    }
+}
+
 void Program::take_keys() {
     ui::core::Context& context = ui::core::current();
     const ui::Modifiers held = context.modifiers();
@@ -319,6 +360,8 @@ void Program::draw() {
         // Dialogs hang from the top of the editor, under the tabs once
         // there are some.
         dialog_at_ = ui::cursor() + glm::vec2{ui::space_left().x * 0.5f, 0.0f};
+        const glm::vec2 code_min = ui::cursor();
+        const glm::vec2 code_max = code_min + ui::space_left();
         // The groups side by side, each but the last as wide as it was left
         // and a rule after it.
         const float each = ui::space_left().x / static_cast<float>(groups_.size());
@@ -337,6 +380,11 @@ void Program::draw() {
             // A group may have closed its last tab and gone.
             if (index >= groups_.size()) break;
         }
+        // Find in files floats over the code, under the tabs.
+        const std::optional<std::filesystem::path> shown = front();
+        const std::filesystem::path folder = shown ? shown->parent_path() : workspace_.root();
+        const float tabs = dialog_at_.y - code_min.y;
+        take_find_in_files(find_in_files_.draw({.min = {code_min.x, code_min.y + tabs}, .max = code_max}, folder, keymap_));
     }
     ui::end_host_window();
     draw_status();
@@ -374,17 +422,27 @@ void Program::draw_menus() {
                                                 .chosen = [this] { minimap_ = !minimap_; }}};
          }},
         {.label = "Go",
-         .entries = [&] { return std::vector<ui::MenuEntry>{entry("Go to line", "goto.open", open_file)}; }},
+         .entries = [&] {
+             return std::vector<ui::MenuEntry>{entry("Go to line", "goto.open", open_file),
+                                               entry("Find in files", "files.find")};
+         }},
     };
     ui::menu_bar(menus);
 }
 
 void Program::draw_side() {
+    const glm::vec2 top = ui::cursor();
+    const float width = ui::space_left().x;
     {
         const ui::FontScope bold(ui::Font::Bold, 0.0f);
         ui::align_text_to_frame();
         ui::text(std::string(ui::icon::folder) + "  Files");
     }
+    // At the heading's end, find in files.
+    const glm::vec2 below = ui::cursor();
+    ui::set_cursor({top.x + width - ui::frame_height(), top.y});
+    if (ui::icon_button("##find_in_files", ui::icon::search, "Find in files (Ctrl Shift F)")) open_find_in_files();
+    ui::set_cursor(below);
     ui::separator();
     const std::optional<std::filesystem::path> shown = front();
     if (const std::optional<std::filesystem::path> pressed = tree_.draw(shown.value_or(std::filesystem::path{}))) {

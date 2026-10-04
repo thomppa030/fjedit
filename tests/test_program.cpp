@@ -313,3 +313,66 @@ TEST_CASE("Splitting opens the file in front again beside it, one document betwe
     REQUIRE(run.program->groups() == 1);
     REQUIRE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
 }
+
+namespace {
+
+constexpr ftk::ui::Modifiers CTRL_SHIFT{.ctrl = true, .shift = true};
+
+// Steps until find in files has its matches, or long enough that it won't.
+void wait_for_hits(Running& run) {
+    for (int i = 0; i < 400 && run.program->find_in_files().hits().empty(); ++i) run.h.step();
+}
+
+} // namespace
+
+TEST_CASE("Find in files finds in every file, and Enter opens the first at its match", "[program][find_in_files]") {
+    Running run({{"a.cpp", "float spin_speed;\n"}, {"b.cpp", "x = spin_speed;\n"}, {"c.txt", "nothing\n"}});
+    run.h.press(Key::F, CTRL_SHIFT);
+    REQUIRE(run.program->find_in_files().is_open());
+    run.h.type("spin_speed");
+    wait_for_hits(run);
+    REQUIRE(run.program->find_in_files().hits().size() == 2);
+    REQUIRE(run.h.find("float spin_speed;", Role::TreeItem) != nullptr);
+
+    run.h.press(Key::Enter);
+    run.h.step(2);
+    REQUIRE_FALSE(run.program->find_in_files().is_open());
+    REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "a.cpp"));
+}
+
+TEST_CASE("Find in files searches open files with their unsaved changes", "[program][find_in_files]") {
+    Running run({{"a.cpp", "int a;\n"}});
+    run.press_row("a.cpp");
+    run.h.type("spin_speed ");
+    run.h.press(Key::F, CTRL_SHIFT);
+    run.h.type("spin_speed");
+    wait_for_hits(run);
+    REQUIRE(run.program->find_in_files().hits().size() == 1);
+}
+
+TEST_CASE("Replace in every file changes open files in place and writes the rest", "[program][find_in_files]") {
+    Running run({{"a.cpp", "float spin_speed;\n"}, {"b.cpp", "x = spin_speed;\n"}});
+    run.press_row("a.cpp");
+    run.h.press(Key::F, CTRL_SHIFT);
+    run.h.type("spin_speed");
+    wait_for_hits(run);
+    // On to the replacement, and in every file.
+    run.h.press(Key::Tab);
+    run.h.type("rpm");
+    run.press(ftk::ui::icon::replace);
+    REQUIRE(run.document("a.cpp").buffer().text() == "float rpm;\n");
+    REQUIRE(run.program->workspace().unsaved(run.folder.path / "a.cpp"));
+    REQUIRE(run.folder.read("b.cpp") == "x = rpm;\n");
+}
+
+TEST_CASE("Escape closes find in files, letting go of the files it only showed", "[program][find_in_files]") {
+    Running run({{"a.cpp", "float spin_speed;\n"}});
+    run.h.press(Key::F, CTRL_SHIFT);
+    run.h.type("spin_speed");
+    wait_for_hits(run);
+    REQUIRE(run.program->workspace().files().size() == 1);
+    run.h.press(Key::Escape);
+    run.h.step();
+    REQUIRE_FALSE(run.program->find_in_files().is_open());
+    REQUIRE(run.program->workspace().files().empty());
+}

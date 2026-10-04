@@ -50,9 +50,11 @@ ftk_check_editor_ui(fjedit-widget ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widge
 # runs it in a window of its own; its tests run it in the kit's harness.
 add_library(fjedit-program STATIC
     fjedit/program/file_tree.cpp
+    fjedit/program/find_in_files.cpp
     fjedit/program/program.cpp)
 add_library(fjedit::program ALIAS fjedit-program)
 ftk_target_defaults(fjedit-program)
-target_link_libraries(fjedit-program PUBLIC fjedit::widget ftk::app-ui ftk::platform)
+find_package(Threads REQUIRED)
+target_link_libraries(fjedit-program PUBLIC fjedit::widget ftk::app-ui ftk::platform Threads::Threads)
 ftk_check_editor_ui(fjedit-program ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program
                     ICONS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program/icons.hpp)

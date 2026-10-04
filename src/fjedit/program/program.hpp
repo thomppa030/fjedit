@@ -12,6 +12,7 @@
 #include "fjedit/core/recovery.hpp"
 #include "fjedit/core/workspace.hpp"
 #include "fjedit/program/file_tree.hpp"
+#include "fjedit/program/find_in_files.hpp"
 #include "fjedit/widget/code_view.hpp"
 
 #include "ftk/ui/kit/dialog.hpp"
@@ -77,6 +78,9 @@ public:
     /// How many groups of tabs stand side by side: one, or more once split.
     [[nodiscard]] std::size_t groups() const { return groups_.size(); }
 
+    /// Find in files, open or not.
+    [[nodiscard]] const FindInFiles& find_in_files() const { return find_in_files_; }
+
     /// The keymap mode the program's own keys are bound in.
     static constexpr std::string_view PROGRAM = "program";
 
@@ -126,6 +130,11 @@ private:
     // Opens the file in front of group `index` again in a group of its own
     // beside it, which then has the keyboard.
     void split(std::size_t index);
+    // Opens find in files, looking for what the view in front selects.
+    void open_find_in_files();
+    // Does what find in files asked: opens a file at a match, and lets go
+    // of the files it opened only to show them.
+    void take_find_in_files(const FindInFilesAsk& ask);
     void save(const std::filesystem::path& path);
 
     Workspace workspace_;
@@ -159,6 +168,8 @@ private:
     bool quitting_{false};
     // Where the program's dialogs hang from: under the tabs.
     glm::vec2 dialog_at_{0.0f};
+    // Find in files, over the code.
+    FindInFiles find_in_files_{workspace_};
     // What went wrong last, for the status bar.
     std::string note_;
 };
