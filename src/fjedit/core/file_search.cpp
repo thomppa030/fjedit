@@ -40,6 +40,31 @@ std::string_view trimmed(std::string_view text) {
     return text.substr(first, text.find_last_not_of(' ') - first + 1);
 }
 
+// The files under `folder` to search, added to `files` a folder at a time,
+// with what git ignores there left out.
+void walk(const std::filesystem::path& folder, const std::filesystem::path& root, std::string_view include,
+          GitIgnore& ignore, std::stop_token stop, std::vector<std::filesystem::path>& files) {
+    ignore.enter(folder);
+    std::error_code error;
+    std::filesystem::directory_iterator it(folder, std::filesystem::directory_options::skip_permission_denied, error);
+    for (const std::filesystem::directory_iterator end; !error && it != end; it.increment(error)) {
+        if (stop.stop_requested()) break;
+        const std::filesystem::path& path = it->path();
+        if (path.filename().string().starts_with('.')) continue;
+        // A link is a file to git, whatever it points at.
+        std::error_code kind_error;
+        const bool link = it->is_symlink(kind_error);
+        const bool is_folder = !link && it->is_directory(kind_error);
+        if (ignore.ignored(path, is_folder)) continue;
+        if (is_folder) {
+            walk(path, root, include, ignore, stop, files);
+        } else if (it->is_regular_file(kind_error) && included(path.lexically_relative(root), include)) {
+            files.push_back(path);
+        }
+    }
+    ignore.leave();
+}
+
 } // namespace
 
 bool included(const std::filesystem::path& relative, std::string_view include) {
@@ -62,22 +87,10 @@ bool included(const std::filesystem::path& relative, std::string_view include) {
 }
 
 std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& root, std::string_view include,
-                                                   std::stop_token stop) {
+                                                   std::stop_token stop, const GitPlaces& places) {
     std::vector<std::filesystem::path> files;
-    std::error_code error;
-    std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied,
-                                                     error);
-    for (const std::filesystem::recursive_directory_iterator end; !error && it != end; it.increment(error)) {
-        if (stop.stop_requested()) break;
-        const std::filesystem::path& path = it->path();
-        std::error_code kind_error;
-        if (it->is_directory(kind_error)) {
-            if (path.filename().string().starts_with('.')) it.disable_recursion_pending();
-            continue;
-        }
-        if (!it->is_regular_file(kind_error) || path.filename().string().starts_with('.')) continue;
-        if (included(path.lexically_relative(root), include)) files.push_back(path);
-    }
+    GitIgnore ignore(root, places);
+    walk(root, root, include, ignore, stop, files);
     std::ranges::sort(files);
     return files;
 }

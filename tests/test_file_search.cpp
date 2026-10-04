@@ -36,6 +36,21 @@ TEST_CASE("The files to search leave out folders and files whose names begin wit
     REQUIRE(files_to_search(folder.path, "*.cpp").size() == 2);
 }
 
+TEST_CASE("The files to search leave out what git ignores, and nothing in a folder it ignores", "[file_search]") {
+    const TempFolder folder;
+    const TempFolder home;
+    folder.write(".git/HEAD", "ref: refs/heads/main\n");
+    folder.write(".gitignore", "build/\n*.o\n!keep.o\n");
+    folder.write("src/a.cpp", "");
+    folder.write("src/a.o", "");
+    folder.write("src/keep.o", "");
+    folder.write("build/gen.cpp", "");
+    folder.write("build/keep.o", "");
+    const GitPlaces places{.home = home.path, .config_home = home.path / ".config"};
+    REQUIRE(files_to_search(folder.path, "", {}, places) ==
+            std::vector<fs::path>{folder.path / "src/a.cpp", folder.path / "src/keep.o"});
+}
+
 TEST_CASE("The walk for the files to search stops when asked", "[file_search]") {
     const TempFolder folder;
     folder.write("a.cpp", "");

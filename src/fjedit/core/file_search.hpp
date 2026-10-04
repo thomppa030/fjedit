@@ -1,14 +1,16 @@
 #pragma once
 
 // Finding text across a folder's files (sheet 39, W3): which files to look
-// in, and the matches in each, found as find_all() finds them in one. Files
-// open are searched as they stand, unsaved changes and all.
+// in, and the matches in each, found as find_all() finds them in one. What
+// git ignores is never looked in, a build's output above all. Files open
+// are searched as they stand, unsaved changes and all.
 //
 //     const auto files = fjedit::files_to_search(root, "*.cpp, shaders/");
 //     const auto hits = fjedit::search_files(files, "spin_speed", {.whole_word = true}, open_texts);
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/find.hpp"
+#include "fjedit/core/git_ignore.hpp"
 
 #include <cstddef>
 #include <filesystem>
@@ -37,13 +39,16 @@ struct FileHit {
 /// every file.
 [[nodiscard]] bool included(const std::filesystem::path& relative, std::string_view include);
 
-/// The files under `root` to search, in order of their paths: folders whose
-/// names begin with a dot are left out, and only the files `include` names
-/// are kept (included()). It stops early when `stop` asks, with what it has
-/// found.
+/// The files under `root` to search, in order of their paths: files and
+/// folders whose names begin with a dot are left out, and what git ignores
+/// (GitIgnore, its user's config found through `places`), folders it
+/// ignores not gone into; and of the rest only the files `include` names
+/// are kept (included()). A link to a folder isn't followed. It stops early
+/// when `stop` asks, with what it has found.
 [[nodiscard]] std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& root,
                                                                  std::string_view include = {},
-                                                                 std::stop_token stop = {});
+                                                                 std::stop_token stop = {},
+                                                                 const GitPlaces& places = GitPlaces::of_user());
 
 /// Every match of `needle` in `files`, in their order and each file's in
 /// order. A file in `open` is searched as the bytes given there, any other

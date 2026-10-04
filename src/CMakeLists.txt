@@ -7,6 +7,7 @@ add_library(fjedit-core STATIC
     fjedit/core/file_search.cpp
     fjedit/core/find.cpp
     fjedit/core/folds.cpp
+    fjedit/core/git_ignore.cpp
     fjedit/core/history.cpp
     fjedit/core/keymap.cpp
     fjedit/core/language.cpp

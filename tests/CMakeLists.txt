@@ -22,6 +22,7 @@ add_executable(fjedit-tests
     test_file_search.cpp
     test_find.cpp
     test_folds.cpp
+    test_git_ignore.cpp
     test_history.cpp
     test_keymap.cpp
     test_lex_cpp.cpp
