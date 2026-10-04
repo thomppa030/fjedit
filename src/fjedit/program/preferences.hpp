@@ -8,10 +8,12 @@
 //     ui::add_settings_section(preferences_section(program.preferences()));
 //     ui::keep_settings_file(path);
 
+#include "fjedit/core/language_service.hpp"
 #include "fjedit/widget/code_view.hpp"
 
 #include "ftk/ui/kit/settings_file.hpp"
 
+#include <optional>
 #include <string>
 
 namespace fjedit {
@@ -36,6 +38,14 @@ struct Preferences {
 /// it. `preferences` outlives the section.
 [[nodiscard]] ftk::ui::SettingsSection preferences_section(Preferences& preferences);
 
+/// How the C++ language server is, for the Preferences window to show: its
+/// status, once it has been started, and the compile commands it reads in
+/// the folder open, when it finds some.
+struct LanguageServerShown {
+    std::optional<ServiceStatus> status{};
+    std::string reads{};
+};
+
 class PreferencesWindow {
 public:
     void open() { open_ = true; }
@@ -44,8 +54,8 @@ public:
     /// Draws it while open: the pages down the left with a search over
     /// their settings, the page on the right, and a foot saying where the
     /// settings are kept. Each edit changes `preferences` and tells the
-    /// settings file.
-    void draw(Preferences& preferences);
+    /// settings file. `clangd` is how the C++ language server is.
+    void draw(Preferences& preferences, const LanguageServerShown& clangd);
 
 private:
     bool open_{false};

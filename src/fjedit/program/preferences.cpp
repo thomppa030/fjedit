@@ -4,6 +4,8 @@
 
 #include "ftk/ui/kit/feedback.hpp"
 #include "ftk/ui/kit/field.hpp"
+#include "ftk/ui/kit/text_field.hpp"
+#include "ftk/ui/kit/text.hpp"
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/layout.hpp"
 #include "ftk/ui/kit/pages.hpp"
@@ -57,7 +59,26 @@ void read_line(Preferences& preferences, std::string_view entry, std::string_vie
 }
 
 // The Code editor page's settings, as rows a search can filter.
-void draw_code_editor(Preferences& preferences) {
+void draw_code_editor(Preferences& preferences, const LanguageServerShown& clangd) {
+    ui::subheading("C++ language server");
+    if (auto table = ui::PropertyTable("##server")) {
+        ui::row("clangd", [&] {
+            const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
+            if (ui::text_field("##clangd", preferences.clangd).committed) ui::settings_changed();
+        });
+        // How it is, under its path.
+        if (!clangd.status) {
+            ui::hint("Starts with the first C or C++ file opened");
+        } else if (clangd.status->state == ServiceState::Ready) {
+            const std::string running =
+                clangd.reads.empty() ? std::string("Running, with no compile commands found") : "Running, reads " + clangd.reads;
+            ui::status(clangd.reads.empty() ? ui::Severity::Warning : ui::Severity::Success, running.c_str());
+        } else if (clangd.status->state == ServiceState::Starting) {
+            ui::status(ui::Severity::Warning, "Starting");
+        } else {
+            ui::status(ui::Severity::Error, clangd.status->note.c_str());
+        }
+    }
     ui::subheading("Text");
     if (auto table = ui::PropertyTable("##text")) {
         ui::row("Text size", [&] {
@@ -87,7 +108,7 @@ ui::SettingsSection preferences_section(Preferences& preferences) {
             }};
 }
 
-void PreferencesWindow::draw(Preferences& preferences) {
+void PreferencesWindow::draw(Preferences& preferences, const LanguageServerShown& clangd) {
     if (!open_) return;
     auto window = ui::PagedWindow("Preferences###preferences", &open_, SIZE);
     if (!window) return;
@@ -106,7 +127,7 @@ void PreferencesWindow::draw(Preferences& preferences) {
         // only count as they are drawn.
         if (!searching || found_ > 0) ui::page_title(icon::code_editor, "Code editor");
         const ui::RowFilter filter(search_);
-        draw_code_editor(preferences);
+        draw_code_editor(preferences, clangd);
         found_ = filter.matches();
         if (searching && found_ == 0) ui::empty_state(ui::icon::search, "No settings match", "Try another word");
     }

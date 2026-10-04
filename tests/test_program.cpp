@@ -33,8 +33,10 @@ struct Running {
     std::unique_ptr<Program> program;
     ftk::test::KitHarness h{{1280.0f, 800.0f}};
 
-    // The language service made for C++ files, when the test gives one.
+    // The language service made for C++ files, when the test gives one,
+    // and how many have been made.
     FakeLanguage* language{nullptr};
+    int languages_made{0};
 
     // What answers for C++: nothing, so no test runs a server it didn't ask
     // for; a fake; or clangd, as the program runs it.
@@ -46,10 +48,13 @@ struct Running {
         if (before) before(folder);
         std::vector<ServiceMaker> services;
         if (languages == Languages::Fake) {
-            services.push_back({.extensions = {"cpp", "hpp"},
+            // Named as clangd, so the preferences' path for it holds.
+            services.push_back({.name = "clangd",
+                                .extensions = {"cpp", "hpp"},
                                 .make = [this](const std::filesystem::path&) -> std::unique_ptr<LanguageService> {
                                     auto made = std::make_unique<FakeLanguage>();
                                     language = made.get();
+                                    ++languages_made;
                                     return made;
                                 }});
         }
@@ -604,3 +609,50 @@ TEST_CASE("Cancelling the question about closing gives the keyboard back to the 
     run.h.step();
     REQUIRE(run.document("coin.cpp").buffer().line(0) == "xyint a;");
 }
+
+namespace {
+
+// Whether the last frame drew anything in `colour` along the status bar.
+bool on_status_bar(Running& run, ftk::ui::Color colour) {
+    const uint32_t packed = ftk::ui::core::pack_colour(colour);
+    const float top = run.h.size().y - ftk::theme::STATUS_BAR;
+    for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+        for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+            if (p.colour == packed && p.min.y >= top) return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("The status bar shows how the language service of the file in front is", "[program][language]") {
+    Running run({{"coin.cpp", "int a;\n"}}, {}, Running::Languages::Fake);
+    run.press_row("coin.cpp");
+    run.h.step();
+    REQUIRE(on_status_bar(run, ftk::theme::success()));
+    run.language->state = {.state = ServiceState::Stopped, .note = "clangd: no such program"};
+    run.h.step(2);
+    REQUIRE(on_status_bar(run, ftk::theme::error()));
+    REQUIRE_FALSE(on_status_bar(run, ftk::theme::success()));
+}
+
+TEST_CASE("A new path for clangd in the preferences starts it again, the views joined to it", "[program][language]") {
+    Running run({{"coin.cpp", "int a;\n"}}, {}, Running::Languages::Fake);
+    run.press_row("coin.cpp");
+    run.h.step(3);
+    REQUIRE(run.languages_made == 1);
+    run.program->preferences().clangd = "/opt/llvm/bin/clangd";
+    run.h.step(2);
+    REQUIRE(run.languages_made == 2);
+    const std::filesystem::path coin = run.program->workspace().name(run.folder.path / "coin.cpp");
+    REQUIRE(run.language->opened == std::vector<std::filesystem::path>{coin});
+    // The view asks the new one.
+    run.h.press(Key::F12);
+    run.h.step();
+    REQUIRE(run.language->definitions.size() == 1);
+    // And it is started once, not again every frame.
+    run.h.step(3);
+    REQUIRE(run.languages_made == 2);
+}
+

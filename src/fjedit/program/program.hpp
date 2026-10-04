@@ -38,6 +38,8 @@ namespace fjedit {
 /// A language service the program runs: made when the first file it
 /// answers for is opened, and told of every such file open after.
 struct ServiceMaker {
+    /// What the status bar calls it ("clangd").
+    std::string name{};
     /// The extensions of the files it answers for, lower case ("cpp").
     std::vector<std::string> extensions{};
     /// Makes it for the folder `root`; null when it can't be.
@@ -177,6 +179,11 @@ private:
     void go_to(const std::filesystem::path& path, Span span);
     // clangd for C and C++, at the path the preferences give it.
     [[nodiscard]] ServiceMaker clangd();
+    // Starts clangd again when the path the preferences give it changed:
+    // every view of a file it answered for joins the new one.
+    void follow_clangd_path();
+    // How clangd is, for the Preferences window.
+    [[nodiscard]] LanguageServerShown clangd_shown() const;
 
     Workspace workspace_;
     Keymap keymap_;
@@ -224,6 +231,8 @@ private:
     };
     std::vector<Service> services_;
     std::function<void()> wake_;
+    // The path clangd was last started at.
+    std::string clangd_started_;
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;
