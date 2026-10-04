@@ -54,13 +54,28 @@ constexpr float PILL_PAD = 6.0f;
 constexpr float PILL_MARGIN = 4.0f;
 constexpr std::string_view ELLIPSIS = "\xE2\x8B\xAF"; // ⋯
 
-// The kit's mono face at `size`, on the code's lines.
-core::TextStyle mono(float size) {
+// The kit's mono face at `size`, on lines `line` apart.
+core::TextStyle mono(float size, float line) {
     const ftk::ui::FontScope scope(theme::mono_font(), size);
     core::TextStyle style = core::current().text().style();
-    style.line_height = CODE_LINE;
+    style.line_height = line;
     return style;
 }
+
+// What sheet 39's measures come to for code at `text_size`: they scale
+// together, the lines and the line numbers with the code.
+struct Sizes {
+    float text;
+    float line;
+    float gutter;
+    float pill;
+    float pill_height;
+
+    explicit Sizes(float text_size)
+        : text(text_size), line(std::round(text_size * CODE_LINE / CODE_TEXT)),
+          gutter(text_size * GUTTER_TEXT / CODE_TEXT), pill(text_size * PILL_TEXT / CODE_TEXT),
+          pill_height(std::round(text_size * PILL_HEIGHT / CODE_TEXT)) {}
+};
 
 // The faces the view draws in besides the code's, and what it measures by
 // them.
@@ -69,6 +84,7 @@ struct Faces {
     core::TextStyle pill;
     float digit_width{0.0f};
     float pill_width{0.0f};
+    float pill_height{0.0f};
 };
 
 // The selections and folds brought up to date with edits made in another
@@ -87,6 +103,8 @@ void catch_up(const Document& document, EditorView& view) {
 // Where the parts of the view go this frame.
 struct Frame {
     core::Rect rect;
+    // How far apart the lines are.
+    float line{CODE_LINE};
     // Right of the line numbers.
     float numbers_right{0.0f};
     // Where the text is drawn, and where a line's start is, scrolled.
@@ -94,11 +112,12 @@ struct Frame {
     float origin_x{0.0f};
 };
 
-Frame place(core::Rect rect, const EditorView& view, const Buffer& buffer, float digit_width) {
+Frame place(core::Rect rect, const EditorView& view, const Buffer& buffer, float digit_width, float line) {
     std::size_t digits = 1;
     for (std::size_t n = buffer.line_count(); n >= 10; n /= 10) ++digits;
     Frame frame;
     frame.rect = rect;
+    frame.line = line;
     frame.numbers_right = rect.min.x + GUTTER_PAD + static_cast<float>(std::max<std::size_t>(digits, 2)) * digit_width;
     frame.text = {.min = {frame.numbers_right + FOLD_COLUMN, rect.min.y}, .max = rect.max};
     frame.origin_x = frame.text.min.x + TEXT_PAD - view.scroll.x;
@@ -108,7 +127,7 @@ Frame place(core::Rect rect, const EditorView& view, const Buffer& buffer, float
 // The line the row at `y`, a height in the window, begins with.
 std::size_t line_under(const Frame& frame, const EditorView& view, const Buffer& buffer, float y) {
     const float down = y - frame.rect.min.y + view.scroll.y;
-    const auto row = static_cast<std::size_t>(std::max(0.0f, std::floor(down / CODE_LINE)));
+    const auto row = static_cast<std::size_t>(std::max(0.0f, std::floor(down / frame.line)));
     return view.folds.line_of(std::min(row, view.folds.row_count(buffer.line_count()) - 1));
 }
 
@@ -403,7 +422,8 @@ void take_wheel(core::Context& ui, EditorView& view) {
 // The minimap and the scrollbar down the view's right side, `side`, with
 // ticks for the find's matches and the caret. They scroll the view, as the
 // wheel does over the minimap; what they do shows from the next frame.
-void draw_side(core::Context& ui, const Document& document, EditorView& view, core::Rect rect, core::Rect side) {
+void draw_side(core::Context& ui, const Document& document, EditorView& view, core::Rect rect, core::Rect side,
+               float line) {
     const Folds& folds = view.folds;
     const std::size_t rows = folds.row_count(document.buffer().line_count());
     std::vector<MinimapMark> ticks;
@@ -411,7 +431,7 @@ void draw_side(core::Context& ui, const Document& document, EditorView& view, co
     const auto mark = [&](std::size_t row, ftk::ui::Color colour) {
         if (!ticks.empty() && ticks.back().row == row && ticks.back().colour == colour) return;
         ticks.push_back({.row = row, .colour = colour});
-        marks.push_back({.at = static_cast<float>(row) * CODE_LINE, .colour = colour});
+        marks.push_back({.at = static_cast<float>(row) * line, .colour = colour});
     };
     if (view.find.open) {
         for (const Span& match : view.find.matches) mark(folds.row_of(match.from.line), theme::accent());
@@ -422,12 +442,12 @@ void draw_side(core::Context& ui, const Document& document, EditorView& view, co
     ui.draw_list().rect_filled(side.min, side.max, theme::surface_base());
     if (view.minimap) {
         const core::Rect map{.min = side.min, .max = {side.max.x - SCROLLBAR_WIDTH, side.max.y}};
-        const Minimap drawn = minimap(ui.id("##minimap"), document, folds, map, view.scroll.y, rect.height(), CODE_LINE, ticks);
+        const Minimap drawn = minimap(ui.id("##minimap"), document, folds, map, view.scroll.y, rect.height(), line, ticks);
         if (drawn.scroll) view.scroll.y = *drawn.scroll;
         if (drawn.hovered) take_wheel(ui, view);
     }
     float offset = view.scroll.y;
-    const float room = static_cast<float>(rows - 1) * CODE_LINE;
+    const float room = static_cast<float>(rows - 1) * line;
     if (ftk::ui::vertical_scrollbar("##scrollbar", {side.max.x - SCROLLBAR_WIDTH, side.min.y}, side.max, offset,
                                     rect.height(), room, marks)) {
         view.scroll.y = offset;
@@ -440,11 +460,11 @@ void draw_side(core::Context& ui, const Document& document, EditorView& view, co
 void reveal(EditorView& view, const Frame& frame, const Buffer& buffer, const TextLayout& layout) {
     if (view.reveal) {
         const Position caret = view.selections.primary().caret;
-        const float top = static_cast<float>(view.folds.row_of(caret.line)) * CODE_LINE;
+        const float top = static_cast<float>(view.folds.row_of(caret.line)) * frame.line;
         if (top < view.scroll.y) {
             view.scroll.y = top;
-        } else if (top + CODE_LINE > view.scroll.y + frame.rect.height()) {
-            view.scroll.y = top + CODE_LINE - frame.rect.height();
+        } else if (top + frame.line > view.scroll.y + frame.rect.height()) {
+            view.scroll.y = top + frame.line - frame.rect.height();
         }
         const float x = layout.x_of(buffer, caret);
         const float width = frame.text.width() - 2.0f * TEXT_PAD;
@@ -455,7 +475,7 @@ void reveal(EditorView& view, const Frame& frame, const Buffer& buffer, const Te
         }
         view.reveal = false;
     }
-    const float bottom = static_cast<float>(view.folds.row_count(buffer.line_count()) - 1) * CODE_LINE;
+    const float bottom = static_cast<float>(view.folds.row_count(buffer.line_count()) - 1) * frame.line;
     view.scroll.y = std::clamp(view.scroll.y, 0.0f, std::max(bottom, 0.0f));
     view.scroll.x = std::max(view.scroll.x, 0.0f);
 }
@@ -505,8 +525,10 @@ struct Shown {
     std::size_t first_row{0};
     std::vector<std::size_t> lines;
     float top{0.0f};
+    // How far apart they are.
+    float spacing{CODE_LINE};
 
-    [[nodiscard]] float y(std::size_t index) const { return top + static_cast<float>(index) * CODE_LINE; }
+    [[nodiscard]] float y(std::size_t index) const { return top + static_cast<float>(index) * spacing; }
 
     // Which of them `line` is drawn on, when it is in sight and not hidden.
     [[nodiscard]] std::optional<std::size_t> index_of(const Folds& folds, std::size_t line) const {
@@ -519,10 +541,11 @@ struct Shown {
 
 Shown shown(const Frame& frame, const EditorView& view, const Buffer& buffer) {
     const std::size_t rows = view.folds.row_count(buffer.line_count());
-    const std::size_t count = static_cast<std::size_t>(std::ceil(frame.rect.height() / CODE_LINE)) + 1;
+    const std::size_t count = static_cast<std::size_t>(std::ceil(frame.rect.height() / frame.line)) + 1;
     Shown out;
-    out.first_row = std::min(static_cast<std::size_t>(view.scroll.y / CODE_LINE), rows);
-    out.top = frame.rect.min.y - (view.scroll.y - static_cast<float>(out.first_row) * CODE_LINE);
+    out.spacing = frame.line;
+    out.first_row = std::min(static_cast<std::size_t>(view.scroll.y / frame.line), rows);
+    out.top = frame.rect.min.y - (view.scroll.y - static_cast<float>(out.first_row) * frame.line);
     if (out.first_row == rows) return out;
     for (std::size_t line = view.folds.line_of(out.first_row); out.lines.size() < count && line < buffer.line_count();
          line = view.folds.row_lines(line).last + 1) {
@@ -595,7 +618,7 @@ void draw_guides(core::DrawList& dl, const Document& document, const EditorView&
         for (std::size_t level = 0; level < levels; ++level) {
             const bool active = level + 1 == caret_level && line >= active_from && line <= active_to;
             const float x = std::round(frame.origin_x + static_cast<float>(level) * step);
-            dl.rect_filled({x, y}, {x + 1.0f, y + CODE_LINE},
+            dl.rect_filled({x, y}, {x + 1.0f, y + frame.line},
                            active ? theme::code_indent_guide_active() : theme::code_indent_guide());
         }
     }
@@ -612,7 +635,7 @@ void draw_marks(core::DrawList& dl, const Document& document, const EditorView& 
     auto box = [&](std::size_t index, Position from, Position to) {
         const float y = rows.y(index);
         return core::Rect{.min = {frame.origin_x + layout.x_of(buffer, from), y},
-                          .max = {frame.origin_x + layout.x_of(buffer, to), y + CODE_LINE}};
+                          .max = {frame.origin_x + layout.x_of(buffer, to), y + frame.line}};
     };
 
     if (primary.empty()) {
@@ -656,7 +679,7 @@ void draw_matches(core::DrawList& dl, const Document& document, const EditorView
         const Position to = match->to.line == match->from.line ? match->to
                                                                 : Position{match->from.line, buffer.line(match->from.line).size()};
         const glm::vec2 min{frame.origin_x + layout.x_of(buffer, match->from), rows.y(*index)};
-        const glm::vec2 max{frame.origin_x + layout.x_of(buffer, to), rows.y(*index) + CODE_LINE};
+        const glm::vec2 max{frame.origin_x + layout.x_of(buffer, to), rows.y(*index) + frame.line};
         if (outline) {
             dl.rect(min, max, theme::accent(), DECORATION_ROUNDING);
         } else {
@@ -687,7 +710,7 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
     for (const Selection& selection : view.selections.all()) {
         const std::optional<std::size_t> index = rows.index_of(folds, selection.caret.line);
         if (!selection.empty() || !index) continue;
-        dl.rect_filled({frame.rect.min.x, rows.y(*index)}, {frame.rect.max.x, rows.y(*index) + CODE_LINE},
+        dl.rect_filled({frame.rect.min.x, rows.y(*index)}, {frame.rect.max.x, rows.y(*index) + frame.line},
                        theme::code_current_line());
     }
 
@@ -735,7 +758,7 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
             const float to = span.to.line > row.last     ? at.end + layout.space_width()
                              : span.to.line == row.first ? layout.x_of(buffer, span.to)
                                                          : at.end;
-            dl.rect_filled({frame.origin_x + from, rows.y(index)}, {frame.origin_x + to, rows.y(index) + CODE_LINE},
+            dl.rect_filled({frame.origin_x + from, rows.y(index)}, {frame.origin_x + to, rows.y(index) + frame.line},
                            theme::selection());
         }
     }
@@ -758,7 +781,7 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
             (void)draw_tokens(ui, document, layout, line, 0, caret.byte, 0.0f, frame.origin_x, y);
             const float left = frame.origin_x + caret_x;
             ui.text().draw(dl, {left, y}, theme::text(), composing, layout.style());
-            dl.line({left, y + CODE_LINE - COMPOSING_UNDERLINE}, {left + composed_width, y + CODE_LINE - COMPOSING_UNDERLINE},
+            dl.line({left, y + frame.line - COMPOSING_UNDERLINE}, {left + composed_width, y + frame.line - COMPOSING_UNDERLINE},
                     theme::text());
             (void)draw_tokens(ui, document, layout, line, caret.byte, buffer.line(line).size(), caret_x + composed_width,
                               frame.origin_x, y);
@@ -767,9 +790,9 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
         }
         for (const FoldMark& mark : drawn[index].marks) {
             const float left = std::round(frame.origin_x + mark.pill_from);
-            const float top = y + (CODE_LINE - PILL_HEIGHT) * 0.5f;
-            dl.rect_filled({left, top}, {std::round(frame.origin_x + mark.pill_to), top + PILL_HEIGHT},
-                           theme::surface_raised(), PILL_HEIGHT * 0.5f);
+            const float top = y + (frame.line - faces.pill_height) * 0.5f;
+            dl.rect_filled({left, top}, {std::round(frame.origin_x + mark.pill_to), top + faces.pill_height},
+                           theme::surface_raised(), faces.pill_height * 0.5f);
             ui.text().draw(dl, {left + PILL_PAD, y}, theme::text_secondary(), ELLIPSIS, faces.pill);
             if (mark.closer) {
                 (void)draw_tokens(ui, document, layout, mark.closer->line, mark.closer->byte,
@@ -792,7 +815,7 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
             }
             const float x = std::round(frame.origin_x + along);
             dl.rect_filled({x - CARET_WIDTH * 0.5f, rows.y(*index) + 1.0f},
-                           {x + CARET_WIDTH * 0.5f, rows.y(*index) + CODE_LINE - 1.0f}, theme::text());
+                           {x + CARET_WIDTH * 0.5f, rows.y(*index) + frame.line - 1.0f}, theme::text());
         }
     }
 
@@ -806,9 +829,11 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                          core::Rect rect) {
     core::Context& ui = core::current();
     const ftk::ui::Id id = ui.id(label);
-    TextLayout layout(ui.text(), mono(CODE_TEXT), document.indent().width);
+    const Sizes sizes(view.text_size);
+    TextLayout layout(ui.text(), mono(sizes.text, sizes.line), document.indent().width);
     layout.set_folds(&view.folds);
-    Faces faces{.numbers = mono(GUTTER_TEXT), .pill = mono(PILL_TEXT)};
+    Faces faces{.numbers = mono(sizes.gutter, sizes.line), .pill = mono(sizes.pill, sizes.line)};
+    faces.pill_height = sizes.pill_height;
     faces.digit_width = ui.text().caret_x("0", faces.numbers, 1);
     faces.pill_width = ui.text().caret_x(ELLIPSIS, faces.pill, ELLIPSIS.size()) + 2.0f * PILL_PAD;
     const Buffer& buffer = document.buffer();
@@ -819,8 +844,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const core::Rect side{.min = {code.max.x, rect.min.y}, .max = rect.max};
 
     catch_up(document, view);
-    const Frame frame = place(code, view, buffer, faces.digit_width);
-    layout.set_page_lines(std::max<std::size_t>(1, static_cast<std::size_t>(rect.height() / CODE_LINE) - 1));
+    const Frame frame = place(code, view, buffer, faces.digit_width, sizes.line);
+    layout.set_page_lines(std::max<std::size_t>(1, static_cast<std::size_t>(rect.height() / sizes.line) - 1));
 
     // Beneath what is placed after it over it: the find's plate.
     const core::Interaction in = ui.interact(id, code, {.beneath = true, .overlap = true});
@@ -876,21 +901,21 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     view.seen = document.version();
     reveal(view, frame, buffer, layout);
     if (view.find.open) refresh_matches(view.find, document);
-    const Frame drawn = place(code, view, buffer, faces.digit_width);
+    const Frame drawn = place(code, view, buffer, faces.digit_width, sizes.line);
     draw(ui, document, view, drawn, layout, faces, focus.focused);
 
     // The kit's pieces from here are the view's: their ids are under its
     // label.
     const ftk::ui::IdScope scope(label);
-    draw_side(ui, document, view, rect, side);
+    draw_side(ui, document, view, rect, side, sizes.line);
 
     if (focus.focused) {
         // The input method's window goes at the primary caret, and the
         // carets blink.
         const Position caret = view.selections.primary().caret;
         const float x = drawn.origin_x + layout.x_of(buffer, caret);
-        const float y = rect.min.y + static_cast<float>(view.folds.row_of(caret.line)) * CODE_LINE - view.scroll.y;
-        ui.set_text_input_area({.min = {x, y}, .max = {x + 1.0f, y + CODE_LINE}});
+        const float y = rect.min.y + static_cast<float>(view.folds.row_of(caret.line)) * sizes.line - view.scroll.y;
+        ui.set_text_input_area({.min = {x, y}, .max = {x + 1.0f, y + sizes.line}});
         const double since = ui.time() - view.moved;
         const double phase = std::fmod(since, BLINK);
         ui.request_frame_at(view.moved + std::floor(since / BLINK) * BLINK + (phase <= BLINK_ON ? BLINK_ON : BLINK));

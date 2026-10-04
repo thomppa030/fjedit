@@ -63,6 +63,9 @@ struct EditorView {
     /// The minimap is shown down the view's right side, before the
     /// scrollbar.
     bool minimap{true};
+    /// The code's text size; its lines, its line numbers and the marks on
+    /// it scale with it.
+    float text_size{CODE_TEXT};
     /// Commands to run on its next draw, by name, as a menu or a palette
     /// asks for them: the core's and the view's own (view_commands()).
     std::vector<std::string> queued;

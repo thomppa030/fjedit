@@ -715,3 +715,12 @@ TEST_CASE("A view asked to take the keyboard takes it at its next draw", "[code_
     e.h.type("x");
     REQUIRE(e.text() == "xabc");
 }
+
+TEST_CASE("A larger text size spreads the lines further apart", "[code_view]") {
+    Editor e("a\nb\nc\nd");
+    e.view.text_size = 2.0f * CODE_TEXT;
+    e.h.step();
+    // Lines 40 apart: 50 down is the second.
+    e.h.click_at({PAST_END, 50.0f});
+    REQUIRE(e.caret().line == 1);
+}
