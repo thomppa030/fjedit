@@ -789,3 +789,21 @@ TEST_CASE("A problem's row is marked beside the code, and what is less than a wa
     REQUIRE(on_row(drawn_in_code(e.h, ftk::theme::code_error_line()), 2));
 }
 
+
+TEST_CASE("A line is drawn in its service's colours over its lexer's", "[code_view][colours]") {
+    FakeLanguage language;
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    e.h.step(2);
+    // The lexer takes the a of "int a;" for a plain name.
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_member()).empty());
+
+    fjedit::SemanticTokens colours;
+    colours.lines.resize(4);
+    colours.lines[3] = {{.begin = 4, .end = 5, .kind = TokenKind::Member}};
+    language.colours = colours;
+    e.h.step(2);
+    const std::vector<ftk::ui::core::Rect> member = drawn_in_code(e.h, ftk::theme::code_member());
+    REQUIRE(member.size() == 1);
+    REQUIRE(on_row(member, 3));
+}

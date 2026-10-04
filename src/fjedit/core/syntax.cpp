@@ -1,5 +1,7 @@
 #include "fjedit/core/syntax.hpp"
 
+#include <optional>
+
 namespace fjedit {
 
 Syntax::Syntax(const Lexer& lexer, const Buffer& buffer) : lexer_(&lexer) {
@@ -45,6 +47,47 @@ void Syntax::edited(const Buffer& buffer, const Edit& edit) {
         lex(buffer, line);
         if (ends_[line] == before) break;
     }
+}
+
+std::vector<Token> overlaid(std::span<const Token> under, std::span<const Token> over) {
+    std::vector<Token> out;
+    out.reserve(under.size() + over.size());
+    std::size_t next = 0;
+    // What is left of the token of `under` that one of `over` cut into.
+    std::optional<Token> rest;
+    // Goes through `under` up to `end`, keeping what it passes or not, and
+    // cutting the token `end` falls in.
+    const auto pass = [&](std::size_t end, bool keep) {
+        for (;;) {
+            Token token;
+            if (rest) {
+                token = *rest;
+            } else if (next < under.size()) {
+                token = under[next];
+            } else {
+                return;
+            }
+            if (token.begin >= end) return;
+            if (rest) {
+                rest.reset();
+            } else {
+                ++next;
+            }
+            if (token.end > end) {
+                if (keep) out.push_back({.begin = token.begin, .end = end, .kind = token.kind});
+                rest = Token{.begin = end, .end = token.end, .kind = token.kind};
+                return;
+            }
+            if (keep) out.push_back(token);
+        }
+    };
+    for (const Token& top : over) {
+        pass(top.begin, true);
+        out.push_back(top);
+        pass(top.end, false);
+    }
+    pass(static_cast<std::size_t>(-1), true);
+    return out;
 }
 
 } // namespace fjedit

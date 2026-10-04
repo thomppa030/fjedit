@@ -108,4 +108,10 @@ private:
     std::vector<LineState> ends_;
 };
 
+/// A line's tokens with `over` laid on `under`: where an `over` token is,
+/// its kind, and `under`'s elsewhere, a token of `under` cut where one of
+/// `over` begins or ends in it. Both in order, neither overlapping itself:
+/// what a language service knows of a line over what its lexer saw.
+[[nodiscard]] std::vector<Token> overlaid(std::span<const Token> under, std::span<const Token> over);
+
 } // namespace fjedit

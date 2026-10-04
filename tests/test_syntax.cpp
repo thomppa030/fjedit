@@ -92,3 +92,20 @@ TEST_CASE("Tokens kept through random edits are those of lexing anew, in every l
         }
     }
 }
+
+TEST_CASE("A service's tokens lay over the lexer's, cutting those they fall in", "[syntax]") {
+    using Kind = TokenKind;
+    const std::vector<Token> lexed{{0, 4, Kind::Keyword}, {5, 9, Kind::Type}, {10, 14, Kind::Function}};
+    // A name the lexer took for a type is a variable.
+    REQUIRE(overlaid(lexed, std::vector<Token>{{5, 9, Kind::Text}}) ==
+            std::vector<Token>{{0, 4, Kind::Keyword}, {5, 9, Kind::Text}, {10, 14, Kind::Function}});
+    // One inside a token cuts it in three.
+    REQUIRE(overlaid(std::vector<Token>{{0, 10, Kind::Comment}}, std::vector<Token>{{3, 6, Kind::Function}}) ==
+            std::vector<Token>{{0, 3, Kind::Comment}, {3, 6, Kind::Function}, {6, 10, Kind::Comment}});
+    // One across several keeps what is left either side.
+    REQUIRE(overlaid(std::vector<Token>{{0, 2, Kind::Keyword}, {3, 5, Kind::Type}, {6, 8, Kind::Number}},
+                     std::vector<Token>{{1, 7, Kind::Member}}) ==
+            std::vector<Token>{{0, 1, Kind::Keyword}, {1, 7, Kind::Member}, {7, 8, Kind::Number}});
+    REQUIRE(overlaid(lexed, {}) == lexed);
+    REQUIRE(overlaid({}, lexed) == lexed);
+}
