@@ -795,6 +795,21 @@ const Command* find_command(std::string_view name) {
     return found == COMMANDS.end() ? nullptr : &*found;
 }
 
+std::vector<Span> replace_matches(CommandContext& context, std::span<const Span> matches, std::string_view needle,
+                                  std::string_view with, FindOptions options) {
+    if (matches.empty()) return {};
+    const Buffer& buffer = context.document.buffer();
+    Edit edit;
+    for (const Span& match : matches) edit.changes.push_back({match, replacement(buffer, match, needle, with, options)});
+    const Selections before = context.selections;
+    Edit undo = context.document.apply(edit);
+    context.selections.map(edit);
+    std::vector<Span> replaced = spans_after(edit);
+    context.document.history().record({.made = std::move(edit), .undo = std::move(undo), .before = before,
+                                       .after = context.selections, .kind = EditKind::Other});
+    return replaced;
+}
+
 Selections column_selection(const Buffer& buffer, const Layout& layout, std::size_t anchor_line, float anchor_x,
                              std::size_t caret_line, float caret_x) {
     const std::size_t first = std::min(anchor_line, caret_line);

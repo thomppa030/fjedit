@@ -12,6 +12,7 @@
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/document.hpp"
+#include "fjedit/core/find.hpp"
 #include "fjedit/core/folds.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/selections.hpp"
@@ -21,6 +22,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace fjedit {
 
@@ -62,6 +64,13 @@ struct Command {
 
 /// Runs the command called `name`; false when there is none.
 bool run_command(std::string_view name, CommandContext& context);
+
+/// Replaces each of `matches`, places find_all() found `needle` at with
+/// `options`, with what replacement() gives for `with`, as one step of the
+/// history. The selections are carried through it as through an edit made
+/// elsewhere (Selections::map()). Returns where the replacements are.
+std::vector<Span> replace_matches(CommandContext& context, std::span<const Span> matches, std::string_view needle,
+                                  std::string_view with, FindOptions options);
 
 /// The selections a column dragged from `anchor_x` on `anchor_line` to
 /// `caret_x` on `caret_line` makes (Alt and the mouse): one on each line

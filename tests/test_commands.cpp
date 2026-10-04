@@ -98,3 +98,16 @@ TEST_CASE("Moving a caret ends the step typing was in", "[commands]") {
     view.run("edit.undo");
     REQUIRE(view.shown() == "a|b");
 }
+
+TEST_CASE("Replacing matches is one step, the selections carried through it", "[commands][find]") {
+    TestView view("int a = 1;\nint b = |2;\nint c = 3;");
+    const FindOptions regex{.regex = true};
+    const std::vector<Span> found = find_all(view.buffer(), "int (\\w)", regex);
+    REQUIRE(found.size() == 3);
+    fjedit::CommandContext context{.document = view.document, .selections = view.selections, .layout = view.layout};
+    const std::vector<Span> replaced = replace_matches(context, found, "int (\\w)", "float $1", regex);
+    REQUIRE(replaced[1] == Span{{1, 0}, {1, 7}});
+    REQUIRE(view.shown() == "float a = 1;\nfloat b = |2;\nfloat c = 3;");
+    view.run("edit.undo");
+    REQUIRE(view.buffer().text() == "int a = 1;\nint b = 2;\nint c = 3;");
+}
