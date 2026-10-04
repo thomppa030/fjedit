@@ -11,6 +11,7 @@ add_library(fjedit-core STATIC
     fjedit/core/history.cpp
     fjedit/core/keymap.cpp
     fjedit/core/language.cpp
+    fjedit/core/language_services.cpp
     fjedit/core/layout.cpp
     fjedit/core/lex/c_like.cpp
     fjedit/core/lex/cpp.cpp

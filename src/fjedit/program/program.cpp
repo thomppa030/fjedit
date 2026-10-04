@@ -117,11 +117,10 @@ ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem:
 
 Program::Program(std::filesystem::path root, ProgramOptions options)
     : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1),
-      wake_(std::move(options.wake)) {
+      wake_(std::move(options.wake)),
+      services_(noting_paths(options.services ? std::move(*options.services) : std::vector<ServiceMaker>{clangd()}),
+                workspace_.root()) {
     if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
-    for (ServiceMaker& maker : options.services ? *options.services : std::vector<ServiceMaker>{clangd()}) {
-        services_.push_back({.maker = std::move(maker), .running = nullptr, .told = {}});
-    }
 }
 
 ServiceMaker Program::clangd() {
@@ -143,39 +142,34 @@ ServiceMaker Program::clangd() {
             }};
 }
 
-void Program::follow_clangd_path() {
-    for (Service& service : services_) {
-        if (service.maker.name != "clangd" || !service.running || clangd_started_ == preferences_.clangd) continue;
-        const LanguageService* stopped = service.running.get();
-        service.running.reset();
-        service.told.clear();
-        // Every view that asked the one stopped asks the one started.
-        for (Group& group : groups_) {
-            for (Tab& tab : group.tabs) {
-                if (tab.view->service != stopped) continue;
-                tab.view->service = nullptr;
-                tab.view->completing = {};
-                tab.view->hovering = {};
-                tab.view->going.reset();
-                tab.view->formatting.reset();
-                if (Document* document = workspace_.find(tab.path)) {
-                    if (LanguageService* started = service_for(tab.path)) {
-                        tab.view->service = started;
-                        if (service.told.insert(tab.path).second) started->open(tab.path, *document);
-                    }
-                }
-            }
-        }
-        // A rename asked of the one stopped will never be answered.
-        renaming_.reset();
+std::vector<ServiceMaker> Program::noting_paths(std::vector<ServiceMaker> makers) {
+    for (ServiceMaker& maker : makers) {
+        if (maker.name != "clangd" || !maker.make) continue;
+        maker.make = [this, make = std::move(maker.make)](const std::filesystem::path& root) {
+            clangd_started_ = preferences_.clangd;
+            return make(root);
+        };
     }
+    return makers;
+}
+
+void Program::follow_server_paths() {
+    if (!services_.status_of("clangd") || clangd_started_ == preferences_.clangd) return;
+    services_.restart("clangd");
+    // What a view asked of the one stopped will never be answered.
+    for (Group& group : groups_) {
+        for (Tab& tab : group.tabs) {
+            tab.view->completing = {};
+            tab.view->hovering = {};
+            tab.view->going.reset();
+            tab.view->formatting.reset();
+        }
+    }
+    renaming_.reset();
 }
 
 LanguageServerShown Program::clangd_shown() const {
-    LanguageServerShown shown;
-    for (const Service& service : services_) {
-        if (service.maker.name == "clangd" && service.running) shown.status = service.running->status();
-    }
+    LanguageServerShown shown{.status = services_.status_of("clangd"), .reads = {}};
     // Where clangd looks for them in the folder open, as it does from a
     // file at its top.
     for (const char* name : {"compile_commands.json", "build/compile_commands.json", "compile_flags.txt"}) {
@@ -188,40 +182,20 @@ LanguageServerShown Program::clangd_shown() const {
     return shown;
 }
 
-LanguageService* Program::service_for(const std::filesystem::path& path) {
-    std::string extension = path.extension().string();
-    if (extension.empty()) return nullptr;
-    extension.erase(0, 1);
-    for (char& c : extension) c = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
-    for (Service& service : services_) {
-        if (!std::ranges::contains(service.maker.extensions, extension)) continue;
-        if (!service.running && service.maker.make) {
-            if (service.maker.name == "clangd") clangd_started_ = preferences_.clangd;
-            service.running = service.maker.make(workspace_.root());
-        }
-        return service.running.get();
-    }
-    return nullptr;
-}
-
 std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
     auto view = std::make_unique<EditorView>(document);
     view->minimap = preferences_.minimap;
     view->text_size = static_cast<float>(preferences_.text_size);
-    if (LanguageService* service = service_for(path)) {
-        view->service = service;
+    if (services_.serves(path)) {
+        view->service = &services_;
         view->path = path;
-        for (Service& running : services_) {
-            if (running.running.get() == service && running.told.insert(path).second) service->open(path, document);
-        }
+        services_.open(path, document);
     }
     return view;
 }
 
 void Program::let_go(const std::filesystem::path& path) {
-    for (Service& service : services_) {
-        if (service.told.erase(path) > 0 && service.running) service.running->close(path);
-    }
+    services_.close(path);
     workspace_.close(path);
 }
 
@@ -314,9 +288,7 @@ void Program::save(const std::filesystem::path& path) {
     }
     changed_.erase(workspace_.name(path));
     forget_kept(workspace_.name(path));
-    for (Service& service : services_) {
-        if (service.running && service.told.contains(workspace_.name(path))) service.running->saved(workspace_.name(path));
-    }
+    services_.saved(workspace_.name(path));
     note_.clear();
 }
 
@@ -465,11 +437,9 @@ void Program::take_keys() {
 }
 
 void Program::draw() {
-    follow_clangd_path();
+    follow_server_paths();
     // What the language services found since, before anything shows it.
-    for (Service& service : services_) {
-        if (service.running) service.running->update();
-    }
+    services_.update();
     check_disk(ui::core::current().time());
     take_keys();
     draw_menus();
@@ -670,15 +640,12 @@ void Program::draw_status() {
         std::size_t warnings = 0;
         const Diagnostic* first = nullptr;
         const Tab* tab = front_tab();
-        for (const Service& service : services_) {
-            if (!service.running) continue;
-            for (const std::filesystem::path& path : service.told) {
-                for (const Diagnostic& problem : service.running->diagnostics(path)) {
-                    errors += problem.severity == Severity::Error ? 1 : 0;
-                    warnings += problem.severity == Severity::Warning ? 1 : 0;
-                    if (tab == nullptr || path != tab->path || problem.severity > Severity::Warning) continue;
-                    if (first == nullptr || problem.severity < first->severity) first = &problem;
-                }
+        for (const std::filesystem::path& path : services_.files()) {
+            for (const Diagnostic& problem : services_.diagnostics(path)) {
+                errors += problem.severity == Severity::Error ? 1 : 0;
+                warnings += problem.severity == Severity::Warning ? 1 : 0;
+                if (tab == nullptr || path != tab->path || problem.severity > Severity::Warning) continue;
+                if (first == nullptr || problem.severity < first->severity) first = &problem;
             }
         }
         const bool served = tab != nullptr && tab->view->service != nullptr;
@@ -706,21 +673,19 @@ void Program::draw_status() {
         ui::status_item(nullptr, buffer.byte_order_mark() ? "UTF-8 with BOM" : "UTF-8");
         ui::status_rule();
         ui::status_item(nullptr, document->language().name);
-        // The language service the file in front asks, as a dot in how it
+        // Each language service the file in front asks, as a dot in how it
         // is.
-        for (const Service& service : services_) {
-            if (!service.running || service.running.get() != tab->view->service) continue;
-            const ServiceStatus status = service.running->status();
+        for (const ServiceShown& service : services_.shown(tab->path)) {
             ui::status_rule();
-            switch (status.state) {
+            switch (service.status.state) {
                 case ServiceState::Ready:
-                    ui::status_state(ui::StatusTone::Success, service.maker.name, service.maker.name + " is running");
+                    ui::status_state(ui::StatusTone::Success, service.name, service.name + " is running");
                     break;
                 case ServiceState::Starting:
-                    ui::status_state(ui::StatusTone::Warning, service.maker.name, status.note);
+                    ui::status_state(ui::StatusTone::Warning, service.name, service.status.note);
                     break;
                 case ServiceState::Stopped:
-                    ui::status_state(ui::StatusTone::Error, service.maker.name, status.note);
+                    ui::status_state(ui::StatusTone::Error, service.name, service.status.note);
                     break;
             }
         }
@@ -748,12 +713,11 @@ void Program::ask_rename() {
         if (answer == ui::DialogAnswer::Cancel) {
             renaming_.reset();
         } else if (answer == ui::DialogAnswer::Confirm) {
-            LanguageService* service = service_for(renaming.path);
-            if (service == nullptr) {
+            if (!services_.serves(renaming.path)) {
                 renaming_.reset();
                 return;
             }
-            renaming.asked = service->rename(renaming.path, renaming.at, renaming.typed);
+            renaming.asked = services_.rename(renaming.path, renaming.at, renaming.typed);
         }
         return;
     }

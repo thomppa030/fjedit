@@ -25,6 +25,7 @@ add_executable(fjedit-tests
     test_git_ignore.cpp
     test_history.cpp
     test_keymap.cpp
+    test_language_services.cpp
     test_lex_cpp.cpp
     test_lex_fjss.cpp
     test_lex_glsl.cpp
