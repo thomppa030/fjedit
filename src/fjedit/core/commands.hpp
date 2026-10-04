@@ -9,7 +9,8 @@
 // Names are `group.action`: `caret.*` moves carets, `select.*` extends or
 // picks selections, `cursor.*` adds and removes carets, `edit.*` changes the
 // text, `fold.*` opens and closes folds. A keymap also names what a view does
-// itself, `find.*` (view_commands()), which run_command() leaves to the view.
+// itself, `find.*` and `goto.*` (view_commands()), which run_command() leaves
+// to the view.
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/document.hpp"
@@ -67,7 +68,7 @@ struct Command {
 bool run_command(std::string_view name, CommandContext& context);
 
 /// What a view does itself rather than to its text, named in a keymap as a
-/// command is: its find.
+/// command is: its find, go to line.
 struct ViewCommand {
     std::string_view name;
     std::string_view title;

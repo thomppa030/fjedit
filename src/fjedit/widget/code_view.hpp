@@ -15,6 +15,7 @@
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/selections.hpp"
 #include "fjedit/widget/find.hpp"
+#include "fjedit/widget/go_to_line.hpp"
 
 #include "ftk/ui/core/rect.hpp"
 
@@ -44,6 +45,8 @@ struct EditorView {
     Folds folds;
     /// Its find, and the plate it floats on over the view (sheet 39, F1).
     FindState find;
+    /// Its go to line, on a plate at the view's top centre.
+    GoToLineState go_to_line;
     /// How far the text is scrolled, in layout units: down past the top of
     /// the first row, and along past the start of every line.
     glm::vec2 scroll{0.0f};

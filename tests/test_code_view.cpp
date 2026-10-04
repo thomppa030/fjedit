@@ -518,3 +518,64 @@ TEST_CASE("A press on the find's plate never reaches the code under it", "[code_
     REQUIRE(e.view.selections == before);
     REQUIRE(e.view.find.open);
 }
+
+TEST_CASE("Go to line reads a line, or a line and a column, counted from 1", "[code_view][go_to_line]") {
+    const Buffer buffer("one\ntwo\nth\xC3\xA4ree");
+    REQUIRE(go_to_line_target(buffer, "2") == Position{1, 0});
+    REQUIRE(go_to_line_target(buffer, " 3 ") == Position{2, 0});
+    // Columns are characters, and stop at the line's end.
+    REQUIRE(go_to_line_target(buffer, "3:4") == Position{2, 4});
+    REQUIRE(go_to_line_target(buffer, "1:99") == Position{0, 3});
+    for (const char* none : {"", "0", "4", "x", "2:", "2:0", "-1", "1:x"}) {
+        REQUIRE_FALSE(go_to_line_target(buffer, none).has_value());
+    }
+}
+
+TEST_CASE("Ctrl G goes to the line typed, Enter taking the code back the keyboard", "[code_view][go_to_line]") {
+    Editor e(FUNCTION);
+    e.h.click_at({780.0f, row_y(0)});
+    e.h.press(Key::G, CTRL);
+    REQUIRE(e.view.go_to_line.open);
+    e.h.type("2:5");
+    e.h.press(Key::Enter);
+    e.h.step();
+    REQUIRE_FALSE(e.view.go_to_line.open);
+    REQUIRE(e.caret() == Position{1, 4});
+    e.h.type("y");
+    REQUIRE(e.text() == "void f() {\n    yx();\n}\nint a;");
+}
+
+TEST_CASE("Go to line names the function the line is in", "[code_view][go_to_line]") {
+    Editor e(FUNCTION);
+    e.h.click_at({780.0f, row_y(3)});
+    e.h.press(Key::G, CTRL);
+    e.h.step();
+    REQUIRE_FALSE(e.view.go_to_line.function.has_value());
+    e.h.type("2");
+    e.h.step();
+    REQUIRE(e.view.go_to_line.function == "f()");
+}
+
+TEST_CASE("Escape leaves go to line where the caret was", "[code_view][go_to_line]") {
+    Editor e(FUNCTION);
+    e.h.click_at({780.0f, row_y(3)});
+    e.h.press(Key::G, CTRL);
+    e.h.type("1");
+    e.h.press(Key::Escape);
+    e.h.step();
+    REQUIRE_FALSE(e.view.go_to_line.open);
+    REQUIRE(e.caret() == Position{3, 6});
+    e.h.type("!");
+    REQUIRE(e.text() == "void f() {\n    x();\n}\nint a;!");
+}
+
+TEST_CASE("Enter on a line there isn't closes go to line and goes nowhere", "[code_view][go_to_line]") {
+    Editor e(FUNCTION);
+    e.h.click_at({780.0f, row_y(3)});
+    e.h.press(Key::G, CTRL);
+    e.h.type("99");
+    e.h.press(Key::Enter);
+    e.h.step();
+    REQUIRE_FALSE(e.view.go_to_line.open);
+    REQUIRE(e.caret() == Position{3, 6});
+}

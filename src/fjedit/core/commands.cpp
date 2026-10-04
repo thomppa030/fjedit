@@ -838,6 +838,7 @@ constexpr std::array VIEW_COMMANDS = {
     ViewCommand{"find.next", "Find next"},
     ViewCommand{"find.previous", "Find previous"},
     ViewCommand{"find.close", "Close find"},
+    ViewCommand{"goto.open", "Go to line"},
 };
 
 } // namespace

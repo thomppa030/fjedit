@@ -32,6 +32,7 @@ target_link_libraries(fjedit-core PUBLIC ftk::base ftk::ui-core)
 add_library(fjedit-widget STATIC
     fjedit/widget/code_view.cpp
     fjedit/widget/find.cpp
+    fjedit/widget/go_to_line.cpp
     fjedit/widget/text_layout.cpp)
 add_library(fjedit::widget ALIAS fjedit-widget)
 ftk_target_defaults(fjedit-widget)

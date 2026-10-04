@@ -177,6 +177,7 @@ Keymap Keymap::standard() {
         {chord(Key::H, CTRL), "find.replace"},
         {chord(Key::F3), "find.next"},
         {chord(Key::F3, false, SHIFT), "find.previous"},
+        {chord(Key::G, CTRL), "goto.open"},
     };
     // Ctrl K, then a second key.
     const Default after_ctrl_k[] = {

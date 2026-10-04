@@ -337,10 +337,14 @@ void select_match(EditorView& view, Span match) {
 }
 
 // Runs a command the view does itself: opens, steps through or closes the
-// find.
+// find, or opens go to line.
 void run_view_command(std::string_view name, const Document& document, EditorView& view) {
     FindState& find = view.find;
-    if (name == "find.open" || name == "find.replace") {
+    if (name == "goto.open") {
+        view.go_to_line.open = true;
+        view.go_to_line.focus = true;
+        view.go_to_line.text.clear();
+    } else if (name == "find.open" || name == "find.replace") {
         open_find(find, document.buffer(), view.selections,
                   name == "find.open" ? FindState::Focus::Query : FindState::Focus::Replacement);
     } else if (name == "find.close") {
@@ -832,6 +836,24 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             ui.request_frame();
         }
         view.seen = document.version();
+    }
+
+    // Go to line's plate at the top centre. Left by Escape, it gives the
+    // code the keyboard back; left by a press elsewhere, the keyboard stays
+    // where that went.
+    if (view.go_to_line.open) {
+        const GoToLinePlate plate =
+            go_to_line_plate(view.go_to_line, document, view.selections.primary().caret, rect);
+        if (plate.go) {
+            view.selections = Selections(Selection::at(*plate.go));
+            view.moved = ui.time();
+            view.reveal = true;
+            ui.request_frame();
+        }
+        if (plate.closed) {
+            view.go_to_line.open = false;
+            if (plate.go || ui.focused() == 0) ui.set_focus(id);
+        }
     }
 
     ui.semantics(id, core::Role::TextField, label, {}, {.focused = focus.focused}, rect);
