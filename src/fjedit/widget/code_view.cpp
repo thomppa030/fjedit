@@ -42,6 +42,8 @@ constexpr float REVEAL_MARGIN = 24.0f;
 constexpr float CARET_WIDTH = 2.0f;
 // The scrollbar down the view's right edge (sheet 39).
 constexpr float SCROLLBAR_WIDTH = 10.0f;
+// How far up from a row's bottom the line under composing text is.
+constexpr float COMPOSING_UNDERLINE = 3.0f;
 
 // A closed fold's mark: a pill holding an ellipsis in a smaller face, set
 // off from the text either side.
@@ -477,20 +479,24 @@ float draw_run(core::Context& ui, const TextLayout& layout, std::string_view tex
     return x;
 }
 
-// Line `line`'s text from byte `from`, coloured by its tokens, the byte
-// drawn at `x` along from `origin_x`; returns where it ends.
+// Line `line`'s text from byte `from` up to byte `to`, coloured by its
+// tokens, the first byte drawn at `x` along from `origin_x`; returns where
+// it ends.
 float draw_tokens(core::Context& ui, const Document& document, const TextLayout& layout, std::size_t line,
-                  std::size_t from, float x, float origin_x, float y) {
+                  std::size_t from, std::size_t to, float x, float origin_x, float y) {
     const std::string_view text = document.buffer().line(line);
+    to = std::min(to, text.size());
     std::size_t at = from;
     for (const Token& token : document.syntax().tokens(line)) {
         if (token.end <= at) continue;
+        if (token.begin >= to) break;
         const std::size_t begin = std::max<std::size_t>(token.begin, at);
+        const std::size_t end = std::min<std::size_t>(token.end, to);
         x = draw_run(ui, layout, text, at, begin, x, origin_x, y, theme::text());
-        x = draw_run(ui, layout, text, begin, token.end, x, origin_x, y, code_colour(token.kind));
-        at = token.end;
+        x = draw_run(ui, layout, text, begin, end, x, origin_x, y, code_colour(token.kind));
+        at = end;
     }
-    return draw_run(ui, layout, text, at, text.size(), x, origin_x, y, theme::text());
+    return draw_run(ui, layout, text, at, to, x, origin_x, y, theme::text());
 }
 
 // The rows in sight: the line each begins with, the first drawn at `top`.
@@ -735,11 +741,29 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
 
     if (finding) draw_matches(dl, document, view, frame, layout, rows, true);
 
+    // What an input method is composing, while the view has the keyboard: it
+    // shows at the primary caret, underlined, the rest of the line moved on.
+    const std::string_view composing = focused ? ui.composition() : std::string_view{};
+    const Position caret = view.selections.primary().caret;
+    const float caret_x = layout.x_of(buffer, caret);
+    const float composed_width = layout.advance(composing, 0, composing.size(), caret_x) - caret_x;
+
     // The text, coloured by its tokens; on a folded row, each fold's pill
     // and the closer's line after it.
     for (std::size_t index = 0; index < rows.lines.size(); ++index) {
         const float y = rows.y(index);
-        (void)draw_tokens(ui, document, layout, rows.lines[index], 0, 0.0f, frame.origin_x, y);
+        const std::size_t line = rows.lines[index];
+        if (!composing.empty() && line == caret.line) {
+            (void)draw_tokens(ui, document, layout, line, 0, caret.byte, 0.0f, frame.origin_x, y);
+            const float left = frame.origin_x + caret_x;
+            ui.text().draw(dl, {left, y}, theme::text(), composing, layout.style());
+            dl.line({left, y + CODE_LINE - COMPOSING_UNDERLINE}, {left + composed_width, y + CODE_LINE - COMPOSING_UNDERLINE},
+                    theme::text());
+            (void)draw_tokens(ui, document, layout, line, caret.byte, buffer.line(line).size(), caret_x + composed_width,
+                              frame.origin_x, y);
+        } else {
+            (void)draw_tokens(ui, document, layout, line, 0, buffer.line(line).size(), 0.0f, frame.origin_x, y);
+        }
         for (const FoldMark& mark : drawn[index].marks) {
             const float left = std::round(frame.origin_x + mark.pill_from);
             const float top = y + (CODE_LINE - PILL_HEIGHT) * 0.5f;
@@ -747,18 +771,25 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
                            theme::surface_raised(), PILL_HEIGHT * 0.5f);
             ui.text().draw(dl, {left + PILL_PAD, y}, theme::text_secondary(), ELLIPSIS, faces.pill);
             if (mark.closer) {
-                (void)draw_tokens(ui, document, layout, mark.closer->line, mark.closer->byte, mark.closer_x,
-                                  frame.origin_x, y);
+                (void)draw_tokens(ui, document, layout, mark.closer->line, mark.closer->byte,
+                                  buffer.line(mark.closer->line).size(), mark.closer_x, frame.origin_x, y);
             }
         }
     }
 
-    // The carets, while the view has the keyboard, blinking together.
+    // The carets, while the view has the keyboard, blinking together; the
+    // primary one where the input method's cursor is in what it composes.
     if (focused && std::fmod(ui.time() - view.moved, BLINK) <= BLINK_ON) {
+        const auto composed_cursor = static_cast<std::size_t>(
+            std::clamp(ui.composition_cursor(), 0, static_cast<int>(composing.size())));
         for (const Selection& selection : view.selections.all()) {
             const std::optional<std::size_t> index = rows.index_of(folds, selection.caret.line);
             if (!index) continue;
-            const float x = std::round(frame.origin_x + layout.x_of(buffer, selection.caret));
+            float along = layout.x_of(buffer, selection.caret);
+            if (!composing.empty() && &selection == &view.selections.primary()) {
+                along = layout.advance(composing, 0, composed_cursor, along);
+            }
+            const float x = std::round(frame.origin_x + along);
             dl.rect_filled({x - CARET_WIDTH * 0.5f, rows.y(*index) + 1.0f},
                            {x + CARET_WIDTH * 0.5f, rows.y(*index) + CODE_LINE - 1.0f}, theme::text());
         }

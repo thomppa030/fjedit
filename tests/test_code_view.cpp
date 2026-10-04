@@ -680,3 +680,21 @@ TEST_CASE("Two views' finds are their own, open at once", "[code_view][find]") {
     REQUIRE(left.find.query == "wide");
     REQUIRE(right.find.query.empty());
 }
+
+TEST_CASE("What an input method composes shows at the caret, and only its result is typed", "[code_view][ime]") {
+    Editor e("ab");
+    e.h.click_at({PAST_END, 10.0f});
+    e.h.press(Key::Left);
+    e.h.compose("ka");
+    e.h.step();
+    REQUIRE(e.text() == "ab");
+    // Underlined: a level line in the text colour.
+    const auto underlines = std::ranges::count_if(drawn_in_code(e.h, ftk::theme::text()), [](const auto& r) {
+        return r.max.y - r.min.y < 1.5f && r.max.x - r.min.x > 4.0f;
+    });
+    REQUIRE(underlines == 1);
+
+    e.h.compose("");
+    e.h.type("\xE3\x81\x8B");
+    REQUIRE(e.text() == "a\xE3\x81\x8B" "b");
+}
