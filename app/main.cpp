@@ -37,7 +37,7 @@ int run(const std::filesystem::path& folder) {
         FTK_CORE_CRITICAL("fjedit could not find its fonts beside it");
         return EXIT_FAILURE;
     }
-    fjedit::Program program(folder);
+    fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder)});
     auto ran = app.run({.ui = [&](ftk::ui::core::Context&, glm::vec2) { program.draw(); }});
     if (!ran) {
         FTK_CORE_CRITICAL("fjedit stopped: {}", ran.error());

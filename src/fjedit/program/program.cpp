@@ -2,6 +2,9 @@
 
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/layout.hpp"
+#include "fjedit/core/text_file.hpp"
+
+#include "ftk/platform/platform.hpp"
 
 #include "ftk/ui/core/context.hpp"
 #include "ftk/ui/kit/dialog.hpp"
@@ -22,6 +25,7 @@
 #include <algorithm>
 #include <format>
 #include <iterator>
+#include <utility>
 
 namespace fjedit {
 
@@ -67,10 +71,45 @@ std::string shortcut(const Keymap& keys, std::string_view command) {
     return out;
 }
 
+// How many lines `kept` and the file at `path` differ in, between the lines
+// alike at their starts and ends; nothing when the file can't be read.
+std::optional<std::size_t> lines_changed(const std::filesystem::path& path, std::string_view kept) {
+    const ftk::Result<std::string> disk = read_text_file(path);
+    if (!disk) return std::nullopt;
+    const Buffer a(kept);
+    const Buffer b(*disk);
+    const std::size_t shorter = std::min(a.line_count(), b.line_count());
+    std::size_t head = 0;
+    while (head < shorter && a.line(head) == b.line(head)) ++head;
+    std::size_t tail = 0;
+    while (head + tail < shorter && a.line(a.line_count() - 1 - tail) == b.line(b.line_count() - 1 - tail)) ++tail;
+    return std::max(a.line_count(), b.line_count()) - head - tail;
+}
+
+// A file as a dialog's list shows it: its kind's icon, its name, and its
+// folder within `root` with `more` after it.
+ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem::path& root, std::string_view more) {
+    const FileLook look = file_look(path);
+    std::string folder = path.parent_path().lexically_relative(root).generic_string();
+    if (folder == ".") folder.clear();
+    std::string detail = folder;
+    if (!more.empty()) detail += detail.empty() ? std::string(more) : "  " + std::string(more);
+    return {.icon = look.icon,
+            .icon_colour = look.hue ? theme::hue(*look.hue) : theme::text_secondary(),
+            .name = path.filename().string(),
+            .detail = std::move(detail)};
+}
+
 } // namespace
 
-Program::Program(std::filesystem::path root)
-    : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1) {}
+Program::Program(std::filesystem::path root, ProgramOptions options)
+    : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1) {
+    if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
+}
+
+std::filesystem::path Program::recovery_folder(const std::filesystem::path& root) {
+    return Recovery::folder_for(ftk::platform::state_dir() / "fjedit" / "recovery", Workspace(root).root());
+}
 
 std::optional<std::filesystem::path> Program::front() const {
     const Tab* tab = front_tab();
@@ -138,7 +177,30 @@ void Program::save(const std::filesystem::path& path) {
         return;
     }
     changed_.erase(workspace_.name(path));
+    forget_kept(workspace_.name(path));
     note_.clear();
+}
+
+void Program::keep_unsaved() {
+    if (!recovery_) return;
+    for (const std::filesystem::path& path : workspace_.files()) {
+        if (!workspace_.unsaved(path)) {
+            forget_kept(path);
+            continue;
+        }
+        const Document& document = *workspace_.find(path);
+        const auto kept = kept_.find(path);
+        if (kept != kept_.end() && kept->second == document.version()) continue;
+        if (const ftk::Result<> written = recovery_->keep(path, document.buffer().text()); !written) {
+            note_ = written.error();
+            continue;
+        }
+        kept_[path] = document.version();
+    }
+}
+
+void Program::forget_kept(const std::filesystem::path& path) {
+    if (kept_.erase(path) > 0 && recovery_) recovery_->forget(path);
 }
 
 void Program::check_disk(double now) {
@@ -153,6 +215,7 @@ void Program::check_disk(double now) {
         }
     }
     tree_.forget_listings();
+    keep_unsaved();
 }
 
 void Program::close_front() {
@@ -180,7 +243,10 @@ void Program::close_tab(Group& group, std::size_t index) {
     const bool shown = std::ranges::any_of(groups_, [&](const Group& other) {
         return std::ranges::contains(other.tabs, path, &Tab::path);
     });
-    if (!shown) workspace_.close(path);
+    if (!shown) {
+        workspace_.close(path);
+        forget_kept(path);
+    }
 }
 
 void Program::take_keys() {
@@ -204,7 +270,12 @@ void Program::draw() {
     (void)ui::begin_host_window("##fjedit", {.scrollbar = false, .to_front = false});
     if (auto side = ui::Pane("##side", {SIDE_WIDTH, height})) draw_side();
     ui::same_line(0.0f);
-    if (auto editor = ui::Region("##editor", {0.0f, height}, {.wheel_scrolls = false})) draw_group(groups_[0], 0);
+    if (auto editor = ui::Region("##editor", {0.0f, height}, {.wheel_scrolls = false})) {
+        // Dialogs hang from the top of the editor, under the tabs once
+        // there are some.
+        dialog_at_ = ui::cursor() + glm::vec2{ui::space_left().x * 0.5f, 0.0f};
+        draw_group(groups_[0], 0);
+    }
     ui::end_host_window();
     draw_status();
     draw_prompts();
@@ -265,6 +336,7 @@ void Program::draw_group(Group& group, std::size_t index) {
         return;
     }
     std::optional<std::size_t> closed;
+    const float middle = ui::cursor().x + ui::space_left().x * 0.5f;
     if (auto tabs = ui::DocumentTabs("##tabs")) {
         for (std::size_t i = 0; i < group.tabs.size(); ++i) {
             const Tab& tab = group.tabs[i];
@@ -280,6 +352,7 @@ void Program::draw_group(Group& group, std::size_t index) {
         }
     }
     group.select.reset();
+    dialog_at_ = {middle, ui::cursor().y};
 
     // The code of the tab in front, in the space under the tabs, under a
     // strip while its file changed on disk with unsaved changes here.
@@ -335,9 +408,14 @@ void Program::draw_status() {
 }
 
 void Program::draw_prompts() {
+    ask_recover();
+    ask_close();
+}
+
+void Program::ask_close() {
     if (!closing_) return;
     if (!asking_) {
-        ui::open_dialog("##unsaved");
+        ui::open_dialog("##unsaved", {dialog_at_, 0.5f});
         asking_ = true;
     }
     const std::string title = std::format("Save changes to {}?", closing_->filename().string());
@@ -355,6 +433,41 @@ void Program::draw_prompts() {
     Group& group = groups_[active_];
     const auto found = std::ranges::find(group.tabs, path, &Tab::path);
     if (found != group.tabs.end()) close_tab(group, static_cast<std::size_t>(std::distance(group.tabs.begin(), found)));
+}
+
+void Program::ask_recover() {
+    if (!recovery_) return;
+    if (!recover_looked_) {
+        recover_looked_ = true;
+        recovering_ = recovery_->kept();
+        for (const Recovery::Kept& kept : recovering_) {
+            const std::optional<std::size_t> changed = lines_changed(kept.path, kept.bytes);
+            const std::string more = !changed        ? std::string("no longer on disk")
+                                     : *changed == 1 ? std::string("1 line changed")
+                                                     : std::format("{} lines changed", *changed);
+            recover_items_.push_back(listed(kept.path, workspace_.root(), more));
+        }
+        if (!recovering_.empty()) ui::open_dialog("##recover", {dialog_at_, 0.5f});
+    }
+    if (recovering_.empty()) return;
+    const std::string text = std::format("fjedit closed with unsaved changes in {}. They were kept on this machine.",
+                                         recovering_.size() == 1 ? std::string("one file")
+                                                                 : std::format("{} files", recovering_.size()));
+    const ui::RecoverAnswer answer =
+        ui::recover_dialog("##recover", "Recover unsaved changes", text.c_str(), recover_items_);
+    if (answer == ui::RecoverAnswer::None) return;
+    const std::vector<Recovery::Kept> kept = std::exchange(recovering_, {});
+    const std::vector<ui::UnsavedItem> items = std::exchange(recover_items_, {});
+    if (answer == ui::RecoverAnswer::Later) return;
+    for (std::size_t i = 0; i < kept.size(); ++i) {
+        if (answer == ui::RecoverAnswer::Recover && items[i].save) {
+            open(kept[i].path);
+            if (workspace_.find(kept[i].path) == nullptr) continue;
+            if (const ftk::Result<> put = workspace_.set_text(kept[i].path, kept[i].bytes); !put) note_ = put.error();
+        } else {
+            recovery_->forget(kept[i].path);
+        }
+    }
 }
 
 } // namespace fjedit

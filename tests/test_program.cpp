@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <functional>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -26,9 +27,11 @@ struct Running {
     std::unique_ptr<Program> program;
     ftk::test::KitHarness h{{1280.0f, 800.0f}};
 
-    explicit Running(std::initializer_list<std::pair<const char*, const char*>> files) {
+    explicit Running(std::initializer_list<std::pair<const char*, const char*>> files,
+                     const std::function<void(const TempFolder&)>& before = {}) {
         for (const auto& [name, bytes] : files) folder.write(name, bytes);
-        program = std::make_unique<Program>(folder.path);
+        if (before) before(folder);
+        program = std::make_unique<Program>(folder.path, ProgramOptions{.recovery = recovery_folder()});
         h.set_ui([this] { program->draw(); });
         h.step(3);
     }
@@ -47,6 +50,20 @@ struct Running {
         const auto* row = h.find(name, Role::TreeItem);
         REQUIRE(row != nullptr);
         h.click_at(row->rect.centre());
+        h.step(2);
+    }
+
+    // Where the program keeps unsaved work: in the test's own folder, where
+    // the tree doesn't show it.
+    [[nodiscard]] std::filesystem::path recovery_folder() const { return folder.path / ".recovery"; }
+    [[nodiscard]] std::vector<Recovery::Kept> kept() const { return Recovery(recovery_folder()).kept(); }
+
+    // A press on the button called `label`, as the last frame drew it.
+    void press(std::string_view label) {
+        h.step();
+        const auto* button = h.find(label, Role::Button);
+        REQUIRE(button != nullptr);
+        h.click_at(button->rect.centre());
         h.step(2);
     }
 
@@ -201,3 +218,41 @@ TEST_CASE("A file made elsewhere shows in the tree", "[program][disk]") {
     run.h.step(DISK_FRAMES);
     REQUIRE(run.h.find("rotator.cpp", Role::TreeItem) != nullptr);
 }
+
+TEST_CASE("Unsaved work is kept every few seconds, and forgotten once saved", "[program][recovery]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    run.h.step(DISK_FRAMES);
+    const std::vector<Recovery::Kept> kept = run.kept();
+    REQUIRE(kept.size() == 1);
+    REQUIRE(kept[0].bytes == "xint a;\n");
+    REQUIRE(kept[0].path == run.program->workspace().name(run.folder.path / "coin.cpp"));
+
+    run.h.press(Key::S, CTRL);
+    run.h.step();
+    REQUIRE(run.kept().empty());
+}
+
+TEST_CASE("Work kept from before is offered at the start and comes back unsaved", "[program][recovery]") {
+    Running run({{"coin.cpp", "int a;\n"}}, [](const TempFolder& folder) {
+        Workspace named(folder.path);
+        REQUIRE(Recovery(folder.path / ".recovery").keep(named.name("coin.cpp"), "int kept;\n").has_value());
+    });
+    run.press("Recover 1 file");
+    REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(run.document("coin.cpp").buffer().text() == "int kept;\n");
+    REQUIRE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+    REQUIRE(run.folder.read("coin.cpp") == "int a;\n");
+}
+
+TEST_CASE("Discard lets the work kept from before go", "[program][recovery]") {
+    Running run({{"coin.cpp", "int a;\n"}}, [](const TempFolder& folder) {
+        Workspace named(folder.path);
+        REQUIRE(Recovery(folder.path / ".recovery").keep(named.name("coin.cpp"), "int kept;\n").has_value());
+    });
+    run.press("Discard");
+    REQUIRE(run.kept().empty());
+    REQUIRE_FALSE(run.program->front().has_value());
+}
+
