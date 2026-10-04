@@ -795,19 +795,30 @@ const Command* find_command(std::string_view name) {
     return found == COMMANDS.end() ? nullptr : &*found;
 }
 
+std::vector<Span> apply_edit(CommandContext& context, Edit edit, std::optional<Position> caret) {
+    if (edit.changes.empty()) return {};
+    const Selections before = context.selections;
+    Edit undo = context.document.apply(edit);
+    if (caret) {
+        context.selections = Selections(Selection::at(context.document.buffer().clamp(*caret)));
+    } else {
+        context.selections.map(edit);
+    }
+    std::vector<Span> made = spans_after(edit);
+    context.document.history().close();
+    context.document.history().record({.made = std::move(edit), .undo = std::move(undo), .before = before,
+                                       .after = context.selections, .kind = EditKind::Other});
+    context.document.history().close();
+    return made;
+}
+
 std::vector<Span> replace_matches(CommandContext& context, std::span<const Span> matches, std::string_view needle,
                                   std::string_view with, FindOptions options) {
     if (matches.empty()) return {};
     const Buffer& buffer = context.document.buffer();
     Edit edit;
     for (const Span& match : matches) edit.changes.push_back({match, replacement(buffer, match, needle, with, options)});
-    const Selections before = context.selections;
-    Edit undo = context.document.apply(edit);
-    context.selections.map(edit);
-    std::vector<Span> replaced = spans_after(edit);
-    context.document.history().record({.made = std::move(edit), .undo = std::move(undo), .before = before,
-                                       .after = context.selections, .kind = EditKind::Other});
-    return replaced;
+    return apply_edit(context, std::move(edit));
 }
 
 Selections column_selection(const Buffer& buffer, const Layout& layout, std::size_t anchor_line, float anchor_x,
@@ -839,6 +850,13 @@ constexpr std::array VIEW_COMMANDS = {
     ViewCommand{"find.previous", "Find previous"},
     ViewCommand{"find.close", "Close find"},
     ViewCommand{"goto.open", "Go to line"},
+    ViewCommand{"completion.open", "Complete"},
+    ViewCommand{"completion.next", "Next completion"},
+    ViewCommand{"completion.previous", "Previous completion"},
+    ViewCommand{"completion.page_down", "Completions a page down"},
+    ViewCommand{"completion.page_up", "Completions a page up"},
+    ViewCommand{"completion.accept", "Accept completion"},
+    ViewCommand{"completion.close", "Close completions"},
 };
 
 } // namespace

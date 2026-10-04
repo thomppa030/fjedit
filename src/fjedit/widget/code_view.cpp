@@ -4,6 +4,7 @@
 #include "fjedit/core/find.hpp"
 #include "fjedit/core/structure.hpp"
 #include "fjedit/widget/code_colours.hpp"
+#include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/minimap.hpp"
 #include "fjedit/widget/text_layout.hpp"
 
@@ -69,13 +70,9 @@ constexpr float WAVE_HEIGHT = 1.5f;
 constexpr float WAVE_STEP = 2.0f;
 constexpr float WAVE_RISE = 3.0f;
 // The hover card (sheet 39, H): asked for once the mouse has rested this
-// long on a word; its prose at 12.5 and code at 12 on lines 18 apart beside
-// code at 13; padded 12 by 10, as wide as it needs between 160 and 480,
-// and its edge 4 left of the word's.
+// long on a word; padded 12 by 10, as wide as it needs between 160 and
+// 480, and its edge 4 left of the word's, as is completion's.
 constexpr double HOVER_DELAY = 0.5;
-constexpr float CARD_TEXT = 12.5f;
-constexpr float CARD_CODE = 12.0f;
-constexpr float CARD_LINE = 18.0f;
 constexpr glm::vec2 CARD_PAD{12.0f, 10.0f};
 constexpr float CARD_NARROWEST = 160.0f;
 constexpr float CARD_WIDEST = 480.0f;
@@ -387,6 +384,11 @@ void take_hover(core::Context& ui, const core::Interaction& in, const Frame& fra
 
 KeyMatch match_keys(const Keymap& keymap, const EditorView& view) {
     KeyMatch match = keymap.find(view.mode, view.pending);
+    if (view.completing.open) {
+        const KeyMatch completing = keymap.find(Keymap::COMPLETING, view.pending);
+        if (completing.command) return completing;
+        match.waiting = match.waiting || completing.waiting;
+    }
     if (view.find.open) {
         const KeyMatch finding = keymap.find(Keymap::FINDING, view.pending);
         if (finding.command) return finding;
@@ -424,7 +426,18 @@ void select_match(EditorView& view, Span match) {
 // find, or opens go to line.
 void run_view_command(std::string_view name, const Document& document, EditorView& view) {
     FindState& find = view.find;
-    if (name == "goto.open") {
+    if (name == "completion.open") {
+        if (view.service != nullptr) {
+            open_completion(view.completing, *view.service, view.path, document.buffer(), view.selections.primary().caret);
+        }
+    } else if (name == "completion.close") {
+        view.completing = {};
+    } else if (name == "completion.next" || name == "completion.previous") {
+        move_completion(view.completing, name == "completion.next" ? 1 : -1);
+    } else if (name == "completion.page_down" || name == "completion.page_up") {
+        const auto page = static_cast<std::ptrdiff_t>(COMPLETION_ROWS) - 1;
+        move_completion(view.completing, name == "completion.page_down" ? page : -page);
+    } else if (name == "goto.open") {
         view.go_to_line.open = true;
         view.go_to_line.focus = true;
         view.go_to_line.text.clear();
@@ -1013,10 +1026,7 @@ void draw_hover_card(core::Context& ui, const Buffer& buffer, EditorView& view, 
     EditorView::Hovering& hovering = view.hovering;
     const Span word = *hovering.word;
     const float scale = sizes.text / CODE_TEXT;
-    const float line = CARD_LINE * scale;
-    const MarkdownLook look{.body = face(ftk::ui::Font::Body, CARD_TEXT * scale, line),
-                            .mono = face(theme::mono_font(), CARD_CODE * scale, line),
-                            .strong = face(theme::bold_font(), CARD_TEXT * scale, line)};
+    const MarkdownLook look = card_look(scale);
     const glm::vec2 pad = CARD_PAD * scale;
     const float inner = std::clamp(markdown_width(ui, hovering.card, look), CARD_NARROWEST * scale, CARD_WIDEST * scale);
     const float top = frame.rect.min.y + static_cast<float>(view.folds.row_of(word.from.line)) * sizes.line - view.scroll.y;
@@ -1077,7 +1087,18 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const Selections before = view.selections;
 
     Clipboard clipboard{.get = [&] { return ui.clipboard(); }, .set = [&](std::string text) { ui.set_clipboard(text); }};
+    // Completion's entry taken, by the keys or a click: an edit of its own.
+    auto accept = [&](std::optional<std::size_t> index) {
+        view.folds.catch_up(document);
+        CommandContext context{.document = document, .selections = view.selections, .layout = layout,
+                               .clipboard = &clipboard, .folds = &view.folds, .text = {}};
+        accept_completion(view.completing, context, index);
+    };
     auto run = [&](std::string_view command, std::string_view text = {}) {
+        if (command == "completion.accept") {
+            accept(std::nullopt);
+            return;
+        }
         if (is_view_command(command)) {
             run_view_command(command, document, view);
             return;
@@ -1098,7 +1119,15 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         // with Ctrl and Alt it is AltGr's, as Windows reports it.
         const ftk::ui::Modifiers held = ui.modifiers();
         const bool shortcut = (held.ctrl || held.super) && !held.alt;
-        if (!ui.typed().empty() && !shortcut) run("edit.type", ui.typed());
+        if (!ui.typed().empty() && !shortcut) {
+            run("edit.type", ui.typed());
+            // A word begun, or . -> or :: typed, asks what completes it.
+            const Position caret = view.selections.primary().caret;
+            if (view.service != nullptr && !view.completing.open && view.selections.all().size() == 1 &&
+                asks_completion(buffer.line(caret.line), caret.byte)) {
+                open_completion(view.completing, *view.service, view.path, buffer, caret);
+            }
+        }
         take_keys(ui, keymap, view, run);
     }
 
@@ -1117,6 +1146,11 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         view.reveal = true;
     }
     take_hover(ui, in, frame, document, view, layout, edited || view.selections != before || view.scroll != scrolled);
+    if (view.service != nullptr) {
+        follow_completion(view.completing, *view.service, view.path, buffer, view.selections.primary().caret);
+    } else {
+        view.completing = {};
+    }
     view.seen = document.version();
     reveal(view, frame, buffer, layout);
     if (view.find.open) refresh_matches(view.find, document);
@@ -1174,6 +1208,28 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         if (plate.closed) {
             view.go_to_line.open = false;
             if (plate.go || ui.focused() == 0) ui.set_focus(id);
+        }
+    }
+
+    // The completion list under the word being typed; an entry clicked is
+    // taken.
+    if (view.completing.open) {
+        const Position start = view.completing.start;
+        const float scale = sizes.text / CODE_TEXT;
+        const float top = rect.min.y + static_cast<float>(view.folds.row_of(start.line)) * sizes.line - view.scroll.y;
+        const glm::vec2 anchor_min{drawn.origin_x + layout.x_of(buffer, start) - CARD_SHIFT * scale, top};
+        const glm::vec2 anchor_max{drawn.origin_x + layout.x_of(buffer, view.selections.primary().caret), top + sizes.line};
+        const std::string extension = view.path.extension().string();
+        if (const std::optional<std::size_t> clicked =
+                completion_card(view.completing, code.min, code.max, anchor_min, anchor_max, sizes.text,
+                                extension.empty() ? extension : extension.substr(1))) {
+            accept(*clicked);
+            // Its carets are where the edit left them already.
+            view.seen = document.version();
+            view.moved = ui.time();
+            view.reveal = true;
+            ui.set_focus(id);
+            ui.request_frame();
         }
     }
 

@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -79,6 +80,13 @@ struct ViewCommand {
 
 /// Whether `name` is a view command.
 [[nodiscard]] bool is_view_command(std::string_view name);
+
+/// Makes `edit`, changes that come from elsewhere than the keys (a
+/// completion chosen, a format, a rename), as one step of the history. The
+/// selections are carried through it as through an edit made elsewhere
+/// (Selections::map()), or become a caret at `caret` after it when given.
+/// Returns where the changes' text is once made (spans_after()).
+std::vector<Span> apply_edit(CommandContext& context, Edit edit, std::optional<Position> caret = std::nullopt);
 
 /// Replaces each of `matches`, places find_all() found `needle` at with
 /// `options`, with what replacement() gives for `with`, as one step of the

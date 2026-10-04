@@ -4,6 +4,7 @@
 #include "fjedit/core/syntax.hpp"
 #include "fjedit/widget/code_colours.hpp"
 
+#include "ftk/ui/kit/text.hpp"
 #include "ftk/ui/theme.hpp"
 
 #include <algorithm>
@@ -15,6 +16,18 @@ namespace {
 
 namespace core = ftk::ui::core;
 namespace theme = ftk::theme;
+
+// A card's prose, code and line spacing beside code at 13.
+constexpr float CARD_TEXT = 12.5f;
+constexpr float CARD_CODE = 12.0f;
+constexpr float CARD_LINE = 18.0f;
+
+core::TextStyle style_in(ftk::ui::Font font, float size, float line) {
+    const ftk::ui::FontScope scope(font, size);
+    core::TextStyle style = core::current().text().style();
+    style.line_height = line;
+    return style;
+}
 
 // Between blocks; above and below a rule; a list item's text in from its
 // bullet.
@@ -225,6 +238,13 @@ std::vector<MarkdownBlock> read_markdown(std::string_view markdown) {
     return blocks;
 }
 
+MarkdownLook card_look(float scale) {
+    const float line = CARD_LINE * scale;
+    return {.body = style_in(ftk::ui::Font::Body, CARD_TEXT * scale, line),
+            .mono = style_in(theme::mono_font(), CARD_CODE * scale, line),
+            .strong = style_in(theme::bold_font(), CARD_TEXT * scale, line)};
+}
+
 float markdown_width(core::Context& ui, std::span<const MarkdownBlock> blocks, const MarkdownLook& look) {
     float widest = 0.0f;
     for (const MarkdownBlock& block : blocks) {
@@ -276,11 +296,18 @@ float draw_markdown(core::Context& ui, std::span<const MarkdownBlock> blocks, gl
                     state = language.lexer.lex(line, state, tokens);
                     float x = at.x;
                     std::size_t done = 0;
+                    // A token that doesn't fit what is left of the line goes
+                    // on to the next, as long declarations wrap.
                     const auto run = [&](std::size_t from, std::size_t to, ftk::ui::Color colour) {
                         if (to <= from) return;
                         const std::string_view piece = std::string_view(line).substr(from, to - from);
+                        const float width_here = width_of(ui, piece, look.mono);
+                        if (x > at.x && x + width_here > right) {
+                            x = at.x;
+                            y += look.mono.line_height;
+                        }
                         ui.text().draw(dl, {x, y}, colour, piece, look.mono);
-                        x += width_of(ui, piece, look.mono);
+                        x += width_here;
                     };
                     for (const Token& token : tokens) {
                         run(done, token.begin, theme::text());

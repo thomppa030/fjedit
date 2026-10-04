@@ -36,6 +36,7 @@ target_link_libraries(fjedit-core PUBLIC ftk::base ftk::ui-core)
 # colours: the text laid out and drawn, and the keyboard and mouse taken.
 add_library(fjedit-widget STATIC
     fjedit/widget/code_view.cpp
+    fjedit/widget/completion.cpp
     fjedit/widget/find.cpp
     fjedit/widget/go_to_line.cpp
     fjedit/widget/markdown.cpp
@@ -45,7 +46,8 @@ add_library(fjedit::widget ALIAS fjedit-widget)
 ftk_target_defaults(fjedit-widget)
 target_link_libraries(fjedit-widget PUBLIC fjedit::core ftk::app-ui)
 # Its look comes from ftk's theme and kit alone, as every editor UI's does.
-ftk_check_editor_ui(fjedit-widget ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widget)
+ftk_check_editor_ui(fjedit-widget ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widget
+                    ICONS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widget/icons.hpp)
 
 # fjedit-program is fjedit as a program: a folder open in a window, its files
 # down the side, tabs over the code, menus and a status bar. The executable

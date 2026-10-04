@@ -890,3 +890,135 @@ TEST_CASE("Typing takes the hover card away, and resting on space asks nothing",
     wait(e, 0.6);
     REQUIRE(language.hovers.size() == 1);
 }
+
+namespace {
+
+// The names the completion list shows, as the last frame drew them.
+std::vector<std::string> listed(Editor& e) {
+    std::vector<std::string> out;
+    for (const auto& node : e.h.ui().semantics()) {
+        if (node.role == ftk::ui::core::Role::TreeItem) out.emplace_back(node.label);
+    }
+    return out;
+}
+
+// A function entry named `name` that replaces `word` with itself.
+Completion entry(std::string name, Span word, std::string sort) {
+    Completion made;
+    made.label = name;
+    made.kind = CompletionKind::Function;
+    made.change = {.span = word, .text = name};
+    made.filter = name;
+    made.sort = std::move(sort);
+    return made;
+}
+
+// An editor on an empty function, the caret in its body, with `language`.
+struct Completing {
+    FakeLanguage language;
+    Editor e{"void f() {\n    \n}", "coin.cpp"};
+
+    Completing() {
+        e.view.service = &language;
+        e.view.path = "coin.cpp";
+        e.h.click_at({PAST_END, row_y(1)});
+        e.h.step();
+    }
+
+    // Answers the last question with `items`, marked `incomplete`.
+    void answer(std::vector<Completion> items, bool incomplete = false) {
+        REQUIRE_FALSE(language.completions.empty());
+        const Question<Completions>& asked = language.completions.back();
+        FakeLanguage::answer(asked, Completions{.items = std::move(items), .incomplete = incomplete, .at = asked.at,
+                                                .version = e.document.version()});
+        e.h.step(2);
+    }
+};
+
+const Span TYPED_R{{1, 4}, {1, 5}};
+
+} // namespace
+
+TEST_CASE("Typing a word asks what completes it, and the list narrows as more is typed", "[code_view][completion]") {
+    Completing c;
+    c.e.h.type("r");
+    c.e.h.step();
+    REQUIRE(c.language.completions.size() == 1);
+    REQUIRE(c.language.completions.front().at == Position{1, 5});
+    c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2"), entry("round", TYPED_R, "3")});
+    REQUIRE(listed(c.e) == std::vector<std::string>{"rotate", "roll", "round"});
+
+    c.e.h.type("ot");
+    c.e.h.step(2);
+    REQUIRE(listed(c.e) == std::vector<std::string>{"rotate"});
+    // What was answered narrows on this side: nothing more is asked.
+    REQUIRE(c.language.completions.size() == 1);
+}
+
+TEST_CASE("Down then Enter takes the entry below, and the caret goes after it", "[code_view][completion]") {
+    Completing c;
+    c.e.h.type("ro");
+    c.e.h.step();
+    c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2")});
+    c.e.h.press(Key::Down);
+    c.e.h.press(Key::Enter);
+    c.e.h.step();
+    REQUIRE(c.e.document.buffer().line(1) == "    roll");
+    REQUIRE(c.e.caret() == Position{1, 8});
+    REQUIRE(listed(c.e).empty());
+    // One step of the history takes it back.
+    c.e.h.press(Key::Z, CTRL);
+    c.e.h.step();
+    REQUIRE(c.e.document.buffer().line(1) == "    ro");
+}
+
+TEST_CASE("An entry brings what it needs along, such as its #include", "[code_view][completion]") {
+    Completing c;
+    c.e.h.type("ro");
+    c.e.h.step();
+    Completion rotate = entry("rotate", TYPED_R, "1");
+    rotate.more = {{.span = {{0, 0}, {0, 0}}, .text = "#include <glm/gtc/quaternion.hpp>\n"}};
+    c.answer({rotate});
+    c.e.h.press(Key::Tab);
+    c.e.h.step();
+    REQUIRE(c.e.document.buffer().line(0) == "#include <glm/gtc/quaternion.hpp>");
+    REQUIRE(c.e.document.buffer().line(2) == "    rotate");
+    REQUIRE(c.e.caret() == Position{2, 10});
+}
+
+TEST_CASE("Escape closes the list, and a click takes the entry clicked", "[code_view][completion]") {
+    Completing c;
+    c.e.h.type("ro");
+    c.e.h.step();
+    c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2")});
+    c.e.h.press(Key::Escape);
+    c.e.h.step();
+    REQUIRE(listed(c.e).empty());
+    REQUIRE(c.e.document.buffer().line(1) == "    ro");
+
+    // Ctrl Space asks again; the second entry clicked.
+    c.e.h.press(Key::Space, CTRL);
+    c.e.h.step();
+    c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2")});
+    const auto* roll = c.e.h.find("roll", ftk::ui::core::Role::TreeItem);
+    REQUIRE(roll != nullptr);
+    c.e.h.click_at(roll->rect.centre());
+    c.e.h.step(2);
+    REQUIRE(c.e.document.buffer().line(1) == "    roll");
+}
+
+TEST_CASE("A list said to be incomplete asks again as more is typed, and a space closes it", "[code_view][completion]") {
+    Completing c;
+    c.e.h.type("r");
+    c.e.h.step();
+    c.answer({entry("rotate", TYPED_R, "1")}, true);
+    c.e.h.type("o");
+    c.e.h.step();
+    REQUIRE(c.language.completions.size() == 2);
+    REQUIRE(c.language.completions.back().at == Position{1, 6});
+    c.answer({entry("rotate", {{1, 4}, {1, 6}}, "1")});
+    REQUIRE(listed(c.e) == std::vector<std::string>{"rotate"});
+    c.e.h.type(" ");
+    c.e.h.step();
+    REQUIRE(listed(c.e).empty());
+}

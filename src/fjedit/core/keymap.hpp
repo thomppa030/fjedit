@@ -53,6 +53,8 @@ public:
     /// While a view's find is open: its bindings are looked up before the
     /// view's mode, and win over it.
     static constexpr std::string_view FINDING = "finding";
+    /// While a view's completion list is open, the same: before find's.
+    static constexpr std::string_view COMPLETING = "completing";
 
     /// fjedit's own keys, the ones VS Code has.
     [[nodiscard]] static Keymap standard();

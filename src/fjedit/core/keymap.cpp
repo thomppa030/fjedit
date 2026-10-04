@@ -192,6 +192,14 @@ Keymap Keymap::standard() {
         keymap.bind(EDITING, {chord(Key::K, CTRL), binding.keys}, std::string(binding.command));
     }
     keymap.bind(FINDING, {chord(Key::Escape)}, "find.close");
+    keymap.bind(EDITING, {chord(Key::Space, CTRL)}, "completion.open");
+    const Default completing[] = {
+        {chord(Key::Up), "completion.previous"},     {chord(Key::Down), "completion.next"},
+        {chord(Key::PageUp), "completion.page_up"},  {chord(Key::PageDown), "completion.page_down"},
+        {chord(Key::Enter), "completion.accept"},    {chord(Key::Tab), "completion.accept"},
+        {chord(Key::Escape), "completion.close"},
+    };
+    for (const Default& binding : completing) keymap.bind(COMPLETING, {binding.keys}, std::string(binding.command));
     return keymap;
 }
 

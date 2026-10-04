@@ -15,6 +15,7 @@
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/language_service.hpp"
 #include "fjedit/core/selections.hpp"
+#include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/find.hpp"
 #include "fjedit/widget/go_to_line.hpp"
 #include "fjedit/widget/markdown.hpp"
@@ -101,6 +102,8 @@ struct EditorView {
         std::optional<ftk::ui::core::Rect> card_rect{};
     };
     Hovering hovering{};
+    /// Its completion list, while one is open (sheet 39, P1).
+    CompletionState completing{};
 
     /// What a press of the mouse began, which dragging goes on with.
     struct Drag {

@@ -53,12 +53,17 @@ struct MarkdownLook {
     ftk::ui::core::TextStyle strong{};
 };
 
+/// The faces of a card's text beside code at `scale` of 13 (sheet 39's
+/// hover card and completion): prose at 12.5, code at 12, on lines 18
+/// apart.
+[[nodiscard]] MarkdownLook card_look(float scale);
+
 /// How wide `blocks` are with nothing wrapped: their widest line.
 [[nodiscard]] float markdown_width(ftk::ui::core::Context& ui, std::span<const MarkdownBlock> blocks,
                                    const MarkdownLook& look);
 
-/// Draws `blocks` from `at`, `width` wide, prose wrapped at it and code cut
-/// off there. @return how tall they were drawn
+/// Draws `blocks` from `at`, `width` wide: prose wrapped at it a word at a
+/// time, code a token at a time. @return how tall they were drawn
 float draw_markdown(ftk::ui::core::Context& ui, std::span<const MarkdownBlock> blocks, glm::vec2 at, float width,
                     const MarkdownLook& look);
 
