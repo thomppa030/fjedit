@@ -140,6 +140,7 @@ ServiceMaker Program::clangd() {
                         return path.extension() == ".c" ? std::string("c") : std::string("cpp");
                     },
                     .arrived = wake_,
+                    .if_missing = "set its path in Preferences",
                 });
             }};
 }
@@ -159,6 +160,7 @@ ServiceMaker Program::fjls() {
                         return extension == ".hpp" ? std::string("cpp") : extension.substr(1);
                     },
                     .arrived = wake_,
+                    .if_missing = "set its path in Preferences",
                 });
             }};
 }

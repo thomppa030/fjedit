@@ -40,6 +40,9 @@ struct ClientOptions {
     /// Called on another thread when the server has said something: to
     /// wake the frame loop that calls update().
     std::function<void()> arrived;
+    /// What to do when the server's program can't be found, said after
+    /// that it can't: "set its path in Preferences".
+    std::string if_missing{};
 };
 
 class Client final : public LanguageService {

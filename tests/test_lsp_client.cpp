@@ -187,7 +187,7 @@ TEST_CASE("A client whose server isn't there is stopped, and answers at once wit
                         .language_id = {},
                         .arrived = {}});
     REQUIRE(client.status().state == ServiceState::Stopped);
-    REQUIRE_FALSE(client.status().note.empty());
+    REQUIRE(client.status().note == "fjedit-no-such-server-anywhere isn't on the PATH");
     auto document = cpp("int a;\n");
     const fs::path path = folder.write("a.cpp", "int a;\n");
     client.open(path, *document);
@@ -197,4 +197,17 @@ TEST_CASE("A client whose server isn't there is stopped, and answers at once wit
     REQUIRE_FALSE(hover->answer.has_value());
     REQUIRE(client.serves("x/coin.CPP"));
     REQUIRE_FALSE(client.serves("x/coin.fjsl"));
+}
+
+TEST_CASE("A server named by a path that isn't there says so, and what to do about it", "[lsp]") {
+    const TempFolder folder;
+    const std::string gone = (folder.path / "gone" / "server").string();
+    const lsp::Client client({.command = {gone},
+                              .root = folder.path,
+                              .extensions = {"cpp"},
+                              .language_id = {},
+                              .arrived = {},
+                              .if_missing = "set its path in Preferences"});
+    REQUIRE(client.status().state == ServiceState::Stopped);
+    REQUIRE(client.status().note == gone + " doesn't exist; set its path in Preferences");
 }

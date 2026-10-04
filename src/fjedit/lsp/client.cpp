@@ -66,6 +66,14 @@ Span carried(const Edit& edit, Span span) {
     return {.from = from, .to = std::max(from, map(edit, span.to, Bias::Before))};
 }
 
+// That the server's program can't be found, as `program` names it: not on
+// the PATH, or not where a path to it says; then what to do about it.
+std::string missing(const std::string& program, const std::string& if_missing) {
+    std::string note = program + (fs::path(program).has_parent_path() ? " doesn't exist" : " isn't on the PATH");
+    if (!if_missing.empty()) note += "; " + if_missing;
+    return note;
+}
+
 // The last line of `text` that says anything.
 std::string last_line(std::string_view text) {
     while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) text.remove_suffix(1);
@@ -78,6 +86,10 @@ std::string last_line(std::string_view text) {
 Client::Client(ClientOptions options) : options_(std::move(options)) {
     const std::string name = options_.command.empty() ? std::string("the server")
                                                        : fs::path(options_.command.front()).stem().string();
+    if (!options_.command.empty() && !ftk::platform::find_program(options_.command.front())) {
+        status_ = {.state = ServiceState::Stopped, .note = missing(options_.command.front(), options_.if_missing)};
+        return;
+    }
     auto started = Connection::start(options_.command, options_.root, {.arrived = options_.arrived});
     if (!started) {
         status_ = {.state = ServiceState::Stopped, .note = started.error()};
