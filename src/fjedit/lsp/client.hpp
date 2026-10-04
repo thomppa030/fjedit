@@ -108,8 +108,8 @@ private:
         std::function<void(const std::string& why)> fail;
     };
 
-    void initialized(const Answer& answer);
-    bool heard(const ServerMessage& message);
+    void initialized(const ftk::jsonrpc::Answer& answer);
+    bool heard(const ftk::jsonrpc::Incoming& message);
     // Tells the server what changed in `file` since it last heard.
     void sync(const std::filesystem::path& path, Open& file);
     void ask_colours(const std::filesystem::path& path, Open& file);
@@ -126,7 +126,7 @@ private:
     // stopped.
     template <typename T>
     std::shared_ptr<Pending<T>> ask(std::string_view method, std::function<Json()> params,
-                                    std::function<T(const Answer&)> read);
+                                    std::function<T(const ftk::jsonrpc::Answer&)> read);
 
     ClientOptions options_;
     std::unique_ptr<Connection> connection_;

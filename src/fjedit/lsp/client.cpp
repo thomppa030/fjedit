@@ -13,6 +13,7 @@ namespace fjedit::lsp {
 namespace {
 
 namespace fs = std::filesystem;
+namespace jsonrpc = ftk::jsonrpc;
 
 // The token types this side can colour, in the protocol's names.
 const Json TOKEN_TYPES = {"namespace", "type",     "class",    "enum",   "interface", "struct",  "typeParameter",
@@ -92,12 +93,12 @@ Client::Client(ClientOptions options) : options_(std::move(options)) {
         {"workspaceFolders", Json::array({{{"uri", root}, {"name", options_.root.filename().string()}}})},
         {"capabilities", capabilities()},
     };
-    connection_->request("initialize", params, [this](Answer answer) { initialized(answer); });
+    connection_->peer().request("initialize", params, [this](jsonrpc::Answer answer) { initialized(answer); });
 }
 
 Client::~Client() = default;
 
-void Client::initialized(const Answer& answer) {
+void Client::initialized(const jsonrpc::Answer& answer) {
     if (!answer) {
         status_ = {.state = ServiceState::Stopped, .note = answer.error().message};
         fail_waiting(status_.note);
@@ -119,7 +120,7 @@ void Client::initialized(const Answer& answer) {
     if (const auto provider = capabilities.find("semanticTokensProvider"); provider != capabilities.end() && provider->is_object()) {
         colour_kinds_ = token_kinds(provider->value("legend", Json::object()).value("tokenTypes", Json::array()));
     }
-    connection_->notify("initialized", Json::object());
+    connection_->peer().notify("initialized", Json::object());
     status_ = {.state = ServiceState::Ready, .note = {}};
     // What is open first, so the questions asked meanwhile are about it.
     for (auto& [path, file] : open_) sync(path, file);
@@ -146,7 +147,7 @@ void Client::close(const fs::path& path) {
     const auto found = open_.find(path);
     if (found == open_.end()) return;
     if (found->second.told && connection_) {
-        connection_->notify("textDocument/didClose", {{"textDocument", {{"uri", found->second.uri}}}});
+        connection_->peer().notify("textDocument/didClose", {{"textDocument", {{"uri", found->second.uri}}}});
     }
     open_.erase(found);
 }
@@ -155,18 +156,18 @@ void Client::saved(const fs::path& path) {
     const auto found = open_.find(path);
     if (found == open_.end() || !ready() || !wants_saves_) return;
     sync(path, found->second);
-    connection_->notify("textDocument/didSave", {{"textDocument", {{"uri", found->second.uri}}}});
+    connection_->peer().notify("textDocument/didSave", {{"textDocument", {{"uri", found->second.uri}}}});
 }
 
 void Client::sync(const fs::path& path, Open& file) {
     const Document& document = *file.document;
     if (!file.told) {
         const std::string language = options_.language_id ? options_.language_id(path) : std::string();
-        connection_->notify("textDocument/didOpen", {{"textDocument",
-                                                      {{"uri", file.uri},
-                                                       {"languageId", language},
-                                                       {"version", document.version()},
-                                                       {"text", whole_text(document)}}}});
+        connection_->peer().notify("textDocument/didOpen", {{"textDocument",
+                                                             {{"uri", file.uri},
+                                                              {"languageId", language},
+                                                              {"version", document.version()},
+                                                              {"text", whole_text(document)}}}});
         file.told = true;
         file.sent = document.version();
         return;
@@ -184,8 +185,9 @@ void Client::sync(const fs::path& path, Open& file) {
     } else {
         changes.push_back({{"text", whole_text(document)}});
     }
-    connection_->notify("textDocument/didChange", {{"textDocument", {{"uri", file.uri}, {"version", document.version()}}},
-                                                   {"contentChanges", std::move(changes)}});
+    connection_->peer().notify("textDocument/didChange",
+                               {{"textDocument", {{"uri", file.uri}, {"version", document.version()}}},
+                                {"contentChanges", std::move(changes)}});
     file.sent = document.version();
 }
 
@@ -194,26 +196,27 @@ void Client::ask_colours(const fs::path& path, Open& file) {
     if (colour_kinds_.empty() || file.colours_asked || file.colours_for == version) return;
     file.colours_asked = true;
     file.colours_for = version;
-    connection_->request("textDocument/semanticTokens/full", {{"textDocument", {{"uri", file.uri}}}},
-                         [this, path, version](Answer answer) {
-                             const auto found = open_.find(path);
-                             if (found == open_.end()) return;
-                             Open& asked = found->second;
-                             asked.colours_asked = false;
-                             // Colours for a text since changed are asked for
-                             // again; the ones before are carried meanwhile.
-                             if (!answer || !answer->is_object() || version != asked.document->version()) return;
-                             asked.colours = tokens_from(answer->value("data", Json::array()), colour_kinds_,
-                                                         asked.document->buffer().line_count(), positions_for(path));
-                             asked.colours_version = version;
-                             asked.carried_colours_version.reset();
-                         });
+    const auto answered = [this, path, version](jsonrpc::Answer answer) {
+        const auto found = open_.find(path);
+        if (found == open_.end()) return;
+        Open& asked = found->second;
+        asked.colours_asked = false;
+        // Colours for a text since changed are asked for again; the ones
+        // before are carried meanwhile.
+        if (!answer || !answer->is_object() || version != asked.document->version()) return;
+        asked.colours = tokens_from(answer->value("data", Json::array()), colour_kinds_,
+                                    asked.document->buffer().line_count(), positions_for(path));
+        asked.colours_version = version;
+        asked.carried_colours_version.reset();
+    };
+    connection_->peer().request("textDocument/semanticTokens/full", {{"textDocument", {{"uri", file.uri}}}},
+                                answered);
 }
 
 void Client::update() {
     if (!connection_) return;
-    connection_->poll([this](const ServerMessage& message) { return heard(message); });
-    if (!connection_->running()) {
+    connection_->peer().poll([this](const jsonrpc::Incoming& message) { return heard(message); });
+    if (!connection_->peer().open()) {
         if (status_.state != ServiceState::Stopped) {
             const std::string why = last_line(connection_->errors());
             status_ = {.state = ServiceState::Stopped,
@@ -230,12 +233,12 @@ void Client::update() {
     // Questions no one waits on any more are given up.
     std::erase_if(watched_, [this](const Watched& watched) {
         if (!watched.pending.expired()) return false;
-        connection_->cancel(watched.id);
+        connection_->peer().cancel(watched.id);
         return true;
     });
 }
 
-bool Client::heard(const ServerMessage& message) {
+bool Client::heard(const jsonrpc::Incoming& message) {
     if (message.method == "textDocument/publishDiagnostics") {
         const std::optional<fs::path> path = path_of(message.params.value("uri", std::string()));
         const auto found = path ? open_.find(*path) : open_.end();
@@ -258,12 +261,12 @@ bool Client::heard(const ServerMessage& message) {
     // progress.
     if (message.method == "client/registerCapability" || message.method == "client/unregisterCapability" ||
         message.method == "window/workDoneProgress/create") {
-        connection_->answer(*message.id, nullptr);
+        connection_->peer().answer(*message.id, nullptr);
         return true;
     }
     if (message.method == "workspace/configuration") {
         const Json items = message.params.value("items", Json::array());
-        connection_->answer(*message.id, Json(std::vector<Json>(items.size(), nullptr)));
+        connection_->peer().answer(*message.id, Json(std::vector<Json>(items.size(), nullptr)));
         return true;
     }
     return false;
@@ -352,24 +355,24 @@ Json Client::document_at(const fs::path& path, const std::string& uri, Position 
 
 template <typename T>
 std::shared_ptr<Pending<T>> Client::ask(std::string_view method, std::function<Json()> params,
-                                        std::function<T(const Answer&)> read) {
+                                        std::function<T(const jsonrpc::Answer&)> read) {
     auto pending = std::make_shared<Pending<T>>();
     const std::weak_ptr<Pending<T>> weak = pending;
-    const auto answered = [weak, read = std::move(read)](const Answer& answer) {
+    const auto answered = [weak, read = std::move(read)](const jsonrpc::Answer& answer) {
         const std::shared_ptr<Pending<T>> held = weak.lock();
         if (!held) return;
         held->answer = read(answer);
         held->answered = true;
     };
     const auto fail = [answered](const std::string& why) {
-        answered(std::unexpected(ResponseError{.code = 0, .message = why}));
+        answered(std::unexpected(jsonrpc::ResponseError{.code = 0, .message = why}));
     };
     if (status_.state == ServiceState::Stopped || !connection_) {
         fail(status_.note);
         return pending;
     }
     auto send = [this, method = std::string(method), params = std::move(params), answered, weak] {
-        const int id = connection_->request(method, params(), answered);
+        const int id = connection_->peer().request(method, params(), answered);
         watched_.push_back({.id = id, .pending = std::weak_ptr<const void>(weak)});
     };
     if (ready()) {
@@ -394,7 +397,7 @@ Asked<Completions> Client::complete(const fs::path& path, Position at) {
     const std::string line(file.document->buffer().line(caret.line));
     return ask<Completions>("textDocument/completion",
                             [this, path, uri = file.uri, caret] { return document_at(path, uri, caret); },
-                            [this, path, at = caret, version, line](const Answer& answer) {
+                            [this, path, at = caret, version, line](const jsonrpc::Answer& answer) {
                                 Completions out{.items = {}, .incomplete = false, .at = at, .version = version};
                                 if (answer) {
                                     out.items = completions_from(*answer, at, line, positions_for(path), &out.incomplete);
@@ -409,7 +412,7 @@ Asked<std::optional<Hover>> Client::hover(const fs::path& path, Position at) {
     if (ready()) sync(path, found->second);
     return ask<std::optional<Hover>>("textDocument/hover",
                                      [this, path, uri = found->second.uri, at] { return document_at(path, uri, at); },
-                                     [this, path](const Answer& answer) -> std::optional<Hover> {
+                                     [this, path](const jsonrpc::Answer& answer) -> std::optional<Hover> {
                                          if (!answer) return std::nullopt;
                                          return hover_from(*answer, positions_for(path));
                                      });
@@ -423,7 +426,7 @@ Asked<std::vector<Location>> Client::definition(const fs::path& path, Position a
     if (ready()) sync(path, found->second);
     return ask<std::vector<Location>>("textDocument/definition",
                                       [this, path, uri = found->second.uri, at] { return document_at(path, uri, at); },
-                                      [this](const Answer& answer) -> std::vector<Location> {
+                                      [this](const jsonrpc::Answer& answer) -> std::vector<Location> {
                                           if (!answer) return {};
                                           return locations_from(*answer, [this](const fs::path& where) {
                                               return positions_for(where);
@@ -444,7 +447,7 @@ Asked<ftk::Result<WorkspaceEdit>> Client::rename(const fs::path& path, Position 
         return made;
     };
     return ask<ftk::Result<WorkspaceEdit>>("textDocument/rename", params,
-                                           [this](const Answer& answer) -> ftk::Result<WorkspaceEdit> {
+                                           [this](const jsonrpc::Answer& answer) -> ftk::Result<WorkspaceEdit> {
                                                if (!answer) return ftk::make_error(answer.error().message);
                                                return workspace_edit_from(*answer, [this](const fs::path& where) {
                                                    return positions_for(where);
@@ -467,7 +470,7 @@ Asked<std::optional<VersionedEdit>> Client::format(const fs::path& path) {
                     {"options", {{"tabSize", indent.width}, {"insertSpaces", !indent.tabs}}}};
     };
     return ask<std::optional<VersionedEdit>>("textDocument/formatting", params,
-                                             [this, path, version](const Answer& answer) -> std::optional<VersionedEdit> {
+                                             [this, path, version](const jsonrpc::Answer& answer) -> std::optional<VersionedEdit> {
                                                  if (!answer || !answer->is_array()) return std::nullopt;
                                                  return VersionedEdit{.version = version,
                                                                       .edit = edit_from(*answer, positions_for(path))};

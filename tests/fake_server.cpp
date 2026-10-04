@@ -10,29 +10,21 @@
 //     die             writes "dying" to its errors and ends with code 5
 //     shutdown        answers null; the notification exit ends it
 
-#include "fjedit/lsp/frames.hpp"
+#include "ftk/jsonrpc/frames.hpp"
+#include "ftk/platform/platform.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
-
-#ifdef _WIN32
-// The protocol's \r\n must pass as it is, which a Windows program's
-// standard streams only let it in binary mode.
-#include <fcntl.h>
-#include <io.h>
-#endif
 
 using Json = nlohmann::json;
 
 namespace {
 
 void send(const Json& message) {
-    const std::string bytes = fjedit::lsp::framed(message.dump());
-    std::fwrite(bytes.data(), 1, bytes.size(), stdout);
-    std::fflush(stdout);
+    (void)ftk::platform::write_standard_output(ftk::jsonrpc::framed(message.dump()));
 }
 
 void answer(const Json& id, const Json& result) {
@@ -42,16 +34,13 @@ void answer(const Json& id, const Json& result) {
 } // namespace
 
 int main() {
-#ifdef _WIN32
-    _setmode(_fileno(stdin), _O_BINARY);
-    _setmode(_fileno(stdout), _O_BINARY);
-#endif
-    fjedit::lsp::FrameReader frames;
+    ftk::jsonrpc::FrameReader frames;
     Json slow_id;
-    // A byte at a time: a read of more waits until all of it has come.
-    for (int c = std::getchar(); c != EOF; c = std::getchar()) {
-        const char byte = static_cast<char>(c);
-        frames.add(std::string_view(&byte, 1));
+    std::array<char, 4096> buffer{};
+    for (;;) {
+        const auto got = ftk::platform::read_standard_input(buffer);
+        if (!got || *got == 0) return 0;
+        frames.add(std::string_view(buffer.data(), *got));
         while (const auto body = frames.next()) {
             const Json message = Json::parse(*body);
             const std::string method = message.value("method", std::string());
@@ -86,5 +75,4 @@ int main() {
             }
         }
     }
-    return 0;
 }

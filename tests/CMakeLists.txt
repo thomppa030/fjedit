@@ -60,7 +60,7 @@ target_link_libraries(fjedit-program-tests PRIVATE fjedit::program ftk::kit-harn
 add_executable(fjedit-fake-server
     fake_server.cpp)
 ftk_target_defaults(fjedit-fake-server)
-target_link_libraries(fjedit-fake-server PRIVATE fjedit::lsp)
+target_link_libraries(fjedit-fake-server PRIVATE ftk::jsonrpc ftk::platform)
 add_executable(fjedit-lsp-tests
     log_for_tests.cpp
     test_lsp.cpp
