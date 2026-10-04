@@ -1,8 +1,8 @@
 #include "fjedit/core/text_file.hpp"
 
-#include <algorithm>
+#include <array>
+#include <cstdint>
 #include <fstream>
-#include <iterator>
 #include <system_error>
 
 namespace fjedit {
@@ -11,16 +11,32 @@ namespace {
 
 // How far into a file a zero byte marks it as no text.
 constexpr std::size_t BINARY_LOOK = 8000;
+// How much of a file is read at a time after its head.
+constexpr std::size_t READ_BLOCK = 64 * 1024;
 
 } // namespace
 
 ftk::Result<std::string> read_text_file(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return ftk::make_error("Can't read " + path.string());
-    std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string bytes;
+    std::error_code error;
+    if (const std::uintmax_t size = std::filesystem::file_size(path, error); !error) {
+        bytes.reserve(static_cast<std::size_t>(size));
+    }
+    // The head first: a file that is no text is never read further.
+    bytes.resize(BINARY_LOOK);
+    in.read(bytes.data(), static_cast<std::streamsize>(BINARY_LOOK));
+    bytes.resize(static_cast<std::size_t>(in.gcount()));
     if (in.bad()) return ftk::make_error("Can't read " + path.string());
-    const std::string_view head = std::string_view(bytes).substr(0, BINARY_LOOK);
-    if (head.find('\0') != std::string_view::npos) return ftk::make_error(path.filename().string() + " isn't text");
+    if (bytes.find('\0') != std::string::npos) return ftk::make_error(path.filename().string() + " isn't text");
+    // Then the rest, a block at a time.
+    std::array<char, READ_BLOCK> block;
+    while (in) {
+        in.read(block.data(), static_cast<std::streamsize>(block.size()));
+        bytes.append(block.data(), static_cast<std::size_t>(in.gcount()));
+    }
+    if (in.bad()) return ftk::make_error("Can't read " + path.string());
     return bytes;
 }
 

@@ -61,6 +61,17 @@ TEST_CASE("A file with a zero byte early on isn't text, and a missing one can't 
     REQUIRE_FALSE(read_text_file(folder.path / "nowhere.txt").has_value());
 }
 
+TEST_CASE("A file longer than its head and many blocks reads back whole", "[files]") {
+    const TempFolder folder;
+    std::string bytes;
+    for (int i = 0; bytes.size() < 300'000; ++i) bytes += "line " + std::to_string(i) + "\n";
+    // A zero byte past the head is the file's own: it is text all the same.
+    bytes[200'000] = '\0';
+    const ftk::Result<std::string> read_back = read_text_file(folder.write("long.txt", bytes));
+    REQUIRE(read_back.has_value());
+    REQUIRE(*read_back == bytes);
+}
+
 TEST_CASE("Writing keeps a file's permissions, and a failed write leaves nothing", "[files]") {
     const TempFolder folder;
     const fs::path file = folder.write("run.sh", "echo a\n");
