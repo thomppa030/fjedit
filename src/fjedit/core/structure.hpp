@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace fjedit {
@@ -77,6 +78,15 @@ struct Indent {
 /// (steps of one, a comment's " * ", don't count). `fallback` where the text
 /// doesn't say, and its width for tabs.
 [[nodiscard]] Indent detect_indent(const Buffer& buffer, Indent fallback);
+
+/// The function whose body holds line `line`, as C-like code writes one:
+/// its name then a bracket ("begin_play()"), read from the head of the
+/// block it opens. The blocks of branches, loops and lambdas are looked
+/// through to the function around them; a line that begins by closing a
+/// block is still in it. Nothing outside a function. It reads only the
+/// text; a language service that knows the file's symbols answers better.
+[[nodiscard]] std::optional<std::string> enclosing_function(const Buffer& buffer, const Syntax& syntax,
+                                                            std::size_t line);
 
 /// Whether byte `byte` of line `line` is inside a string or a comment.
 [[nodiscard]] bool in_string_or_comment(const Syntax& syntax, std::size_t line, std::size_t byte);

@@ -1,3 +1,4 @@
+#include "fjedit/core/document.hpp"
 #include "fjedit/core/language.hpp"
 #include "fjedit/core/structure.hpp"
 
@@ -140,4 +141,43 @@ TEST_CASE("A few tabs in a file of spaces don't make it a tab file", "[structure
     const Indent indent = detected("a {\n    b;\n    c;\n\td;\n    e;\n}");
     REQUIRE_FALSE(indent.tabs);
     REQUIRE(indent.width == 4);
+}
+
+TEST_CASE("The function a line is in is named from its block's head", "[structure]") {
+    const Document document("#include <x>\n"                                  // 0
+                            "namespace game {\n"                               // 1
+                            "struct Coin {\n"                                  // 2
+                            "    [[nodiscard]] int value() const {\n"          // 3
+                            "        if (spun(1)) {\n"                         // 4
+                            "            return 2;\n"                          // 5
+                            "        } else {\n"                               // 6
+                            "            auto f = [&](int a) { return a; };\n" // 7
+                            "        }\n"                                      // 8
+                            "    }\n"                                          // 9
+                            "};\n"                                             // 10
+                            "Coin::Coin() : a_(1), b_(2) {\n"                  // 11
+                            "    run(std::visit([](auto v) {\n"                // 12
+                            "        return v;\n"                              // 13
+                            "    }, x));\n"                                    // 14
+                            "}\n"                                              // 15
+                            "}",                                               // 16
+                            language_for("x.cpp"));
+    const auto in = [&](std::size_t line) { return enclosing_function(document.buffer(), document.syntax(), line); };
+    REQUIRE(in(5) == "value()");
+    REQUIRE(in(6) == "value()");
+    REQUIRE(in(7) == "value()");
+    REQUIRE(in(9) == "value()");
+    REQUIRE(in(3) == "value()");
+    REQUIRE(in(13) == "Coin()");
+    REQUIRE(in(15) == "Coin()");
+    REQUIRE_FALSE(in(2).has_value());
+    REQUIRE_FALSE(in(10).has_value());
+    REQUIRE_FALSE(in(0).has_value());
+}
+
+TEST_CASE("A shader's hooks name the lines in them", "[structure]") {
+    const Document document("shader_type spatial;\nuniform float band = 0.5;\nvoid fragment() {\n    ALBEDO = vec3(band);\n}",
+                            language_for("x.fjsl"));
+    REQUIRE(enclosing_function(document.buffer(), document.syntax(), 3) == "fragment()");
+    REQUIRE_FALSE(enclosing_function(document.buffer(), document.syntax(), 1).has_value());
 }

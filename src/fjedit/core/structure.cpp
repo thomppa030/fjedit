@@ -6,6 +6,8 @@
 #include <array>
 #include <cstddef>
 #include <map>
+#include <string>
+#include <string_view>
 
 namespace fjedit {
 
@@ -166,6 +168,71 @@ void comment_folds(const Buffer& buffer, const Syntax& syntax, std::map<std::siz
     }
 }
 
+// How far back the head of a block is read for a function's name, and how
+// many blocks out from a line the function around it is looked for.
+constexpr std::size_t HEAD_LINES = 50;
+constexpr std::size_t BLOCKS_OUT = 64;
+
+// Words a bracket follows that don't name a function.
+constexpr std::string_view NOT_FUNCTIONS[] = {
+    "if", "for", "while", "switch", "catch", "return", "sizeof", "alignof", "decltype", "noexcept", "requires",
+    "static_assert", "typeid",
+};
+
+bool name_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '~';
+}
+
+// Where the head of the block opened at `opener` begins: after the code
+// before it that ends a statement or a block, or after a preprocessor line.
+Position head_start(const Buffer& buffer, const Syntax& syntax, Position opener) {
+    std::size_t line = opener.line;
+    std::size_t byte = opener.byte;
+    for (std::size_t looked = 0; looked <= HEAD_LINES; ++looked) {
+        const std::string_view text = buffer.line(line);
+        const std::size_t first = text.find_first_not_of(" \t");
+        if (line != opener.line && first != std::string_view::npos && text[first] == '#') return {line + 1, 0};
+        while (byte-- > 0) {
+            const char c = text[byte];
+            if ((c == ';' || c == '{' || c == '}') && code_at(&syntax, line, byte)) return {line, byte + 1};
+        }
+        if (line == 0) return {0, 0};
+        --line;
+        byte = buffer.line(line).size();
+    }
+    return {line, 0};
+}
+
+// The name of the function whose body the brace at `opener` opens: the
+// name before the head's first bracket, when that bracket pairs before the
+// brace. Nothing when the brace opens something else: a class, a branch, a
+// lambda inside a call.
+std::optional<std::string> function_opened(const Buffer& buffer, const Syntax& syntax, Position opener) {
+    for (Position at = head_start(buffer, syntax, opener); at < opener;) {
+        const std::string_view text = buffer.line(at.line);
+        if (at.byte >= text.size()) {
+            at = {at.line + 1, 0};
+            continue;
+        }
+        if (text[at.byte] != '(' || !code_at(&syntax, at.line, at.byte)) {
+            ++at.byte;
+            continue;
+        }
+        std::size_t end = at.byte;
+        while (end > 0 && (text[end - 1] == ' ' || text[end - 1] == '\t')) --end;
+        std::size_t begin = end;
+        while (begin > 0 && name_char(text[begin - 1])) --begin;
+        const std::string_view name = text.substr(begin, end - begin);
+        if (name.empty() || (name[0] >= '0' && name[0] <= '9') || std::ranges::contains(NOT_FUNCTIONS, name)) {
+            return std::nullopt;
+        }
+        const std::optional<Position> close = pair_of(buffer, syntax, at, Kind{'(', ')'});
+        if (!close || !(*close < opener)) return std::nullopt;
+        return std::string(name) + "()";
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::vector<FoldRange> fold_ranges(const Buffer& buffer, const Syntax& syntax, Folding folding, std::size_t tab_width) {
@@ -259,6 +326,21 @@ std::optional<BracketPair> matching_bracket(const Buffer& buffer, const Syntax& 
     const std::optional<Position> pair = pair_of(buffer, syntax, bracket, *kind);
     if (!pair) return std::nullopt;
     return bracket < *pair ? BracketPair{bracket, *pair} : BracketPair{*pair, bracket};
+}
+
+std::optional<std::string> enclosing_function(const Buffer& buffer, const Syntax& syntax, std::size_t line) {
+    // From the line's end, unless it begins by closing a block: then it is
+    // still that block's.
+    const std::string_view text = buffer.line(line);
+    const std::size_t first = text.find_first_not_of(" \t");
+    Position at{line, first != std::string_view::npos && text[first] == '}' ? first : text.size()};
+    for (std::size_t out = 0; out < BLOCKS_OUT; ++out) {
+        const std::optional<Position> opener = enclosing_opener(buffer, &syntax, at, '{');
+        if (!opener) return std::nullopt;
+        if (std::optional<std::string> name = function_opened(buffer, syntax, *opener)) return name;
+        at = *opener;
+    }
+    return std::nullopt;
 }
 
 } // namespace fjedit
