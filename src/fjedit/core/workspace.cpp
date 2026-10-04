@@ -102,13 +102,8 @@ std::vector<std::filesystem::path> Workspace::changed_on_disk() {
     return changed;
 }
 
-ftk::Result<> Workspace::reload(const std::filesystem::path& path) {
-    OpenFile* file = find_open(path);
-    if (file == nullptr) return ftk::make_error(path.string() + " isn't open");
-    const ftk::Result<std::string> bytes = read_text_file(file->path);
-    if (!bytes) return ftk::make_error(bytes.error());
-    const Buffer fresh(*bytes);
-    Document& document = *file->document;
+void Workspace::replace(Document& document, std::string_view bytes) {
+    const Buffer fresh(bytes);
     const Buffer& held = document.buffer();
 
     // The lines alike at the start and at the end are left; the ones between
@@ -137,9 +132,24 @@ ftk::Result<> Workspace::reload(const std::filesystem::path& path) {
                                    .kind = EditKind::Other});
     }
     document.set_file_format(fresh.line_ending(), fresh.byte_order_mark());
-    document.history().mark_saved();
+}
+
+ftk::Result<> Workspace::reload(const std::filesystem::path& path) {
+    OpenFile* file = find_open(path);
+    if (file == nullptr) return ftk::make_error(path.string() + " isn't open");
+    const ftk::Result<std::string> bytes = read_text_file(file->path);
+    if (!bytes) return ftk::make_error(bytes.error());
+    replace(*file->document, *bytes);
+    file->document->history().mark_saved();
     file->known = stamp_of(file->path);
     file->named.reset();
+    return {};
+}
+
+ftk::Result<> Workspace::set_text(const std::filesystem::path& path, std::string_view bytes) {
+    OpenFile* file = find_open(path);
+    if (file == nullptr) return ftk::make_error(path.string() + " isn't open");
+    replace(*file->document, bytes);
     return {};
 }
 

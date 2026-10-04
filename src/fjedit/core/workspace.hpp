@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace fjedit {
@@ -61,6 +62,10 @@ public:
     /// are left alone, so the carets on them stay.
     [[nodiscard]] ftk::Result<> reload(const std::filesystem::path& path);
 
+    /// Makes `path`'s document `bytes`, as reload() does but unsaved: work
+    /// kept from before a crash, put back.
+    [[nodiscard]] ftk::Result<> set_text(const std::filesystem::path& path, std::string_view bytes);
+
 private:
     // When a file was last written, and how long it was: what tells that
     // another program wrote it.
@@ -81,6 +86,9 @@ private:
     };
 
     [[nodiscard]] static std::optional<Stamp> stamp_of(const std::filesystem::path& path);
+    // Makes `document` `bytes` as one step, the lines alike at its ends
+    // left alone, and takes their line breaks and mark.
+    static void replace(Document& document, std::string_view bytes);
     [[nodiscard]] OpenFile* find_open(const std::filesystem::path& path);
     [[nodiscard]] const OpenFile* find_open(const std::filesystem::path& path) const;
 

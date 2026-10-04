@@ -168,3 +168,15 @@ TEST_CASE("Kept work comes back with the file it is for, the latest kept", "[rec
     REQUIRE(kept.size() == 1);
     REQUIRE(kept[0].bytes == "two\r\n");
 }
+
+TEST_CASE("Text put into a document is one step it can undo, and unsaved", "[workspace]") {
+    const TempFolder folder;
+    const fs::path file = folder.write("a.txt", "one\ntwo");
+    Workspace workspace(folder.path);
+    Document& document = **workspace.open(file);
+    REQUIRE(workspace.set_text(file, "one\nTWO").has_value());
+    REQUIRE(document.buffer().text() == "one\nTWO");
+    REQUIRE(workspace.unsaved(file));
+    REQUIRE(document.undo().has_value());
+    REQUIRE_FALSE(workspace.unsaved(file));
+}
