@@ -28,6 +28,10 @@ uint64_t path_hash(std::string_view text) {
 
 } // namespace
 
+std::filesystem::path Recovery::folder_for(const std::filesystem::path& base, const std::filesystem::path& root) {
+    return base / std::format("{:016x}", path_hash(root.generic_string()));
+}
+
 std::filesystem::path Recovery::kept_path(const std::filesystem::path& path) const {
     return folder_ / std::format("{:016x}{}", path_hash(path.generic_string()), EXTENSION);
 }

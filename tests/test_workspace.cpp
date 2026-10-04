@@ -180,3 +180,10 @@ TEST_CASE("Text put into a document is one step it can undo, and unsaved", "[wor
     REQUIRE(document.undo().has_value());
     REQUIRE_FALSE(workspace.unsaved(file));
 }
+
+TEST_CASE("Each folder's work is kept in a folder of its own", "[recovery]") {
+    const fs::path base = "/state/fjedit";
+    REQUIRE(Recovery::folder_for(base, "/work/game") == Recovery::folder_for(base, "/work/game"));
+    REQUIRE(Recovery::folder_for(base, "/work/game") != Recovery::folder_for(base, "/work/tools"));
+    REQUIRE(Recovery::folder_for(base, "/work/game").parent_path() == base);
+}

@@ -25,6 +25,11 @@ public:
 
     [[nodiscard]] const std::filesystem::path& folder() const { return folder_; }
 
+    /// A folder of its own under `base` for the work on the files of the
+    /// folder `root`, the same on every run.
+    [[nodiscard]] static std::filesystem::path folder_for(const std::filesystem::path& base,
+                                                          const std::filesystem::path& root);
+
     /// Keeps `bytes` as the unsaved work on the file at `path`, in place of
     /// what was kept for it before.
     [[nodiscard]] ftk::Result<> keep(const std::filesystem::path& path, std::string_view bytes);
