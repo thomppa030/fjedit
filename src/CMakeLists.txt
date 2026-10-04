@@ -31,6 +31,7 @@ target_link_libraries(fjedit-core PUBLIC ftk::base ftk::ui-core)
 # colours: the text laid out and drawn, and the keyboard and mouse taken.
 add_library(fjedit-widget STATIC
     fjedit/widget/code_view.cpp
+    fjedit/widget/find.cpp
     fjedit/widget/text_layout.cpp)
 add_library(fjedit::widget ALIAS fjedit-widget)
 ftk_target_defaults(fjedit-widget)

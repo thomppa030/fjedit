@@ -3,6 +3,7 @@
 #include "print.hpp"
 
 #include "ftk/test/kit_harness.hpp"
+#include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/theme.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -392,4 +393,128 @@ TEST_CASE("Each view keeps its own folds, and they follow edits made in another"
     h.press(Key::Enter);
     h.step();
     REQUIRE(right.folds.closed_at(1));
+}
+
+namespace {
+
+// Three uses of "band" over two lines, and one of "bandit".
+constexpr std::string_view BANDS = "band = 1;\nwide(band, band);\nbandit();";
+
+// A press on the find plate's item called `label`.
+void press_on_plate(Editor& e, std::string_view label, ftk::ui::core::Role role = ftk::ui::core::Role::Button) {
+    e.h.step();
+    const ftk::ui::core::SemanticNode* item = e.h.find(label, role);
+    REQUIRE(item != nullptr);
+    e.h.click_at(item->rect.centre());
+}
+
+} // namespace
+
+TEST_CASE("Ctrl F opens the find with the word at the caret, its matches washed", "[code_view][find]") {
+    Editor e(BANDS);
+    e.h.click_at({50.0f, row_y(1)});
+    e.h.press(Key::F, CTRL);
+    REQUIRE(e.view.find.open);
+    REQUIRE(e.view.find.query == "wide");
+
+    // The field has the keyboard, the query selected: typing replaces it.
+    e.h.type("band");
+    REQUIRE(e.view.find.query == "band");
+    e.h.step();
+    REQUIRE(e.view.find.matches.size() == 4);
+    // The match nearest on from the caret is selected, the rest washed.
+    REQUIRE(e.view.selections.primary().span() == Span{{1, 5}, {1, 9}});
+    REQUIRE(drawn_in(e.h, ftk::theme::selection_secondary()) == 3);
+}
+
+TEST_CASE("Enter goes on to the next match and Shift Enter back, going round", "[code_view][find]") {
+    Editor e(BANDS);
+    e.h.click_at({780.0f, row_y(0)});
+    e.h.press(Key::F, CTRL);
+    e.h.type("band");
+    e.h.press(Key::Enter);
+    REQUIRE(e.view.selections.primary().span() == Span{{1, 11}, {1, 15}});
+    e.h.press(Key::Enter);
+    e.h.press(Key::Enter);
+    REQUIRE(e.view.selections.primary().span() == Span{{0, 0}, {0, 4}});
+    e.h.press(Key::Enter, SHIFT);
+    REQUIRE(e.view.selections.primary().span() == Span{{2, 0}, {2, 4}});
+    // Whole words: bandit is no match.
+    press_on_plate(e, "Whole word", ftk::ui::core::Role::Toggle);
+    e.h.step();
+    REQUIRE(e.view.find.matches.size() == 3);
+}
+
+TEST_CASE("Escape in the find closes it and gives the code the keyboard back", "[code_view][find]") {
+    Editor e(BANDS);
+    e.h.click_at({780.0f, row_y(0)});
+    e.h.press(Key::F, CTRL);
+    e.h.type("wide");
+    e.h.press(Key::Escape);
+    REQUIRE_FALSE(e.view.find.open);
+    // The match stays selected, and typing replaces it in the code.
+    e.h.step();
+    e.h.type("narrow");
+    REQUIRE(e.text() == "band = 1;\nnarrow(band, band);\nbandit();");
+}
+
+TEST_CASE("Escape in the code closes its find before anything else", "[code_view][find]") {
+    Editor e(BANDS);
+    e.h.click_at({780.0f, row_y(0)});
+    e.h.press(Key::F, CTRL);
+    e.h.type("band");
+    // Clear of the plate over the top right.
+    e.h.click_at({200.0f, row_y(2)});
+    e.h.press(Key::Left, SHIFT);
+    e.h.press(Key::Escape);
+    REQUIRE_FALSE(e.view.find.open);
+    // The selection stays: Escape went to the find.
+    REQUIRE_FALSE(e.view.selections.primary().empty());
+}
+
+TEST_CASE("Replace replaces the match selected and goes on, Replace all in one step", "[code_view][find]") {
+    Editor e(BANDS);
+    e.h.click_at({780.0f, row_y(0)});
+    e.h.press(Key::F, CTRL);
+    e.h.type("band");
+    e.view.find.toggles.whole_word = true;
+    e.view.find.stale = true;
+    e.view.find.replacement = "strip";
+    REQUIRE(e.view.selections.primary().span() == Span{{1, 5}, {1, 9}});
+
+    press_on_plate(e, std::string(ftk::ui::icon::replace) + "  Replace");
+    REQUIRE(e.text() == "band = 1;\nwide(strip, band);\nbandit();");
+    REQUIRE(e.view.selections.primary().span() == Span{{1, 12}, {1, 16}});
+
+    press_on_plate(e, "Replace all");
+    REQUIRE(e.text() == "strip = 1;\nwide(strip, strip);\nbandit();");
+    e.h.press(Key::Escape);
+    e.h.press(Key::Z, CTRL);
+    REQUIRE(e.text() == "band = 1;\nwide(strip, band);\nbandit();");
+}
+
+TEST_CASE("F3 goes on to the next match with the find closed", "[code_view][find]") {
+    Editor e(BANDS);
+    e.h.click_at({780.0f, row_y(0)});
+    e.h.press(Key::F, CTRL);
+    e.h.type("band");
+    e.h.press(Key::Escape);
+    e.h.press(Key::F3);
+    REQUIRE(e.view.selections.primary().span() == Span{{1, 11}, {1, 15}});
+    e.h.press(Key::F3, SHIFT);
+    REQUIRE(e.view.selections.primary().span() == Span{{1, 5}, {1, 9}});
+}
+
+TEST_CASE("A press on the find's plate never reaches the code under it", "[code_view][find]") {
+    Editor e(BANDS);
+    e.h.click_at({780.0f, row_y(0)});
+    e.h.press(Key::F, CTRL);
+    e.h.step();
+    const Selections before = e.view.selections;
+    // Between the plate's rows, at its right end: the plate itself.
+    const ftk::ui::core::SemanticNode* all = e.h.find("Replace all", ftk::ui::core::Role::Button);
+    REQUIRE(all != nullptr);
+    e.h.click_at({all->rect.max.x + 2.0f, all->rect.min.y - 3.0f});
+    REQUIRE(e.view.selections == before);
+    REQUIRE(e.view.find.open);
 }

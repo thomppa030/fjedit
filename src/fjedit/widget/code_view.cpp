@@ -299,6 +299,18 @@ void take_mouse(core::Context& ui, const core::Interaction& in, const Frame& fra
     }
 }
 
+// What the keys pressed so far come to: in the finding mode first while
+// the find is open, then in the view's mode.
+KeyMatch match_keys(const Keymap& keymap, const EditorView& view) {
+    KeyMatch match = keymap.find(view.mode, view.pending);
+    if (view.find.open) {
+        const KeyMatch finding = keymap.find(Keymap::FINDING, view.pending);
+        if (finding.command) return finding;
+        match.waiting = match.waiting || finding.waiting;
+    }
+    return match;
+}
+
 // The keys pressed this frame, through the keymap: a whole binding runs its
 // command, the start of a longer one waits for the next key.
 template <typename Run>
@@ -308,7 +320,7 @@ void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& 
         const auto key = static_cast<ftk::ui::Key>(k);
         if (!ui.key_repeated(key)) continue;
         view.pending.push_back({.key = key, .modifiers = held});
-        const KeyMatch match = keymap.find(view.mode, view.pending);
+        const KeyMatch match = match_keys(keymap, view);
         if (match.command) {
             const std::string command(*match.command);
             view.pending.clear();
@@ -317,6 +329,70 @@ void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& 
             view.pending.clear();
         }
     }
+}
+
+// Selects `match`, as the find goes to it.
+void select_match(EditorView& view, Span match) {
+    view.selections = Selections({.anchor = match.from, .caret = match.to});
+}
+
+// Runs a command the view does itself: opens, steps through or closes the
+// find.
+void run_view_command(std::string_view name, const Document& document, EditorView& view) {
+    FindState& find = view.find;
+    if (name == "find.open" || name == "find.replace") {
+        open_find(find, document.buffer(), view.selections,
+                  name == "find.open" ? FindState::Focus::Query : FindState::Focus::Replacement);
+    } else if (name == "find.close") {
+        find.open = false;
+    } else if (name == "find.next" || name == "find.previous") {
+        if (find.query.empty()) {
+            open_find(find, document.buffer(), view.selections, FindState::Focus::Query);
+            return;
+        }
+        refresh_matches(find, document);
+        const std::optional<Span> match =
+            name == "find.next" ? next_match(find, view.selections) : previous_match(find, view.selections);
+        if (match) select_match(view, *match);
+    }
+}
+
+// Does what was done on the find's plate this frame: goes to a match,
+// replaces, or closes it.
+void take_find_plate(const FindPlate& plate, Document& document, EditorView& view, const TextLayout& layout) {
+    FindState& find = view.find;
+    refresh_matches(find, document);
+    const FindOptions options = find_options(find.toggles);
+    CommandContext context{.document = document, .selections = view.selections, .layout = layout,
+                           .folds = &view.folds};
+    if (plate.searched) {
+        if (const std::optional<Span> match = match_from(find, view.selections.primary().span().from)) {
+            select_match(view, *match);
+        }
+    }
+    if (plate.next) {
+        if (const std::optional<Span> match = next_match(find, view.selections)) select_match(view, *match);
+    }
+    if (plate.previous) {
+        if (const std::optional<Span> match = previous_match(find, view.selections)) select_match(view, *match);
+    }
+    if (plate.replace) {
+        // The match selected is replaced and the find goes on past it; with
+        // none selected, it only goes on to the next.
+        Position on = view.selections.primary().span().to;
+        if (const std::optional<std::size_t> current = current_match(find, view.selections)) {
+            const std::vector<Span> replaced =
+                replace_matches(context, std::span(&find.matches[*current], 1), find.query, find.replacement, options);
+            refresh_matches(find, document);
+            on = replaced.front().to;
+        }
+        if (const std::optional<Span> match = match_from(find, on)) select_match(view, *match);
+    }
+    if (plate.replace_all) {
+        (void)replace_matches(context, find.matches, find.query, find.replacement, options);
+        refresh_matches(find, document);
+    }
+    if (plate.closed) find.open = false;
 }
 
 // Scrolls so the primary caret is in sight, then keeps the scroll inside
@@ -519,6 +595,32 @@ void draw_marks(core::DrawList& dl, const Document& document, const EditorView& 
     }
 }
 
+// The find's matches in sight, each in a light wash; the one the primary
+// selection is outlined in the accent, `outline` once the selections are
+// drawn.
+void draw_matches(core::DrawList& dl, const Document& document, const EditorView& view, const Frame& frame,
+                  const TextLayout& layout, const Shown& rows, bool outline) {
+    const Buffer& buffer = document.buffer();
+    const std::vector<Span>& matches = view.find.matches;
+    const std::optional<std::size_t> current = current_match(view.find, view.selections);
+    const std::size_t end_line = view.folds.row_lines(rows.lines.back()).last + 1;
+    for (auto match = std::ranges::lower_bound(matches, Position{rows.lines.front(), 0}, {}, &Span::from);
+         match != matches.end() && match->from.line < end_line; ++match) {
+        const std::optional<std::size_t> index = rows.index_of(view.folds, match->from.line);
+        const bool is_current = current && &matches[*current] == &*match;
+        if (!index || outline != is_current) continue;
+        const Position to = match->to.line == match->from.line ? match->to
+                                                                : Position{match->from.line, buffer.line(match->from.line).size()};
+        const glm::vec2 min{frame.origin_x + layout.x_of(buffer, match->from), rows.y(*index)};
+        const glm::vec2 max{frame.origin_x + layout.x_of(buffer, to), rows.y(*index) + CODE_LINE};
+        if (outline) {
+            dl.rect(min, max, theme::accent(), DECORATION_ROUNDING);
+        } else {
+            dl.rect_filled(min, max, theme::selection_secondary(), DECORATION_ROUNDING);
+        }
+    }
+}
+
 void draw(core::Context& ui, const Document& document, const EditorView& view, const Frame& frame,
           const TextLayout& layout, const Faces& faces, bool focused) {
     const Buffer& buffer = document.buffer();
@@ -564,10 +666,12 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
 
     dl.push_clip(frame.text.min, frame.text.max);
 
+    const bool finding = view.find.open && !rows.lines.empty();
     if (!rows.lines.empty()) {
         draw_guides(dl, document, view, frame, layout, rows);
         draw_marks(dl, document, view, frame, layout, rows);
     }
+    if (finding) draw_matches(dl, document, view, frame, layout, rows, false);
 
     // Selections, a line break taking a space's width. On a folded row, what
     // the fold hides is selected with its mark.
@@ -591,6 +695,8 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
                            theme::selection());
         }
     }
+
+    if (finding) draw_matches(dl, document, view, frame, layout, rows, true);
 
     // The text, coloured by its tokens; on a folded row, each fold's pill
     // and the closer's line after it.
@@ -642,7 +748,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const Frame frame = place(rect, view, buffer, faces.digit_width);
     layout.set_page_lines(std::max<std::size_t>(1, static_cast<std::size_t>(rect.height() / CODE_LINE) - 1));
 
-    const core::Interaction in = ui.interact(id, rect);
+    // Beneath what is placed after it over it: the find's plate.
+    const core::Interaction in = ui.interact(id, rect, {.beneath = true, .overlap = true});
     const core::Focus focus = ui.focusable(id, {.text = true});
     if (in.hovered && in.position.x >= frame.text.min.x) ui.set_cursor_shape(ftk::ui::MouseCursor::Text);
 
@@ -654,6 +761,10 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         ui.claim_key(ftk::ui::Key::Tab, id);
         Clipboard clipboard{.get = [&] { return ui.clipboard(); }, .set = [&](std::string text) { ui.set_clipboard(text); }};
         auto run = [&](std::string_view command, std::string_view text = {}) {
+            if (is_view_command(command)) {
+                run_view_command(command, document, view);
+                return;
+            }
             view.folds.catch_up(document);
             CommandContext context{.document = document, .selections = view.selections, .layout = layout,
                                    .clipboard = &clipboard, .folds = &view.folds, .text = text};
@@ -692,6 +803,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     }
     view.seen = document.version();
     reveal(view, frame, buffer, layout);
+    if (view.find.open) refresh_matches(view.find, document);
     const Frame drawn = place(rect, view, buffer, faces.digit_width);
     draw(ui, document, view, drawn, layout, faces, focus.focused);
 
@@ -706,8 +818,24 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         const double phase = std::fmod(since, BLINK);
         ui.request_frame_at(view.moved + std::floor(since / BLINK) * BLINK + (phase <= BLINK_ON ? BLINK_ON : BLINK));
     }
+
+    // The find's plate over the code, after it. What is done there shows
+    // from the next frame.
+    if (view.find.open) {
+        const Selections shown = view.selections;
+        const uint64_t shown_version = document.version();
+        take_find_plate(find_plate(view.find, view.selections, rect), document, view, layout);
+        if (!view.find.open) ui.set_focus(id);
+        if (view.selections != shown || document.version() != shown_version) {
+            view.moved = ui.time();
+            view.reveal = true;
+            ui.request_frame();
+        }
+        view.seen = document.version();
+    }
+
     ui.semantics(id, core::Role::TextField, label, {}, {.focused = focus.focused}, rect);
-    return {.edited = edited, .focused = focus.focused};
+    return {.edited = document.version() != version, .focused = focus.focused};
 }
 
 } // namespace fjedit

@@ -14,6 +14,7 @@
 #include "fjedit/core/folds.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/selections.hpp"
+#include "fjedit/widget/find.hpp"
 
 #include "ftk/ui/core/rect.hpp"
 
@@ -41,6 +42,8 @@ struct EditorView {
     Selections selections;
     /// The folds it has closed; a caret that comes into one opens it.
     Folds folds;
+    /// Its find, and the plate it floats on over the view (sheet 39, F1).
+    FindState find;
     /// How far the text is scrolled, in layout units: down past the top of
     /// the first row, and along past the start of every line.
     glm::vec2 scroll{0.0f};
@@ -92,8 +95,10 @@ struct CodeViewResult {
 };
 
 /// Draws `view` of `document` filling `rect`, and takes the mouse there and
-/// the keyboard while it has it, running commands through `keymap`. `label`
-/// names it to tests and screen readers and is never drawn.
+/// the keyboard while it has it, running commands through `keymap`; with its
+/// find open, the keymap's finding bindings come first. `label` names it to
+/// tests and screen readers and is never drawn. Kit items placed after it
+/// over `rect` take the pointer there before it does.
 CodeViewResult code_view(std::string_view label, Document& document, EditorView& view, const Keymap& keymap,
                          ftk::ui::core::Rect rect);
 
