@@ -6,6 +6,9 @@ project(fjedit
     LANGUAGES C CXX)
 
 option(FJEDIT_BUILD_TESTS "Build fjedit's unit tests" ${PROJECT_IS_TOP_LEVEL})
+# A program that takes fjedit's libraries, as Fjell does, needs no fjedit
+# program of its own.
+option(FJEDIT_BUILD_PROGRAM "Build the fjedit program" ${PROJECT_IS_TOP_LEVEL})
 
 if(PROJECT_IS_TOP_LEVEL)
     set(CMAKE_CXX_STANDARD 23)
@@ -30,6 +33,10 @@ if(NOT TARGET ftk::base)
 endif()
 
 add_subdirectory(src)
+
+if(FJEDIT_BUILD_PROGRAM)
+    add_subdirectory(app)
+endif()
 
 if(FJEDIT_BUILD_TESTS)
     enable_testing()
