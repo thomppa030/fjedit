@@ -41,6 +41,42 @@ bool word_after(std::string_view line, std::size_t at) {
     return at < line.size() && char_kind(ftk::utf8::next(line, at)) == CharKind::Word;
 }
 
+// The places on a line where a match may begin: where the needle's first
+// byte is, in either case when case doesn't matter. Each is found by a
+// scan of its own and kept until the walk passes it, so a long line is
+// scanned once whatever the walk asks.
+class Starts {
+public:
+    Starts(std::string_view line, char first, bool match_case) : line_(line) {
+        const char lower = folded(first, false);
+        bytes_[0] = match_case ? first : lower;
+        if (!match_case && lower >= 'a' && lower <= 'z') {
+            bytes_[1] = static_cast<char>(lower - 'a' + 'A');
+            count_ = 2;
+        }
+    }
+
+    // The first place at or after `from`, or npos.
+    std::size_t next(std::size_t from) {
+        std::size_t first = std::string_view::npos;
+        for (std::size_t i = 0; i < count_; ++i) {
+            if (!found_[i] || (at_[i] != std::string_view::npos && at_[i] < from)) {
+                at_[i] = line_.find(bytes_[i], from);
+                found_[i] = true;
+            }
+            first = std::min(first, at_[i]);
+        }
+        return first;
+    }
+
+private:
+    std::string_view line_;
+    char bytes_[2]{};
+    std::size_t at_[2]{};
+    bool found_[2]{};
+    std::size_t count_{1};
+};
+
 // `needle` cut at its \n.
 std::vector<std::string_view> pieces(std::string_view needle) {
     std::vector<std::string_view> out;
@@ -144,25 +180,47 @@ std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, s
         return !(word_last && word_after(buffer.line(to.line), to.byte));
     };
 
-    // Every character boundary in turn; after a match, from its end. A match
-    // is never empty, so the walk always moves on.
-    Position at{first_line, 0};
-    while (at.line < end_line) {
-        const std::string_view line = buffer.line(at.line);
-        if (at.byte > line.size()) {
-            at = {at.line + 1, 0};
-            continue;
-        }
-        const bool boundary = at.byte == line.size() || !continuation(line[at.byte]);
-        if (boundary && matches_at(buffer, parts, at, options.match_case)) {
-            const Position end = match_end(parts, at);
-            if (apart(at, end)) {
-                found.push_back({at, end});
-                at = end;
-                continue;
+    // A needle within a line: from each place on each line where its first
+    // byte is, and after a match from its end.
+    if (parts.size() == 1) {
+        for (std::size_t index = first_line; index < end_line; ++index) {
+            const std::string_view line = buffer.line(index);
+            Starts starts(line, needle.front(), options.match_case);
+            std::size_t from = 0;
+            for (std::size_t start = starts.next(from); start != std::string_view::npos; start = starts.next(from)) {
+                const Position at{index, start};
+                if (!continuation(line[start]) && matches_at(buffer, parts, at, options.match_case)) {
+                    const Position end = match_end(parts, at);
+                    if (apart(at, end)) {
+                        found.push_back({at, end});
+                        from = end.byte;
+                        continue;
+                    }
+                }
+                from = start + 1;
             }
         }
-        ++at.byte;
+        return found;
+    }
+
+    // A needle across lines can begin only where its first piece ends a
+    // line; after a match, the next is looked for from its end.
+    Position from{first_line, 0};
+    while (from.line < end_line) {
+        const std::string_view line = buffer.line(from.line);
+        if (line.size() >= parts.front().size()) {
+            const Position at{from.line, line.size() - parts.front().size()};
+            const bool boundary = at.byte == line.size() || !continuation(line[at.byte]);
+            if (at.byte >= from.byte && boundary && matches_at(buffer, parts, at, options.match_case)) {
+                const Position end = match_end(parts, at);
+                if (apart(at, end)) {
+                    found.push_back({at, end});
+                    from = end;
+                    continue;
+                }
+            }
+        }
+        from = {from.line + 1, 0};
     }
     return found;
 }

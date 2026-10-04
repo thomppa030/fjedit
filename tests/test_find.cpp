@@ -37,6 +37,16 @@ TEST_CASE("A needle across lines matches across lines", "[find]") {
     REQUIRE(find_all(buffer, "\nb") == std::vector<Span>{{{1, 1}, {2, 1}}});
 }
 
+TEST_CASE("Ignoring case, a match may begin with its first letter in either case", "[find]") {
+    const Buffer buffer("aAaAbAab");
+    REQUIRE(find_all(buffer, "Ab", {.match_case = false}) == std::vector<Span>{{{0, 3}, {0, 5}}, {{0, 6}, {0, 8}}});
+    REQUIRE(find_all(Buffer("_X _x"), "_x", {.match_case = false}).size() == 2);
+}
+
+TEST_CASE("A match across lines may begin on the line the one before ends on", "[find]") {
+    REQUIRE(find_all(Buffer("ax\nyx\ny"), "x\ny") == std::vector<Span>{{{0, 1}, {1, 1}}, {{1, 1}, {2, 1}}});
+}
+
 TEST_CASE("An empty needle occurs nowhere", "[find]") {
     REQUIRE(find_all(Buffer("abc"), "").empty());
     REQUIRE_FALSE(find_next(Buffer("abc"), "x", {0, 0}).has_value());
