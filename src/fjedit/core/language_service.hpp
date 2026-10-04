@@ -38,13 +38,13 @@ enum class Severity : uint8_t { Error, Warning, Information, Hint };
 
 /// A problem found in a file.
 struct Diagnostic {
-    Span span;
+    Span span{};
     Severity severity{Severity::Error};
-    std::string message;
+    std::string message{};
     /// What found it ("clang", "clang-tidy"), and its name for the problem
     /// ("-Wunused-variable"), when it gives them.
-    std::string source;
-    std::string code;
+    std::string source{};
+    std::string code{};
 
     bool operator==(const Diagnostic&) const = default;
 };
@@ -82,24 +82,24 @@ enum class CompletionKind : uint8_t {
 /// One entry of a completion.
 struct Completion {
     /// The name the list shows ("rotate").
-    std::string label;
+    std::string label{};
     CompletionKind kind{CompletionKind::Text};
     /// Its parameters, which its signature shows after the name
     /// ("(float speed)"); empty for what takes none.
-    std::string parameters;
+    std::string parameters{};
     /// The type it gives ("qua<T, Q>"), or what else the server says of it.
-    std::string detail;
+    std::string detail{};
     /// What it is, in Markdown.
-    std::string documentation;
+    std::string documentation{};
     /// What choosing it does: `change.span`, from where the word being
     /// typed begins to the caret, replaced with its text.
-    Change change;
+    Change change{};
     /// Other changes it brings with it, such as an #include for the header
     /// it is in.
-    std::vector<Change> more;
+    std::vector<Change> more{};
     /// What typing filters it by, and sorts it by.
-    std::string filter;
-    std::string sort;
+    std::string filter{};
+    std::string sort{};
 
     bool operator==(const Completion&) const = default;
 };
@@ -107,25 +107,25 @@ struct Completion {
 /// The entries that complete what is typed at `at`, in the document's
 /// `version`.
 struct Completions {
-    std::vector<Completion> items;
+    std::vector<Completion> items{};
     /// More would come for more typed: asked again rather than filtered.
     bool incomplete{false};
-    Position at;
+    Position at{};
     uint64_t version{0};
 };
 
 /// What the code at a place is, in Markdown, and the span it is about.
 struct Hover {
-    std::string markdown;
-    std::optional<Span> span;
+    std::string markdown{};
+    std::optional<Span> span{};
 
     bool operator==(const Hover&) const = default;
 };
 
 /// A place in a file.
 struct Location {
-    std::filesystem::path path;
-    Span span;
+    std::filesystem::path path{};
+    Span span{};
 
     bool operator==(const Location&) const = default;
 };
@@ -134,21 +134,21 @@ struct Location {
 /// as one step.
 struct VersionedEdit {
     uint64_t version{0};
-    Edit edit;
+    Edit edit{};
 };
 
 /// Edits to several files at once, as a rename makes: each file's in the
 /// text its document had at `version` when it is open, the file on disk
 /// otherwise (no version).
 struct FileEdits {
-    std::optional<uint64_t> version;
-    Edit edit;
+    std::optional<uint64_t> version{};
+    Edit edit{};
 };
 using WorkspaceEdit = std::map<std::filesystem::path, FileEdits>;
 
 /// A line's colours as the service knows them, over the lexer's.
 struct SemanticTokens {
-    std::vector<std::vector<Token>> lines;
+    std::vector<std::vector<Token>> lines{};
 };
 
 /// An answer still to come. The one who asked keeps it while waiting and
@@ -174,7 +174,7 @@ enum class ServiceState : uint8_t {
 struct ServiceStatus {
     ServiceState state{ServiceState::Starting};
     /// What it last said of itself, or why it stopped.
-    std::string note;
+    std::string note{};
 };
 
 class LanguageService {

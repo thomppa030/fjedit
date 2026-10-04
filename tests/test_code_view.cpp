@@ -1,6 +1,7 @@
 #include "fjedit/widget/code_view.hpp"
 #include "fjedit/widget/minimap.hpp"
 
+#include "fake_language.hpp"
 #include "print.hpp"
 
 #include "ftk/test/kit_harness.hpp"
@@ -724,3 +725,67 @@ TEST_CASE("A larger text size spreads the lines further apart", "[code_view]") {
     e.h.click_at({PAST_END, 50.0f});
     REQUIRE(e.caret().line == 1);
 }
+
+namespace {
+
+// Whether every shape in `shapes` lies on row `row`.
+bool on_row(const std::vector<ftk::ui::core::Rect>& shapes, std::size_t row) {
+    const float top = static_cast<float>(row) * CODE_LINE;
+    return std::ranges::all_of(shapes, [&](const ftk::ui::core::Rect& r) {
+        return r.min.y >= top - 1.0f && r.max.y <= top + CODE_LINE + 1.0f;
+    });
+}
+
+} // namespace
+
+TEST_CASE("A problem tints its line, underlines its code and says what it is after the line", "[code_view][problems]") {
+    FakeLanguage language;
+    language.problems = {{.span = {{1, 4}, {1, 5}},
+                          .severity = Severity::Error,
+                          .message = "use of undeclared identifier 'x'\nnote: declared nowhere"}};
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    e.h.step(2);
+
+    const std::vector<ftk::ui::core::Rect> tint = drawn_in_code(e.h, ftk::theme::code_error_line());
+    REQUIRE(tint.size() == 1);
+    REQUIRE(on_row(tint, 1));
+    // The wave, under x alone, in the lower part of its row.
+    const std::vector<ftk::ui::core::Rect> wave = drawn_in_code(e.h, ftk::theme::error());
+    REQUIRE_FALSE(wave.empty());
+    REQUIRE(on_row(wave, 1));
+    REQUIRE(std::ranges::all_of(wave, [](const auto& r) { return r.min.y > row_y(1); }));
+    // The message's first line, with its icon, past the end of the code.
+    const std::vector<ftk::ui::core::Rect> message = drawn_in_code(e.h, ftk::theme::code_error_text());
+    REQUIRE(message.size() > 20);
+    REQUIRE(message.size() < 40);
+    REQUIRE(on_row(message, 1));
+}
+
+TEST_CASE("The caret's line takes a problem's tint over its own", "[code_view][problems]") {
+    FakeLanguage language;
+    language.problems = {{.span = {{1, 4}, {1, 5}}, .severity = Severity::Warning, .message = "unused"}};
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    e.view.selections = Selections(Selection::at({1, 0}));
+    e.h.step(2);
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_current_line()).empty());
+    REQUIRE(on_row(drawn_in_code(e.h, ftk::theme::code_warning_line()), 1));
+    REQUIRE_FALSE(drawn_in_code(e.h, ftk::theme::code_warning_text()).empty());
+}
+
+TEST_CASE("A problem's row is marked beside the code, and what is less than a warning shows only there", "[code_view][problems]") {
+    FakeLanguage language;
+    language.problems = {{.span = {{2, 0}, {2, 1}}, .severity = Severity::Error, .message = "error"},
+                         {.span = {{3, 0}, {3, 3}}, .severity = Severity::Information, .message = "a note"}};
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    e.h.step(2);
+    std::vector<ftk::ui::core::Rect> beside = drawn(e.h, ftk::theme::error());
+    std::erase_if(beside, [](const ftk::ui::core::Rect& r) { return r.min.x < CODE_RIGHT; });
+    REQUIRE_FALSE(beside.empty());
+    // The information leaves no tint and no message.
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_error_line()).size() == 1);
+    REQUIRE(on_row(drawn_in_code(e.h, ftk::theme::code_error_line()), 2));
+}
+

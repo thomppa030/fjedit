@@ -1,0 +1,94 @@
+#pragma once
+
+// A language service for tests of what draws and asks (the code view, the
+// program): it says what the test gives it, and keeps every question asked
+// with the Pending its answer goes into, for the test to answer when it
+// likes.
+//
+//     FakeLanguage language;
+//     language.problems = {{.span = {{1, 4}, {1, 7}}, .message = "x"}};
+//     view.service = &language;
+//     ... later:
+//     language.answer(language.hovers.back(), Hover{.markdown = "int x"});
+
+#include "fjedit/core/language_service.hpp"
+
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+// A question asked, and where its answer goes.
+template <typename T>
+struct Question {
+    std::filesystem::path path;
+    fjedit::Position at;
+    std::shared_ptr<fjedit::Pending<T>> pending;
+};
+
+struct FakeLanguage final : fjedit::LanguageService {
+    std::vector<fjedit::Diagnostic> problems;
+    std::optional<fjedit::SemanticTokens> colours;
+    fjedit::ServiceStatus state{.state = fjedit::ServiceState::Ready, .note = {}};
+
+    std::vector<Question<fjedit::Completions>> completions;
+    std::vector<Question<std::optional<fjedit::Hover>>> hovers;
+    std::vector<Question<std::vector<fjedit::Location>>> definitions;
+    std::vector<Question<ftk::Result<fjedit::WorkspaceEdit>>> renames;
+    std::vector<std::string> new_names;
+    std::vector<Question<std::optional<fjedit::VersionedEdit>>> formats;
+    std::vector<std::filesystem::path> opened;
+    std::vector<std::filesystem::path> saved_paths;
+
+    // Answers `question` with `answer`.
+    template <typename T>
+    static void answer(const Question<T>& question, T answer) {
+        question.pending->answer = std::move(answer);
+        question.pending->answered = true;
+    }
+
+    [[nodiscard]] bool serves(const std::filesystem::path&) const override { return true; }
+    void open(const std::filesystem::path& path, const fjedit::Document&) override { opened.push_back(path); }
+    void close(const std::filesystem::path&) override {}
+    void saved(const std::filesystem::path& path) override { saved_paths.push_back(path); }
+    void update() override {}
+    [[nodiscard]] fjedit::ServiceStatus status() const override { return state; }
+    [[nodiscard]] const std::vector<fjedit::Diagnostic>& diagnostics(const std::filesystem::path&) override {
+        return problems;
+    }
+    [[nodiscard]] const fjedit::SemanticTokens* tokens(const std::filesystem::path&) override {
+        return colours ? &*colours : nullptr;
+    }
+
+    [[nodiscard]] fjedit::Asked<fjedit::Completions> complete(const std::filesystem::path& path,
+                                                              fjedit::Position at) override {
+        return ask(completions, path, at);
+    }
+    [[nodiscard]] fjedit::Asked<std::optional<fjedit::Hover>> hover(const std::filesystem::path& path,
+                                                                    fjedit::Position at) override {
+        return ask(hovers, path, at);
+    }
+    [[nodiscard]] fjedit::Asked<std::vector<fjedit::Location>> definition(const std::filesystem::path& path,
+                                                                          fjedit::Position at) override {
+        return ask(definitions, path, at);
+    }
+    [[nodiscard]] fjedit::Asked<ftk::Result<fjedit::WorkspaceEdit>> rename(const std::filesystem::path& path,
+                                                                           fjedit::Position at,
+                                                                           std::string_view name) override {
+        new_names.emplace_back(name);
+        return ask(renames, path, at);
+    }
+    [[nodiscard]] fjedit::Asked<std::optional<fjedit::VersionedEdit>> format(const std::filesystem::path& path) override {
+        return ask(formats, path, {});
+    }
+
+private:
+    template <typename T>
+    static fjedit::Asked<T> ask(std::vector<Question<T>>& asked, const std::filesystem::path& path, fjedit::Position at) {
+        auto pending = std::make_shared<fjedit::Pending<T>>();
+        asked.push_back({.path = path, .at = at, .pending = pending});
+        return pending;
+    }
+};

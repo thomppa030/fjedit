@@ -16,7 +16,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -53,13 +56,27 @@ constexpr float PILL_HEIGHT = 16.0f;
 constexpr float PILL_PAD = 6.0f;
 constexpr float PILL_MARGIN = 4.0f;
 constexpr std::string_view ELLIPSIS = "\xE2\x8B\xAF"; // ⋯
+// A problem's message after its line (sheet 39, G1): in the interface's
+// face at 12.5 beside code at 13, three spaces past the code, its icon
+// first. Its code is underlined with a wave a pixel and a half high either
+// way, its turns two apart, three above the row's foot.
+constexpr float MESSAGE_TEXT = 12.5f;
+constexpr float MESSAGE_SPACES = 3.0f;
+constexpr float MESSAGE_ICON_GAP = 5.0f;
+constexpr float WAVE_HEIGHT = 1.5f;
+constexpr float WAVE_STEP = 2.0f;
+constexpr float WAVE_RISE = 3.0f;
 
 // The kit's mono face at `size`, on lines `line` apart.
-core::TextStyle mono(float size, float line) {
-    const ftk::ui::FontScope scope(theme::mono_font(), size);
+core::TextStyle face(ftk::ui::Font font, float size, float line) {
+    const ftk::ui::FontScope scope(font, size);
     core::TextStyle style = core::current().text().style();
     style.line_height = line;
     return style;
+}
+
+core::TextStyle mono(float size, float line) {
+    return face(theme::mono_font(), size, line);
 }
 
 // What sheet 39's measures come to for code at `text_size`: they scale
@@ -70,11 +87,12 @@ struct Sizes {
     float gutter;
     float pill;
     float pill_height;
+    float message;
 
     explicit Sizes(float text_size)
         : text(text_size), line(code_line(text_size)),
           gutter(text_size * GUTTER_TEXT / CODE_TEXT), pill(text_size * PILL_TEXT / CODE_TEXT),
-          pill_height(std::round(text_size * PILL_HEIGHT / CODE_TEXT)) {}
+          pill_height(std::round(text_size * PILL_HEIGHT / CODE_TEXT)), message(text_size * MESSAGE_TEXT / CODE_TEXT) {}
 };
 
 // The faces the view draws in besides the code's, and what it measures by
@@ -82,6 +100,7 @@ struct Sizes {
 struct Faces {
     core::TextStyle numbers;
     core::TextStyle pill;
+    core::TextStyle message;
     float digit_width{0.0f};
     float pill_width{0.0f};
     float pill_height{0.0f};
@@ -422,8 +441,55 @@ void take_wheel(core::Context& ui, EditorView& view) {
 // The minimap and the scrollbar down the view's right side, `side`, with
 // ticks for the find's matches and the caret. They scroll the view, as the
 // wheel does over the minimap; what they do shows from the next frame.
+// How a problem shows on the code: its wave, its line's tint, and its
+// message's colour and icon. Nothing for one less than a warning, which a
+// list of problems shows alone.
+struct ProblemLook {
+    ftk::ui::Color wave;
+    ftk::ui::Color tint;
+    ftk::ui::Color text;
+    std::string_view icon;
+};
+
+std::optional<ProblemLook> look_of(Severity severity) {
+    switch (severity) {
+        case Severity::Error:
+            return ProblemLook{theme::error(), theme::code_error_line(), theme::code_error_text(), ftk::ui::icon::error};
+        case Severity::Warning:
+            return ProblemLook{theme::warning(), theme::code_warning_line(), theme::code_warning_text(),
+                               ftk::ui::icon::warning};
+        case Severity::Information:
+        case Severity::Hint:
+            break;
+    }
+    return std::nullopt;
+}
+
+// Each line's worst problem: the one its tint and message are for.
+std::map<std::size_t, const Diagnostic*> worst_by_line(std::span<const Diagnostic> problems) {
+    std::map<std::size_t, const Diagnostic*> worst;
+    for (const Diagnostic& problem : problems) {
+        if (!look_of(problem.severity)) continue;
+        const auto [at, added] = worst.emplace(problem.span.from.line, &problem);
+        if (!added && problem.severity < at->second->severity) at->second = &problem;
+    }
+    return worst;
+}
+
+// A wavy line from `left` to `right` about `y`.
+void draw_wave(core::DrawList& dl, float left, float right, float y, ftk::ui::Color colour) {
+    std::vector<glm::vec2> points;
+    bool up = true;
+    for (float x = left; x < right; x += WAVE_STEP) {
+        points.push_back({x, up ? y - WAVE_HEIGHT : y + WAVE_HEIGHT});
+        up = !up;
+    }
+    points.push_back({right, up ? y - WAVE_HEIGHT : y + WAVE_HEIGHT});
+    dl.polyline(points, colour);
+}
+
 void draw_side(core::Context& ui, const Document& document, EditorView& view, core::Rect rect, core::Rect side,
-               float line) {
+               float line, std::span<const Diagnostic> problems) {
     const Folds& folds = view.folds;
     const std::size_t rows = folds.row_count(document.buffer().line_count());
     std::vector<MinimapMark> ticks;
@@ -433,6 +499,11 @@ void draw_side(core::Context& ui, const Document& document, EditorView& view, co
         ticks.push_back({.row = row, .colour = colour});
         marks.push_back({.at = static_cast<float>(row) * line, .colour = colour});
     };
+    for (const Diagnostic& problem : problems) {
+        if (const std::optional<ProblemLook> look = look_of(problem.severity)) {
+            mark(folds.row_of(problem.span.from.line), look->wave);
+        }
+    }
     if (view.find.open) {
         for (const Span& match : view.find.matches) mark(folds.row_of(match.from.line), theme::accent());
     }
@@ -689,7 +760,7 @@ void draw_matches(core::DrawList& dl, const Document& document, const EditorView
 }
 
 void draw(core::Context& ui, const Document& document, const EditorView& view, const Frame& frame,
-          const TextLayout& layout, const Faces& faces, bool focused) {
+          const TextLayout& layout, const Faces& faces, bool focused, std::span<const Diagnostic> problems) {
     const Buffer& buffer = document.buffer();
     const Folds& folds = view.folds;
     core::DrawList& dl = ui.draw_list();
@@ -706,12 +777,20 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
     dl.push_clip(frame.rect.min, frame.rect.max);
 
     // The caret's row, a shade lighter across the gutter and the text,
-    // while it selects nothing.
+    // while it selects nothing; a line with a problem takes the problem's
+    // tint instead.
+    const std::map<std::size_t, const Diagnostic*> worst = worst_by_line(problems);
     for (const Selection& selection : view.selections.all()) {
         const std::optional<std::size_t> index = rows.index_of(folds, selection.caret.line);
-        if (!selection.empty() || !index) continue;
+        if (!selection.empty() || !index || worst.contains(rows.lines[*index])) continue;
         dl.rect_filled({frame.rect.min.x, rows.y(*index)}, {frame.rect.max.x, rows.y(*index) + frame.line},
                        theme::code_current_line());
+    }
+    for (std::size_t index = 0; index < rows.lines.size(); ++index) {
+        const auto found = worst.find(rows.lines[index]);
+        if (found == worst.end()) continue;
+        dl.rect_filled({frame.rect.min.x, rows.y(index)}, {frame.rect.max.x, rows.y(index) + frame.line},
+                       look_of(found->second->severity)->tint);
     }
 
     // Line numbers, right-aligned, the caret's line's brighter; after them a
@@ -801,6 +880,38 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
         }
     }
 
+    // Each problem's code underlined with a wave, on the lines in sight; one
+    // that takes no text still marks a space's width.
+    for (const Diagnostic& problem : problems) {
+        const std::optional<ProblemLook> look = look_of(problem.severity);
+        if (!look) continue;
+        const Span span{.from = buffer.clamp(problem.span.from), .to = buffer.clamp(problem.span.to)};
+        for (std::size_t line = span.from.line; line <= span.to.line; ++line) {
+            const std::optional<std::size_t> index = rows.index_of(folds, line);
+            if (!index || rows.lines[*index] != line) continue;
+            const std::size_t from = line == span.from.line ? span.from.byte : 0;
+            const std::size_t to = line == span.to.line ? span.to.byte : buffer.line(line).size();
+            const float left = layout.x_of(buffer, {line, from});
+            const float right = std::max(layout.x_of(buffer, {line, to}), left + layout.space_width());
+            draw_wave(dl, frame.origin_x + left, frame.origin_x + right, rows.y(*index) + frame.line - WAVE_RISE,
+                      look->wave);
+        }
+    }
+
+    // After a line with problems, the worst one's message: its first line,
+    // its icon before it.
+    for (std::size_t index = 0; index < rows.lines.size(); ++index) {
+        const auto found = worst.find(rows.lines[index]);
+        if (found == worst.end()) continue;
+        const ProblemLook look = *look_of(found->second->severity);
+        const std::string_view message = found->second->message;
+        const std::string_view first_line = message.substr(0, message.find('\n'));
+        const float x = frame.origin_x + drawn[index].end + MESSAGE_SPACES * layout.space_width();
+        ui.text().draw(dl, {x, rows.y(index)}, look.text, look.icon, faces.message);
+        const float icon_width = ui.text().caret_x(look.icon, faces.message, look.icon.size());
+        ui.text().draw(dl, {x + icon_width + MESSAGE_ICON_GAP, rows.y(index)}, look.text, first_line, faces.message);
+    }
+
     // The carets, while the view has the keyboard, blinking together; the
     // primary one where the input method's cursor is in what it composes.
     if (focused && std::fmod(ui.time() - view.moved, BLINK) <= BLINK_ON) {
@@ -836,7 +947,9 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const Sizes sizes(view.text_size);
     TextLayout layout(ui.text(), mono(sizes.text, sizes.line), document.indent().width);
     layout.set_folds(&view.folds);
-    Faces faces{.numbers = mono(sizes.gutter, sizes.line), .pill = mono(sizes.pill, sizes.line)};
+    Faces faces{.numbers = mono(sizes.gutter, sizes.line),
+                .pill = mono(sizes.pill, sizes.line),
+                .message = face(ftk::ui::Font::Body, sizes.message, sizes.line)};
     faces.pill_height = sizes.pill_height;
     faces.digit_width = ui.text().caret_x("0", faces.numbers, 1);
     faces.pill_width = ui.text().caret_x(ELLIPSIS, faces.pill, ELLIPSIS.size()) + 2.0f * PILL_PAD;
@@ -906,12 +1019,15 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     reveal(view, frame, buffer, layout);
     if (view.find.open) refresh_matches(view.find, document);
     const Frame drawn = place(code, view, buffer, faces.digit_width, sizes.line);
-    draw(ui, document, view, drawn, layout, faces, focus.focused);
+    static const std::vector<Diagnostic> NO_PROBLEMS;
+    const std::vector<Diagnostic>& problems =
+        view.service != nullptr ? view.service->diagnostics(view.path) : NO_PROBLEMS;
+    draw(ui, document, view, drawn, layout, faces, focus.focused, problems);
 
     // The kit's pieces from here are the view's: their ids are under its
     // label.
     const ftk::ui::IdScope scope(label);
-    draw_side(ui, document, view, rect, side, sizes.line);
+    draw_side(ui, document, view, rect, side, sizes.line, problems);
 
     if (focus.focused) {
         // The input method's window goes at the primary caret, and the

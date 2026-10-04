@@ -13,6 +13,7 @@
 #include "fjedit/core/document.hpp"
 #include "fjedit/core/folds.hpp"
 #include "fjedit/core/keymap.hpp"
+#include "fjedit/core/language_service.hpp"
 #include "fjedit/core/selections.hpp"
 #include "fjedit/widget/find.hpp"
 #include "fjedit/widget/go_to_line.hpp"
@@ -22,6 +23,7 @@
 #include <glm/vec2.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -75,6 +77,11 @@ struct EditorView {
     std::vector<std::string> queued;
     /// It takes the keyboard on its next draw: a file just opened.
     bool focus{false};
+    /// What knows the document's language, and the path it knows the
+    /// document by: the problems it finds are drawn on the code (sheet 39,
+    /// G1). None when nothing does.
+    LanguageService* service{nullptr};
+    std::filesystem::path path;
 
     /// What a press of the mouse began, which dragging goes on with.
     struct Drag {
