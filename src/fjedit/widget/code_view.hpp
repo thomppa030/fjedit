@@ -34,6 +34,10 @@ inline constexpr float CODE_TEXT = 13.0f;
 inline constexpr float CODE_LINE = 20.0f;
 inline constexpr float GUTTER_TEXT = 12.0f;
 
+/// How far apart a view's lines are at `text_size`: CODE_LINE at CODE_TEXT,
+/// scaled with it to a whole pixel.
+[[nodiscard]] float code_line(float text_size);
+
 /// One view of a document: what it selects, where it is scrolled, and the
 /// keys it waits on.
 struct EditorView {

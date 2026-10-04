@@ -72,7 +72,7 @@ struct Sizes {
     float pill_height;
 
     explicit Sizes(float text_size)
-        : text(text_size), line(std::round(text_size * CODE_LINE / CODE_TEXT)),
+        : text(text_size), line(code_line(text_size)),
           gutter(text_size * GUTTER_TEXT / CODE_TEXT), pill(text_size * PILL_TEXT / CODE_TEXT),
           pill_height(std::round(text_size * PILL_HEIGHT / CODE_TEXT)) {}
 };
@@ -824,6 +824,10 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
 }
 
 } // namespace
+
+float code_line(float text_size) {
+    return std::round(text_size * CODE_LINE / CODE_TEXT);
+}
 
 CodeViewResult code_view(std::string_view label, Document& document, EditorView& view, const Keymap& keymap,
                          core::Rect rect) {

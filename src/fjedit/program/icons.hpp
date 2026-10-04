@@ -20,4 +20,8 @@ inline constexpr const char* open_folder = ICON_LC_FOLDER_OPEN;
 inline constexpr const char* split = ICON_LC_COLUMNS_2;
 inline constexpr const char* more = ICON_LC_MORE_HORIZONTAL;
 
+// Preferences
+inline constexpr const char* code_editor = ICON_LC_CODE;        // the Code editor page
+inline constexpr const char* this_machine = ICON_LC_HARD_DRIVE; // kept here, never in a project
+
 } // namespace fjedit::icon

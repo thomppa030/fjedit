@@ -13,6 +13,7 @@
 #include "fjedit/core/workspace.hpp"
 #include "fjedit/program/file_tree.hpp"
 #include "fjedit/program/find_in_files.hpp"
+#include "fjedit/program/preferences.hpp"
 #include "fjedit/widget/code_view.hpp"
 
 #include "ftk/ui/kit/dialog.hpp"
@@ -81,6 +82,12 @@ public:
     /// Find in files, open or not.
     [[nodiscard]] const FindInFiles& find_in_files() const { return find_in_files_; }
 
+    /// How this machine likes the code shown, which every view takes as it
+    /// is drawn; a window keeps them in its settings file through
+    /// preferences_section().
+    [[nodiscard]] Preferences& preferences() { return preferences_; }
+    [[nodiscard]] const PreferencesWindow& preferences_window() const { return preferences_window_; }
+
     /// The keymap mode the program's own keys are bound in.
     static constexpr std::string_view PROGRAM = "program";
 
@@ -146,8 +153,9 @@ private:
     // and whether the question is open.
     std::optional<std::filesystem::path> closing_;
     bool asking_{false};
-    // The views show the minimap.
-    bool minimap_{true};
+    // How the code is shown, and the window they are edited in.
+    Preferences preferences_;
+    PreferencesWindow preferences_window_;
     // Files changed on disk while they had unsaved changes here, until
     // answered; and when the disk is next looked at.
     std::set<std::filesystem::path> changed_;

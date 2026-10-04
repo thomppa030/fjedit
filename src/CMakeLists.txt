@@ -51,6 +51,7 @@ ftk_check_editor_ui(fjedit-widget ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widge
 add_library(fjedit-program STATIC
     fjedit/program/file_tree.cpp
     fjedit/program/find_in_files.cpp
+    fjedit/program/preferences.cpp
     fjedit/program/program.cpp)
 add_library(fjedit::program ALIAS fjedit-program)
 ftk_target_defaults(fjedit-program)

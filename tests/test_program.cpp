@@ -376,3 +376,73 @@ TEST_CASE("Escape closes find in files, letting go of the files it only showed",
     REQUIRE_FALSE(run.program->find_in_files().is_open());
     REQUIRE(run.program->workspace().files().empty());
 }
+
+namespace {
+
+// The code view of the tab in front, as the last frame drew it.
+ftk::ui::core::Rect code_rect(Running& run) {
+    const auto* code = run.h.find("Code", Role::TextField);
+    REQUIRE(code != nullptr);
+    return code->rect;
+}
+
+} // namespace
+
+TEST_CASE("Ctrl , opens the preferences, where the text size steps", "[program][preferences]") {
+    Running run({{"a.txt", "a\n"}});
+    REQUIRE_FALSE(run.program->preferences_window().is_open());
+    run.h.press(Key::Comma, CTRL);
+    run.h.step(2);
+    REQUIRE(run.program->preferences_window().is_open());
+    const int before = run.program->preferences().text_size;
+    run.press(ftk::ui::icon::add);
+    REQUIRE(run.program->preferences().text_size == before + 1);
+}
+
+TEST_CASE("The minimap's checkbox in the preferences turns it off", "[program][preferences]") {
+    Running run({{"a.txt", "a\n"}});
+    REQUIRE(run.program->run("edit.preferences"));
+    run.h.step(2);
+    std::vector<ftk::ui::core::Rect> toggles;
+    for (const auto& node : run.h.ui().semantics()) {
+        if (node.role == Role::Toggle) toggles.push_back(node.rect);
+    }
+    REQUIRE(toggles.size() == 1);
+    run.h.click_at(toggles.front().centre());
+    run.h.step();
+    REQUIRE_FALSE(run.program->preferences().minimap);
+}
+
+TEST_CASE("Every view shows its code at the text size preferred", "[program][preferences]") {
+    Running run({{"a.txt", "a\nb\nc\nd\n"}});
+    run.press_row("a.txt");
+    // Two and a half lines down at the size a view starts at is the third
+    // line; at the largest size, the second.
+    const ftk::ui::core::Rect code = code_rect(run);
+    const glm::vec2 at{code.min.x + 300.0f, code.min.y + 2.5f * code_line(CODE_TEXT)};
+    run.program->preferences().text_size = TEXT_SIZE_MAX;
+    run.h.step(2);
+    run.h.click_at(at);
+    run.h.step();
+    run.h.type("x");
+    REQUIRE(run.document("a.txt").buffer().text() == "a\nbx\nc\nd\n");
+}
+
+TEST_CASE("The preferences are kept in the settings file and read back held to their range", "[program][preferences]") {
+    Preferences kept{.text_size = 17, .minimap = false};
+    const ftk::ui::SettingsSection section = preferences_section(kept);
+    const std::vector<ftk::ui::SettingsEntry> written = section.write();
+    REQUIRE(written.size() == 1);
+
+    Preferences read;
+    ftk::ui::SettingsSection reading = preferences_section(read);
+    for (const std::string& line : written.front().lines) reading.read(written.front().name, line);
+    REQUIRE(read.text_size == 17);
+    REQUIRE_FALSE(read.minimap);
+
+    reading.read(written.front().name, "TextSize=400");
+    REQUIRE(read.text_size == TEXT_SIZE_MAX);
+    // Another entry's lines are not its.
+    reading.read("Other", "TextSize=12");
+    REQUIRE(read.text_size == TEXT_SIZE_MAX);
+}

@@ -18,6 +18,7 @@
 #include "ftk/ui/kit/pane.hpp"
 #include "ftk/ui/kit/region.hpp"
 #include "ftk/ui/kit/scope.hpp"
+#include "ftk/ui/kit/settings_file.hpp"
 #include "ftk/ui/kit/status_bar.hpp"
 #include "ftk/ui/kit/tabs.hpp"
 #include "ftk/ui/kit/text.hpp"
@@ -56,6 +57,7 @@ Keymap program_keys() {
     keys.bind(Program::PROGRAM, {{.key = Key::F, .modifiers = {.ctrl = true, .shift = true}}}, "files.find");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageDown)}, "tab.next");
     keys.bind(Program::PROGRAM, {ctrl(Key::PageUp)}, "tab.previous");
+    keys.bind(Program::PROGRAM, {ctrl(Key::Comma)}, "edit.preferences");
     return keys;
 }
 
@@ -172,6 +174,8 @@ bool Program::run(std::string_view command) {
         split(active_);
     } else if (command == "files.find") {
         open_find_in_files();
+    } else if (command == "edit.preferences") {
+        preferences_window_.open();
     } else if (command == "tab.next" || command == "tab.previous") {
         if (group.tabs.empty()) return true;
         const std::size_t count = group.tabs.size();
@@ -384,10 +388,12 @@ void Program::draw() {
         const std::optional<std::filesystem::path> shown = front();
         const std::filesystem::path folder = shown ? shown->parent_path() : workspace_.root();
         const float tabs = dialog_at_.y - code_min.y;
-        take_find_in_files(find_in_files_.draw({.min = {code_min.x, code_min.y + tabs}, .max = code_max}, folder, keymap_));
+        take_find_in_files(find_in_files_.draw({.min = {code_min.x, code_min.y + tabs}, .max = code_max}, folder, keymap_,
+                                               static_cast<float>(preferences_.text_size)));
     }
     ui::end_host_window();
     draw_status();
+    preferences_window_.draw(preferences_);
     draw_prompts();
 }
 
@@ -413,13 +419,17 @@ void Program::draw_menus() {
                  ui::MenuEntry::separator(),                entry("Cut", "edit.cut", open_file),
                  entry("Copy", "edit.copy", open_file),     entry("Paste", "edit.paste", open_file),
                  ui::MenuEntry::separator(),                entry("Find", "find.open", open_file),
-                 entry("Replace", "find.replace", open_file)};
+                 entry("Replace", "find.replace", open_file), ui::MenuEntry::separator(),
+                 entry("Preferences", "edit.preferences")};
          }},
         {.label = "View",
          .entries = [&] {
              return std::vector<ui::MenuEntry>{{.label = "Minimap",
-                                                .checked = minimap_,
-                                                .chosen = [this] { minimap_ = !minimap_; }}};
+                                                .checked = preferences_.minimap,
+                                                .chosen = [this] {
+                                                    preferences_.minimap = !preferences_.minimap;
+                                                    ui::settings_changed();
+                                                }}};
          }},
         {.label = "Go",
          .entries = [&] {
@@ -502,7 +512,8 @@ void Program::draw_group(Group& group, std::size_t index) {
                 }
             }
         }
-        tab.view->minimap = minimap_;
+        tab.view->minimap = preferences_.minimap;
+        tab.view->text_size = static_cast<float>(preferences_.text_size);
         Document* document = workspace_.find(tab.path);
         const glm::vec2 at = ui::cursor();
         const glm::vec2 room = ui::space_left();

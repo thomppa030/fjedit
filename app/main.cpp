@@ -8,7 +8,9 @@
 #include "ftk/base/log.hpp"
 #include "ftk/gpu/window.hpp"
 #include "ftk/platform/platform.hpp"
+#include "ftk/ui/core/context.hpp"
 #include "ftk/ui/core_kit.hpp"
+#include "ftk/ui/kit/settings_file.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -39,8 +41,23 @@ int run(const std::filesystem::path& folder) {
         return EXIT_FAILURE;
     }
     fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder)});
+
+    // fjedit's settings file, this machine's: where its windows were left
+    // and its preferences. The window's UI is the current one from here on,
+    // so the file read now places its windows.
+    ftk::ui::core::set_current(&app.ui());
+    ftk::ui::add_settings_section(fjedit::preferences_section(program.preferences()));
+    const std::filesystem::path settings_folder = ftk::platform::config_dir() / "fjedit";
+    std::filesystem::create_directories(settings_folder, error);
+    const std::string settings = (settings_folder / "settings.ini").string();
+    ftk::ui::keep_settings_file(settings);
+
     auto ran = app.run({
-        .ui = [&](ftk::ui::core::Context&, glm::vec2) { program.draw(); },
+        .ui =
+            [&](ftk::ui::core::Context&, glm::vec2) {
+                program.draw();
+                ftk::ui::save_settings_when_due();
+            },
         // The window waits while the program asks about unsaved files, and
         // closes once it has its answer.
         .update =
@@ -50,6 +67,7 @@ int run(const std::filesystem::path& folder) {
                 if (program.quitting()) window.request_close();
             },
     });
+    ftk::ui::save_settings_file(settings);
     if (!ran) {
         FTK_CORE_CRITICAL("fjedit stopped: {}", ran.error());
         return EXIT_FAILURE;

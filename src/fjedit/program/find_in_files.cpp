@@ -170,7 +170,8 @@ void FindInFiles::close(FindInFilesAsk& ask) {
     shown_.clear();
 }
 
-FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem::path& folder, const Keymap& keys) {
+FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem::path& folder, const Keymap& keys,
+                                 float text_size) {
     FindInFilesAsk ask;
     if (!open_) return ask;
     ui::core::Context& context = ui::core::current();
@@ -275,8 +276,9 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
                 ui::text(std::format("{}:{}", hit.span.from.line + 1, hit.span.from.byte + 1), theme::text_disabled());
             }
             if (Document* document = workspace_->find(hit.path)) {
+                preview_->text_size = text_size;
                 const glm::vec2 at = ui::cursor();
-                const glm::vec2 size{inner, PREVIEW_LINES * CODE_LINE};
+                const glm::vec2 size{inner, PREVIEW_LINES * code_line(text_size)};
                 preview_focused = code_view("Preview", *document, *preview_, keys, {.min = at, .max = at + size}).focused;
                 ui::reserve(size);
             }
