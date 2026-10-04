@@ -41,7 +41,8 @@ struct ProgramOptions {
     /// the start; none keeps nothing.
     std::filesystem::path recovery{};
     /// Its language services, in the order a file is asked of them. Not
-    /// given, it runs clangd for C and C++.
+    /// given, it runs clangd for C and C++, and fjls for a game's script
+    /// headers and Fjell's own files.
     std::optional<std::vector<ServiceMaker>> services{};
     /// Wakes the frame loop from another thread, when a language service's
     /// answer comes: ftk::Window::wake() for a window.
@@ -164,15 +165,18 @@ private:
     void let_go(const std::filesystem::path& path);
     // Opens the file at `path` with `span` selected, the keyboard in it.
     void go_to(const std::filesystem::path& path, Span span);
-    // clangd for C and C++, at the path the preferences give it.
+    // clangd for C and C++, and fjls for a game's script headers and
+    // Fjell's own files, at the paths the preferences give them.
     [[nodiscard]] ServiceMaker clangd();
-    // The makers, clangd's noting the path it starts at.
+    [[nodiscard]] ServiceMaker fjls();
+    // The makers, those of clangd and fjls noting the path each starts at.
     [[nodiscard]] std::vector<ServiceMaker> noting_paths(std::vector<ServiceMaker> makers);
-    // Starts clangd again when the path the preferences give it changed:
+    // Starts a server again when the path the preferences give it changed:
     // what the views asked of the one before is let go.
     void follow_server_paths();
-    // How clangd is, for the Preferences window.
+    // How clangd and fjls are, for the Preferences window.
     [[nodiscard]] LanguageServerShown clangd_shown() const;
+    [[nodiscard]] LanguageServerShown fjls_shown() const;
 
     Workspace workspace_;
     Keymap keymap_;
@@ -215,8 +219,9 @@ private:
     // services, each running once a file it answers for opens.
     std::function<void()> wake_;
     LanguageServices services_;
-    // The path clangd was last started at.
+    // The paths clangd and fjls were last started at.
     std::string clangd_started_;
+    std::string fjls_started_;
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;

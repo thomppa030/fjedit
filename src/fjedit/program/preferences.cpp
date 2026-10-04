@@ -33,6 +33,7 @@ namespace theme = ftk::theme;
 //     TextSize=13
 //     Minimap=1
 //     Clangd=clangd
+//     Fjls=fjls
 constexpr const char* SECTION = "fjedit";
 constexpr std::string_view ENTRY = "Code";
 
@@ -49,6 +50,10 @@ void read_line(Preferences& preferences, std::string_view entry, std::string_vie
         if (!value.empty()) preferences.clangd = value;
         return;
     }
+    if (key == "Fjls") {
+        if (!value.empty()) preferences.fjls = value;
+        return;
+    }
     int number = 0;
     if (std::from_chars(value.data(), value.data() + value.size(), number).ec != std::errc{}) return;
     if (key == "TextSize") {
@@ -58,26 +63,35 @@ void read_line(Preferences& preferences, std::string_view entry, std::string_vie
     }
 }
 
+// A server's path, and how it is under it: `ready` when it runs, `waiting`
+// before it has started.
+void server_row(const char* name, std::string& path, const LanguageServerShown& shown, const char* waiting,
+                const std::string& ready, ui::Severity ready_severity) {
+    ui::row(name, [&] {
+        const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
+        if (ui::text_field((std::string("##") + name).c_str(), path).committed) ui::settings_changed();
+    });
+    if (!shown.status) {
+        ui::hint(waiting);
+    } else if (shown.status->state == ServiceState::Ready) {
+        ui::status(ready_severity, ready.c_str());
+    } else if (shown.status->state == ServiceState::Starting) {
+        ui::status(ui::Severity::Warning, "Starting");
+    } else {
+        ui::status(ui::Severity::Error, shown.status->note.c_str());
+    }
+}
+
 // The Code editor page's settings, as rows a search can filter.
-void draw_code_editor(Preferences& preferences, const LanguageServerShown& clangd) {
-    ui::subheading("C++ language server");
+void draw_code_editor(Preferences& preferences, const LanguageServerShown& clangd, const LanguageServerShown& fjls) {
+    ui::subheading("Language servers");
     if (auto table = ui::PropertyTable("##server")) {
-        ui::row("clangd", [&] {
-            const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
-            if (ui::text_field("##clangd", preferences.clangd).committed) ui::settings_changed();
-        });
-        // How it is, under its path.
-        if (!clangd.status) {
-            ui::hint("Starts with the first C or C++ file opened");
-        } else if (clangd.status->state == ServiceState::Ready) {
-            const std::string running =
-                clangd.reads.empty() ? std::string("Running, with no compile commands found") : "Running, reads " + clangd.reads;
-            ui::status(clangd.reads.empty() ? ui::Severity::Warning : ui::Severity::Success, running.c_str());
-        } else if (clangd.status->state == ServiceState::Starting) {
-            ui::status(ui::Severity::Warning, "Starting");
-        } else {
-            ui::status(ui::Severity::Error, clangd.status->note.c_str());
-        }
+        server_row("clangd", preferences.clangd, clangd, "Starts with the first C or C++ file opened",
+                   clangd.reads.empty() ? std::string("Running, with no compile commands found")
+                                        : "Running, reads " + clangd.reads,
+                   clangd.reads.empty() ? ui::Severity::Warning : ui::Severity::Success);
+        server_row("fjls", preferences.fjls, fjls, "Starts with the first script header or Fjell file opened",
+                   "Running", ui::Severity::Success);
     }
     ui::subheading("Text");
     if (auto table = ui::PropertyTable("##text")) {
@@ -104,11 +118,13 @@ ui::SettingsSection preferences_section(Preferences& preferences) {
                     {std::string(ENTRY),
                      {std::format("TextSize={}", preferences.text_size),
                       std::format("Minimap={}", preferences.minimap ? 1 : 0),
-                      std::format("Clangd={}", preferences.clangd)}}};
+                      std::format("Clangd={}", preferences.clangd),
+                      std::format("Fjls={}", preferences.fjls)}}};
             }};
 }
 
-void PreferencesWindow::draw(Preferences& preferences, const LanguageServerShown& clangd) {
+void PreferencesWindow::draw(Preferences& preferences, const LanguageServerShown& clangd,
+                             const LanguageServerShown& fjls) {
     if (!open_) return;
     auto window = ui::PagedWindow("Preferences###preferences", &open_, SIZE);
     if (!window) return;
@@ -127,7 +143,7 @@ void PreferencesWindow::draw(Preferences& preferences, const LanguageServerShown
         // only count as they are drawn.
         if (!searching || found_ > 0) ui::page_title(icon::code_editor, "Code editor");
         const ui::RowFilter filter(search_);
-        draw_code_editor(preferences, clangd);
+        draw_code_editor(preferences, clangd, fjls);
         found_ = filter.matches();
         if (searching && found_ == 0) ui::empty_state(ui::icon::search, "No settings match", "Try another word");
     }

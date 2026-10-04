@@ -31,6 +31,9 @@ struct Preferences {
     /// clangd, which answers for C and C++: a path, or a name looked for
     /// along the PATH.
     std::string clangd{"clangd"};
+    /// fjls, Fjell's language server, which answers for a game's script
+    /// headers beside clangd and for Fjell's own files: likewise.
+    std::string fjls{"fjls"};
 };
 
 /// The settings file's section that keeps `preferences`, read back as the
@@ -38,9 +41,9 @@ struct Preferences {
 /// it. `preferences` outlives the section.
 [[nodiscard]] ftk::ui::SettingsSection preferences_section(Preferences& preferences);
 
-/// How the C++ language server is, for the Preferences window to show: its
-/// status, once it has been started, and the compile commands it reads in
-/// the folder open, when it finds some.
+/// How a language server is, for the Preferences window to show: its
+/// status, once it has been started, and for clangd the compile commands it
+/// reads in the folder open, when it finds some.
 struct LanguageServerShown {
     std::optional<ServiceStatus> status{};
     std::string reads{};
@@ -54,8 +57,8 @@ public:
     /// Draws it while open: the pages down the left with a search over
     /// their settings, the page on the right, and a foot saying where the
     /// settings are kept. Each edit changes `preferences` and tells the
-    /// settings file. `clangd` is how the C++ language server is.
-    void draw(Preferences& preferences, const LanguageServerShown& clangd);
+    /// settings file. `clangd` and `fjls` are how the language servers are.
+    void draw(Preferences& preferences, const LanguageServerShown& clangd, const LanguageServerShown& fjls);
 
 private:
     bool open_{false};

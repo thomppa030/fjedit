@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <format>
 #include <iterator>
+#include <tuple>
 #include <utility>
 
 namespace fjedit {
@@ -118,7 +119,8 @@ ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem:
 Program::Program(std::filesystem::path root, ProgramOptions options)
     : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1),
       wake_(std::move(options.wake)),
-      services_(noting_paths(options.services ? std::move(*options.services) : std::vector<ServiceMaker>{clangd()}),
+      services_(noting_paths(options.services ? std::move(*options.services)
+                                              : std::vector<ServiceMaker>{clangd(), fjls()}),
                 workspace_.root()) {
     if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
 }
@@ -142,11 +144,33 @@ ServiceMaker Program::clangd() {
             }};
 }
 
+ServiceMaker Program::fjls() {
+    // A game's script headers, beside clangd, and Fjell's own files alone.
+    static const std::vector<std::string> EXTENSIONS{"hpp", "fjss", "fjwidget", "fjfont", "fjsl"};
+    return {.name = "fjls",
+            .extensions = EXTENSIONS,
+            .make = [this](const std::filesystem::path& root) -> std::unique_ptr<LanguageService> {
+                return std::make_unique<lsp::Client>(lsp::ClientOptions{
+                    .command = {preferences_.fjls},
+                    .root = root,
+                    .extensions = EXTENSIONS,
+                    .language_id = [](const std::filesystem::path& path) {
+                        const std::string extension = path.extension().string();
+                        return extension == ".hpp" ? std::string("cpp") : extension.substr(1);
+                    },
+                    .arrived = wake_,
+                });
+            }};
+}
+
 std::vector<ServiceMaker> Program::noting_paths(std::vector<ServiceMaker> makers) {
     for (ServiceMaker& maker : makers) {
-        if (maker.name != "clangd" || !maker.make) continue;
-        maker.make = [this, make = std::move(maker.make)](const std::filesystem::path& root) {
-            clangd_started_ = preferences_.clangd;
+        const bool clangd = maker.name == "clangd";
+        if ((!clangd && maker.name != "fjls") || !maker.make) continue;
+        std::string* started = clangd ? &clangd_started_ : &fjls_started_;
+        const std::string* wanted = clangd ? &preferences_.clangd : &preferences_.fjls;
+        maker.make = [started, wanted, make = std::move(maker.make)](const std::filesystem::path& root) {
+            *started = *wanted;
             return make(root);
         };
     }
@@ -154,8 +178,14 @@ std::vector<ServiceMaker> Program::noting_paths(std::vector<ServiceMaker> makers
 }
 
 void Program::follow_server_paths() {
-    if (!services_.status_of("clangd") || clangd_started_ == preferences_.clangd) return;
-    services_.restart("clangd");
+    bool restarted = false;
+    for (const auto& [name, started, wanted] : {std::tuple{"clangd", &clangd_started_, &preferences_.clangd},
+                                                std::tuple{"fjls", &fjls_started_, &preferences_.fjls}}) {
+        if (!services_.status_of(name) || *started == *wanted) continue;
+        services_.restart(name);
+        restarted = true;
+    }
+    if (!restarted) return;
     // What a view asked of the one stopped will never be answered.
     for (Group& group : groups_) {
         for (Tab& tab : group.tabs) {
@@ -180,6 +210,10 @@ LanguageServerShown Program::clangd_shown() const {
         }
     }
     return shown;
+}
+
+LanguageServerShown Program::fjls_shown() const {
+    return {.status = services_.status_of("fjls"), .reads = {}};
 }
 
 std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
@@ -483,7 +517,7 @@ void Program::draw() {
     if (const std::optional<Location> going = std::exchange(going_, std::nullopt)) go_to(going->path, going->span);
     ui::end_host_window();
     draw_status();
-    preferences_window_.draw(preferences_, clangd_shown());
+    preferences_window_.draw(preferences_, clangd_shown(), fjls_shown());
     draw_prompts();
 }
 

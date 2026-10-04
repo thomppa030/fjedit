@@ -16,6 +16,7 @@
 #include <functional>
 #include <format>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -34,20 +35,24 @@ struct Running {
     ftk::test::KitHarness h{{1280.0f, 800.0f}};
 
     // The language service made for C++ files, when the test gives one,
-    // and how many have been made.
+    // and how many have been made; and the one beside it for script headers
+    // and Fjell's files, when the test gives both.
     FakeLanguage* language{nullptr};
     int languages_made{0};
+    FakeLanguage* fjls{nullptr};
+    int fjls_made{0};
 
     // What answers for C++: nothing, so no test runs a server it didn't ask
-    // for; a fake; or clangd, as the program runs it.
-    enum class Languages { None, Fake, Clangd };
+    // for; a fake; a fake and a second fake for headers and Fjell's files, as
+    // clangd and fjls; or clangd, as the program runs it.
+    enum class Languages { None, Fake, Both, Clangd };
 
     explicit Running(std::initializer_list<std::pair<const char*, const char*>> files,
                      const std::function<void(const TempFolder&)>& before = {}, Languages languages = Languages::None) {
         for (const auto& [name, bytes] : files) folder.write(name, bytes);
         if (before) before(folder);
         std::vector<ServiceMaker> services;
-        if (languages == Languages::Fake) {
+        if (languages == Languages::Fake || languages == Languages::Both) {
             // Named as clangd, so the preferences' path for it holds.
             services.push_back({.name = "clangd",
                                 .extensions = {"cpp", "hpp"},
@@ -55,6 +60,17 @@ struct Running {
                                     auto made = std::make_unique<FakeLanguage>();
                                     language = made.get();
                                     ++languages_made;
+                                    return made;
+                                }});
+        }
+        if (languages == Languages::Both) {
+            // Named as fjls, so the preferences' path for it holds.
+            services.push_back({.name = "fjls",
+                                .extensions = {"hpp", "fjss"},
+                                .make = [this](const std::filesystem::path&) -> std::unique_ptr<LanguageService> {
+                                    auto made = std::make_unique<FakeLanguage>();
+                                    fjls = made.get();
+                                    ++fjls_made;
                                     return made;
                                 }});
         }
@@ -581,6 +597,39 @@ TEST_CASE("F2 asks for a new name, and the rename's edits are made in every file
     REQUIRE(run.folder.read("other.cpp") == "extern int pace;\n");
 }
 
+TEST_CASE("fjls, run by the program beside clangd, finds the problems in a script header", "[program][language][fjls]") {
+    const std::vector<std::string> probe{"fjls"};
+    if (!ftk::platform::ChildProcess::start(probe)) SKIP("fjls isn't on the PATH");
+    // Plain C++ to clangd, its macro defined and its attribute only
+    // unknown; to fjreflect, an attribute it has no such name for.
+    Running run({{"project.fjell", "{}\n"},
+                 {"scripts/mover.hpp", "#define FJELL_COMPONENT(name)\n"
+                                       "class Mover {\n"
+                                       "    FJELL_COMPONENT(Mover)\n"
+                                       "public:\n"
+                                       "    [[fj::propery]] int typo = 0;\n"
+                                       "};\n"}},
+                {}, Running::Languages::Clangd);
+    run.press_row("scripts");
+    run.h.step();
+    run.press_row("mover.hpp");
+    const auto tinted = [&] {
+        const uint32_t tint = ftk::ui::core::pack_colour(ftk::theme::code_error_line());
+        for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+            for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+                if (p.colour == tint) return true;
+            }
+        }
+        return false;
+    };
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!tinted() && std::chrono::steady_clock::now() < until) {
+        run.h.step();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(tinted());
+}
+
 TEST_CASE("Escape leaves the rename's prompt with nothing asked", "[program][language][rename]") {
     Running run({{"coin.cpp", "int speed;\n"}}, {}, Running::Languages::Fake);
     run.press_row("coin.cpp");
@@ -656,3 +705,36 @@ TEST_CASE("A new path for clangd in the preferences starts it again, the views j
     REQUIRE(run.languages_made == 2);
 }
 
+TEST_CASE("A script header is told to clangd and fjls both, each with its dot on the status bar", "[program][language]") {
+    Running run({{"mover.hpp", "struct Mover;\n"}, {"look.fjss", ".a { color: red; }\n"}}, {}, Running::Languages::Both);
+    run.press_row("mover.hpp");
+    run.h.step();
+    const std::filesystem::path mover = run.program->workspace().name(run.folder.path / "mover.hpp");
+    REQUIRE(run.language != nullptr);
+    REQUIRE(run.fjls != nullptr);
+    REQUIRE(run.language->opened == std::vector<std::filesystem::path>{mover});
+    REQUIRE(run.fjls->opened == std::vector<std::filesystem::path>{mover});
+
+    // One dot each: fjls stopped, clangd running.
+    REQUIRE(on_status_bar(run, ftk::theme::success()));
+    REQUIRE_FALSE(on_status_bar(run, ftk::theme::error()));
+    run.fjls->state = {.state = ServiceState::Stopped, .note = "fjls: no such program"};
+    run.h.step(2);
+    REQUIRE(on_status_bar(run, ftk::theme::error()));
+    REQUIRE(on_status_bar(run, ftk::theme::success()));
+
+    // A stylesheet is fjls's alone.
+    run.press_row("look.fjss");
+    run.h.step();
+    const std::filesystem::path look = run.program->workspace().name(run.folder.path / "look.fjss");
+    REQUIRE(run.fjls->opened == std::vector<std::filesystem::path>{mover, look});
+    REQUIRE(run.language->opened == std::vector<std::filesystem::path>{mover});
+
+    // A new path for fjls starts fjls again, and only it.
+    run.program->preferences().fjls = "/opt/fjell/fjls";
+    run.h.step(2);
+    REQUIRE(run.fjls_made == 2);
+    REQUIRE(run.languages_made == 1);
+    const std::set<std::filesystem::path> told(run.fjls->opened.begin(), run.fjls->opened.end());
+    REQUIRE(told == std::set<std::filesystem::path>{mover, look});
+}
