@@ -66,6 +66,7 @@ ftk_check_editor_ui(fjedit-program ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/prog
 # caller's thread.
 add_library(fjedit-lsp STATIC
     fjedit/lsp/connection.cpp
+    fjedit/lsp/convert.cpp
     fjedit/lsp/frames.cpp)
 add_library(fjedit::lsp ALIAS fjedit-lsp)
 ftk_target_defaults(fjedit-lsp)

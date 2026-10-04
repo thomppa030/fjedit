@@ -62,7 +62,8 @@ ftk_target_defaults(fjedit-fake-server)
 target_link_libraries(fjedit-fake-server PRIVATE fjedit::lsp)
 add_executable(fjedit-lsp-tests
     log_for_tests.cpp
-    test_lsp.cpp)
+    test_lsp.cpp
+    test_lsp_convert.cpp)
 ftk_target_defaults(fjedit-lsp-tests)
 target_link_libraries(fjedit-lsp-tests PRIVATE fjedit::lsp Catch2::Catch2WithMain)
 add_dependencies(fjedit-lsp-tests fjedit-fake-server)
