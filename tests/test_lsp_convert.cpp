@@ -22,33 +22,11 @@ Json parsed(std::string_view text) {
 
 } // namespace
 
-TEST_CASE("A path is a file URI with its odd bytes encoded, and back", "[lsp][convert]") {
-#ifdef _WIN32
-    const fs::path path = "C:\\games\\my game\\coin #2.cpp";
-    REQUIRE(uri_of(path) == "file:///C%3A/games/my%20game/coin%20%232.cpp");
-#else
-    const fs::path path = "/home/kay/my game/coin #2.cpp";
-    REQUIRE(uri_of(path) == "file:///home/kay/my%20game/coin%20%232.cpp");
-#endif
-    REQUIRE(path_of(uri_of(path)) == path);
-    REQUIRE(path_of(uri_of(fs::path(u8"/tmp/m\u00fcnze.cpp").make_preferred())) ==
-            fs::path(u8"/tmp/m\u00fcnze.cpp").make_preferred());
-    REQUIRE_FALSE(path_of("https://example.com/a.cpp").has_value());
-    REQUIRE_FALSE(path_of("file://server/share/a.cpp").has_value());
-}
-
-TEST_CASE("Positions count along a line in UTF-8 bytes or UTF-16 units", "[lsp][convert]") {
+TEST_CASE("Positions go to and from the protocol counted as the server counts", "[lsp][convert]") {
     // An e with an accent is two bytes and one unit; a coin, four bytes and
     // two units.
     const std::string line = "a\xC3\xA9\xF0\x9F\xAA\x99z";
-    REQUIRE(units_at(line, 3, Encoding::Utf16) == 2);
-    REQUIRE(units_at(line, 7, Encoding::Utf16) == 4);
-    REQUIRE(byte_at(line, 4, Encoding::Utf16) == 7);
-    REQUIRE(byte_at(line, 5, Encoding::Utf16) == 8);
-    REQUIRE(byte_at(line, 99, Encoding::Utf16) == line.size());
-    REQUIRE(units_at(line, 7, Encoding::Utf8) == 7);
-
-    const Positions utf16(Encoding::Utf16, [&](std::size_t) { return std::string_view(line); });
+    const Positions utf16(ftk::jsonrpc::Encoding::Utf16, [&](std::size_t) { return std::string_view(line); });
     REQUIRE(utf16.to_json(Position{0, 7}) == parsed(R"({"line":0,"character":4})"));
     REQUIRE(utf16.position(parsed(R"({"line":0,"character":4})")) == Position{0, 7});
 }
@@ -117,7 +95,7 @@ TEST_CASE("A hover is read from Markdown or marked strings, and an empty one is 
 
 TEST_CASE("Definitions are read from a location, a list, or links", "[lsp][convert]") {
     const fs::path file = fs::path("/src/coin.hpp").make_preferred();
-    const std::string uri = uri_of(file);
+    const std::string uri = ftk::jsonrpc::uri_of(file);
     const PositionsFor positions = [](const fs::path&) { return Positions(); };
     const std::string range = R"({"start":{"line":5,"character":2},"end":{"line":5,"character":6}})";
     REQUIRE(locations_from(parsed(R"({"uri":")" + uri + R"(","range":)" + range + "}"), positions) ==
@@ -142,12 +120,12 @@ TEST_CASE("Text edits become one edit in order, and a workspace edit one per fil
     const PositionsFor positions = [](const fs::path&) { return Positions(); };
     const std::string one = R"([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}},"newText":"won"}])";
     const WorkspaceEdit by_changes =
-        workspace_edit_from(parsed(R"({"changes":{")" + uri_of(a) + R"(":)" + one + "}}"), positions);
+        workspace_edit_from(parsed(R"({"changes":{")" + ftk::jsonrpc::uri_of(a) + R"(":)" + one + "}}"), positions);
     REQUIRE(by_changes.size() == 1);
     REQUIRE_FALSE(by_changes.at(a).version.has_value());
     const WorkspaceEdit by_documents = workspace_edit_from(
-        parsed(R"({"documentChanges":[{"textDocument":{"uri":")" + uri_of(b) + R"(","version":7},"edits":)" + one +
-               R"(},{"kind":"create","uri":"file:///src/new.cpp"}]})"),
+        parsed(R"({"documentChanges":[{"textDocument":{"uri":")" + ftk::jsonrpc::uri_of(b) +
+               R"(","version":7},"edits":)" + one + R"(},{"kind":"create","uri":"file:///src/new.cpp"}]})"),
         positions);
     REQUIRE(by_documents.size() == 1);
     REQUIRE(by_documents.at(b).version == 7);

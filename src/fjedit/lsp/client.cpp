@@ -85,7 +85,7 @@ Client::Client(ClientOptions options) : options_(std::move(options)) {
     }
     connection_ = std::move(*started);
     status_ = {.state = ServiceState::Starting, .note = "Starting " + name};
-    const std::string root = uri_of(options_.root);
+    const std::string root = jsonrpc::uri_of(options_.root);
     const Json params = {
         {"processId", ftk::platform::process_id()},
         {"clientInfo", {{"name", "fjedit"}}},
@@ -107,7 +107,7 @@ void Client::initialized(const jsonrpc::Answer& answer) {
     const Json capabilities = answer->value("capabilities", Json::object());
     const bool utf8 = capabilities.value("positionEncoding", std::string()) == "utf-8" ||
                       answer->value("offsetEncoding", std::string()) == "utf-8";
-    encoding_ = utf8 ? Encoding::Utf8 : Encoding::Utf16;
+    encoding_ = utf8 ? jsonrpc::Encoding::Utf8 : jsonrpc::Encoding::Utf16;
     if (const auto sync = capabilities.find("textDocumentSync"); sync != capabilities.end()) {
         if (sync->is_number_integer()) {
             incremental_ = sync->get<int>() == 2;
@@ -139,7 +139,7 @@ void Client::open(const fs::path& path, const Document& document) {
     Open& file = open_[path];
     file = Open{};
     file.document = &document;
-    file.uri = uri_of(path);
+    file.uri = jsonrpc::uri_of(path);
     if (ready()) sync(path, file);
 }
 
@@ -177,7 +177,8 @@ void Client::sync(const fs::path& path, Open& file) {
     // editor does; the whole text otherwise, or when the edits made since
     // are no longer known.
     Json changes = Json::array();
-    const auto edits = incremental_ && encoding_ == Encoding::Utf8 ? document.edits_since(file.sent) : std::nullopt;
+    const bool by_edit = incremental_ && encoding_ == jsonrpc::Encoding::Utf8;
+    const auto edits = by_edit ? document.edits_since(file.sent) : std::nullopt;
     if (edits) {
         for (const Edit& edit : *edits) {
             for (Json& change : content_changes(edit)) changes.push_back(std::move(change));
@@ -240,7 +241,7 @@ void Client::update() {
 
 bool Client::heard(const jsonrpc::Incoming& message) {
     if (message.method == "textDocument/publishDiagnostics") {
-        const std::optional<fs::path> path = path_of(message.params.value("uri", std::string()));
+        const std::optional<fs::path> path = jsonrpc::path_of(message.params.value("uri", std::string()));
         const auto found = path ? open_.find(*path) : open_.end();
         if (found == open_.end()) return true;
         Open& file = found->second;
@@ -334,17 +335,17 @@ const SemanticTokens* Client::tokens(const fs::path& path) {
 }
 
 Positions Client::positions_for(const fs::path& path) const {
-    if (encoding_ == Encoding::Utf8) return Positions();
+    if (encoding_ == jsonrpc::Encoding::Utf8) return Positions();
     if (const auto found = open_.find(path); found != open_.end()) {
         const Document* document = found->second.document;
-        return Positions(Encoding::Utf16, [document](std::size_t line) {
+        return Positions(jsonrpc::Encoding::Utf16, [document](std::size_t line) {
             const Buffer& buffer = document->buffer();
             return line < buffer.line_count() ? buffer.line(line) : std::string_view();
         });
     }
     // A file not open: its lines as they are on disk.
     auto text = std::make_shared<const Buffer>(read_text_file(path).value_or(std::string()));
-    return Positions(Encoding::Utf16, [text](std::size_t line) {
+    return Positions(jsonrpc::Encoding::Utf16, [text](std::size_t line) {
         return line < text->line_count() ? text->line(line) : std::string_view();
     });
 }

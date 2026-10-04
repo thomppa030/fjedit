@@ -133,7 +133,7 @@ private:
     ServiceStatus status_;
     // How the server counts along a line, how it takes changes (whole, or
     // by the edit), whether it wants saves, and its colours' legend.
-    Encoding encoding_{Encoding::Utf16};
+    ftk::jsonrpc::Encoding encoding_{ftk::jsonrpc::Encoding::Utf16};
     bool incremental_{false};
     bool wants_saves_{false};
     std::vector<TokenKind> colour_kinds_;

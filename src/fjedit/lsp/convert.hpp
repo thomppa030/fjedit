@@ -8,6 +8,7 @@
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/language_service.hpp"
 #include "fjedit/core/syntax.hpp"
+#include "ftk/jsonrpc/documents.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -24,32 +25,13 @@ namespace fjedit::lsp {
 
 using Json = nlohmann::json;
 
-/// The file URI of `path`, an absolute path, its bytes outside the letters,
-/// digits, - . _ ~ and the slashes percent-encoded: file:///home/kay/a%20b.cpp,
-/// file:///C:/x.cpp.
-[[nodiscard]] std::string uri_of(const std::filesystem::path& path);
-
-/// The path the file URI `uri` names; nothing when it names no local file.
-[[nodiscard]] std::optional<std::filesystem::path> path_of(std::string_view uri);
-
-/// How a server counts along a line: in UTF-8 bytes, as the editor does, or
-/// in UTF-16 units, the protocol's default.
-enum class Encoding : uint8_t { Utf8, Utf16 };
-
-/// Where along `line` a count of `units` of `encoding` reaches, as a byte;
-/// the end of the line when it is past it.
-[[nodiscard]] std::size_t byte_at(std::string_view line, std::size_t units, Encoding encoding);
-
-/// How many units of `encoding` the first `byte` bytes of `line` are.
-[[nodiscard]] std::size_t units_at(std::string_view line, std::size_t byte, Encoding encoding);
-
 /// Positions between the editor's and a server's, in one text. Counting in
 /// UTF-16 needs the text's lines, which `line` gives; UTF-8 needs nothing.
 class Positions {
 public:
     using Line = std::function<std::string_view(std::size_t line)>;
 
-    explicit Positions(Encoding encoding = Encoding::Utf8, Line line = {});
+    explicit Positions(ftk::jsonrpc::Encoding encoding = ftk::jsonrpc::Encoding::Utf8, Line line = {});
 
     [[nodiscard]] Json to_json(Position at) const;
     [[nodiscard]] Json to_json(Span span) const;
@@ -59,7 +41,7 @@ public:
     [[nodiscard]] std::size_t byte(std::size_t line, std::size_t units) const;
 
 private:
-    Encoding encoding_;
+    ftk::jsonrpc::Encoding encoding_;
     Line line_;
 };
 
