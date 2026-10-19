@@ -1,4 +1,6 @@
+#include "fjedit/core/language.hpp"
 #include "fjedit/widget/code_view.hpp"
+#include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/minimap.hpp"
 
 #include "fake_language.hpp"
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace fjedit;
@@ -1028,6 +1031,51 @@ TEST_CASE("A list said to be incomplete asks again as more is typed, and a space
     c.e.h.type(" ");
     c.e.h.step();
     REQUIRE(listed(c.e).empty());
+}
+
+TEST_CASE("A word begun asks, as the language has its words", "[completion]") {
+    const Language& code = language_for("x.cpp");
+    const Language& sheet = language_for("hud.fjss");
+    const auto asks = [](const Language& language, std::string_view line) {
+        return asks_completion(language, line, line.size());
+    };
+    CHECK(asks(code, "    ro"));
+    CHECK_FALSE(asks(code, "    12"));
+    CHECK_FALSE(asks(code, "    a-"));
+    // A sheet's words run through hyphens; a negative number is still one.
+    CHECK(asks(sheet, "    justify-c"));
+    CHECK(asks(sheet, "    color: var(--"));
+    CHECK_FALSE(asks(sheet, "    margin: -1"));
+}
+
+TEST_CASE("In a sheet a word runs through its hyphens, the list open across them", "[code_view][completion]") {
+    FakeLanguage language;
+    Editor e{"#hud {\n    \n}", "hud.fjss"};
+    e.view.service = &language;
+    e.view.path = "hud.fjss";
+    e.h.click_at({PAST_END, row_y(1)});
+    e.h.step();
+    e.h.type("f");
+    e.h.step();
+    REQUIRE(language.completions.size() == 1);
+    const Span f{{1, 4}, {1, 5}};
+    FakeLanguage::answer(language.completions.back(),
+                         Completions{.items = {entry("flex-direction", f, "1"), entry("flex-grow", f, "2"),
+                                               entry("flex-wrap", f, "3"), entry("font-size", f, "4")},
+                                     .incomplete = false,
+                                     .at = language.completions.back().at,
+                                     .version = e.document.version()});
+    e.h.step(2);
+
+    e.h.type("lex-w");
+    e.h.step(2);
+    // What begins with "flex-w" first; nothing more asked.
+    REQUIRE(listed(e) == std::vector<std::string>{"flex-wrap", "flex-grow"});
+    REQUIRE(language.completions.size() == 1);
+    e.h.press(Key::Enter);
+    e.h.step();
+    REQUIRE(e.document.buffer().line(1) == "    flex-wrap");
+    REQUIRE(e.caret() == Position{1, 13});
 }
 
 namespace {

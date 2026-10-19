@@ -6,6 +6,7 @@
 // diagnostics, completions, hovers, locations, edits and colours.
 
 #include "fjedit/core/buffer.hpp"
+#include "fjedit/core/language.hpp"
 #include "fjedit/core/language_service.hpp"
 #include "fjedit/core/syntax.hpp"
 #include "ftk/jsonrpc/documents.hpp"
@@ -58,10 +59,11 @@ using PositionsFor = std::function<Positions(const std::filesystem::path& path)>
 [[nodiscard]] std::vector<Diagnostic> diagnostics_from(const Json& diagnostics, const Positions& positions);
 
 /// A completion's answer (a list, or an object holding one) for the caret
-/// at `at` on `line`. An entry with no edit of its own replaces the word
-/// before the caret.
+/// at `at` on `line`, written in `language`. An entry with no edit of its
+/// own replaces the word before the caret, as the language has its words.
 [[nodiscard]] std::vector<Completion> completions_from(const Json& result, Position at, std::string_view line,
-                                                       const Positions& positions, bool* incomplete = nullptr);
+                                                       const Language& language, const Positions& positions,
+                                                       bool* incomplete = nullptr);
 
 /// A hover's answer; nothing when it says nothing.
 [[nodiscard]] std::optional<Hover> hover_from(const Json& result, const Positions& positions);

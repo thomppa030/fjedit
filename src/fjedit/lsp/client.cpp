@@ -408,12 +408,15 @@ Asked<Completions> Client::complete(const fs::path& path, Position at) {
     const uint64_t version = file.document->version();
     const Position caret = file.document->buffer().clamp(at);
     const std::string line(file.document->buffer().line(caret.line));
+    // Languages live as long as the program.
+    const Language* language = &file.document->language();
     return ask<Completions>("textDocument/completion",
                             [this, path, uri = file.uri, caret] { return document_at(path, uri, caret); },
-                            [this, path, at = caret, version, line](const jsonrpc::Answer& answer) {
+                            [this, path, at = caret, version, line, language](const jsonrpc::Answer& answer) {
                                 Completions out{.items = {}, .incomplete = false, .at = at, .version = version};
                                 if (answer) {
-                                    out.items = completions_from(*answer, at, line, positions_for(path), &out.incomplete);
+                                    out.items = completions_from(*answer, at, line, *language, positions_for(path),
+                                                                 &out.incomplete);
                                 }
                                 return out;
                             });

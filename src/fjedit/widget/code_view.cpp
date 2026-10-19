@@ -434,7 +434,7 @@ void run_view_command(std::string_view name, const Document& document, EditorVie
     FindState& find = view.find;
     if (name == "completion.open") {
         if (view.service != nullptr) {
-            open_completion(view.completing, *view.service, view.path, document.buffer(), view.selections.primary().caret);
+            open_completion(view.completing, *view.service, view.path, document, view.selections.primary().caret);
         }
     } else if (name == "completion.close") {
         view.completing = {};
@@ -1164,8 +1164,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             // A word begun, or . -> or :: typed, asks what completes it.
             const Position caret = view.selections.primary().caret;
             if (view.service != nullptr && !view.completing.open && view.selections.all().size() == 1 &&
-                asks_completion(buffer.line(caret.line), caret.byte)) {
-                open_completion(view.completing, *view.service, view.path, buffer, caret);
+                asks_completion(document.language(), buffer.line(caret.line), caret.byte)) {
+                open_completion(view.completing, *view.service, view.path, document, caret);
             }
         }
         take_keys(ui, keymap, view, run);
@@ -1187,7 +1187,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     }
     take_hover(ui, in, frame, document, view, layout, edited || view.selections != before || view.scroll != scrolled);
     if (view.service != nullptr) {
-        follow_completion(view.completing, *view.service, view.path, buffer, view.selections.primary().caret);
+        follow_completion(view.completing, *view.service, view.path, document, view.selections.primary().caret);
     } else {
         view.completing = {};
     }

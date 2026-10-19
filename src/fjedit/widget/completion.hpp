@@ -3,12 +3,14 @@
 // Completion (sheet 39, P1): what the language service says completes the
 // word being typed, in a list under it, narrowed as more is typed, the
 // selected entry's signature and documentation beside it. It opens at Ctrl
-// Space, on typing a word, and after . -> and ::; Up and Down move through
-// it, Enter and Tab take the entry, Escape closes it, and a click takes the
-// entry clicked.
+// Space, on typing a word as the file's language has its words, and after .
+// -> and ::; Up and Down move through it, Enter and Tab take the entry,
+// Escape closes it, and a click takes the entry clicked.
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/commands.hpp"
+#include "fjedit/core/document.hpp"
+#include "fjedit/core/language.hpp"
 #include "fjedit/core/language_service.hpp"
 
 #include <glm/vec2.hpp>
@@ -39,20 +41,21 @@ struct CompletionState {
     bool reveal{false};
 };
 
-/// Whether `line`, with the caret at `caret` just after what was typed,
-/// asks for completion: a word begun, or . -> or :: just typed.
-[[nodiscard]] bool asks_completion(std::string_view line, std::size_t caret);
+/// Whether `line` of a file in `language`, with the caret at `caret` just
+/// after what was typed, asks for completion: a word begun (not a number),
+/// or . -> or :: just typed.
+[[nodiscard]] bool asks_completion(const Language& language, std::string_view line, std::size_t caret);
 
 /// Opens completion for the word the caret is in or after, asking
 /// `service` about the file at `path`.
 void open_completion(CompletionState& state, LanguageService& service, const std::filesystem::path& path,
-                     const Buffer& buffer, Position caret);
+                     const Document& document, Position caret);
 
 /// Follows the caret: what is typed of the word, and the entries that match
 /// it. Closes once the caret leaves the word or nothing matches; asks again
 /// when the answer said more would come for more typed.
 void follow_completion(CompletionState& state, LanguageService& service, const std::filesystem::path& path,
-                       const Buffer& buffer, Position caret);
+                       const Document& document, Position caret);
 
 /// Moves the selection `by` entries, held to the list's ends.
 void move_completion(CompletionState& state, std::ptrdiff_t by);

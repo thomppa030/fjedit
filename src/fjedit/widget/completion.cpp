@@ -31,11 +31,6 @@ constexpr float LIST_WIDTH = 250.0f;
 constexpr float DOCS_WIDTH = 350.0f;
 constexpr glm::vec2 DOCS_PAD{12.0f, 10.0f};
 
-bool word_byte(char c) {
-    const auto u = static_cast<unsigned char>(c);
-    return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') || u == '_' || u >= 0x80;
-}
-
 bool digit(char c) {
     return c >= '0' && c <= '9';
 }
@@ -61,12 +56,11 @@ bool begins_with(std::string_view filter, std::string_view typed) {
     return true;
 }
 
-// Where the word the caret is in or after begins.
-Position word_start(const Buffer& buffer, Position caret) {
-    const std::string_view line = buffer.line(caret.line);
-    std::size_t byte = std::min(caret.byte, line.size());
-    while (byte > 0 && word_byte(line[byte - 1])) --byte;
-    return {caret.line, byte};
+// Where the word the caret is in or after begins on `line`.
+std::size_t word_start(const Language& language, std::string_view line, std::size_t caret) {
+    std::size_t byte = std::min(caret, line.size());
+    while (byte > 0 && word_byte(language, line[byte - 1])) --byte;
+    return byte;
 }
 
 // An entry's icon, in the hue of what it names as code is coloured.
@@ -140,14 +134,15 @@ std::vector<std::size_t> matching(const Completions& completions, std::string_vi
 
 } // namespace
 
-bool asks_completion(std::string_view line, std::size_t caret) {
+bool asks_completion(const Language& language, std::string_view line, std::size_t caret) {
     if (caret == 0 || caret > line.size()) return false;
     const char last = line[caret - 1];
-    if (word_byte(last)) {
-        // A word, not a number.
-        std::size_t start = caret;
-        while (start > 0 && word_byte(line[start - 1])) --start;
-        return !digit(line[start]);
+    if (word_byte(language, last)) {
+        // A word, not a number: in a language whose words take `-`, not a
+        // negative one either.
+        std::size_t first = word_start(language, line, caret);
+        while (first < caret && line[first] == '-') ++first;
+        return first == caret || !digit(line[first]);
     }
     if (last == '.') return caret < 2 || !digit(line[caret - 2]);
     if (caret >= 2 && last == '>' && line[caret - 2] == '-') return true;
@@ -155,10 +150,12 @@ bool asks_completion(std::string_view line, std::size_t caret) {
 }
 
 void open_completion(CompletionState& state, LanguageService& service, const std::filesystem::path& path,
-                     const Buffer& buffer, Position caret) {
+                     const Document& document, Position caret) {
+    const Buffer& buffer = document.buffer();
     caret = buffer.clamp(caret);
-    const Position start = word_start(buffer, caret);
-    std::string typed(buffer.line(caret.line).substr(start.byte, caret.byte - start.byte));
+    const std::string_view line = buffer.line(caret.line);
+    const Position start{caret.line, word_start(document.language(), line, caret.byte)};
+    std::string typed(line.substr(start.byte, caret.byte - start.byte));
     state = CompletionState{.open = true,
                             .start = start,
                             .asked = service.complete(path, caret),
@@ -167,15 +164,16 @@ void open_completion(CompletionState& state, LanguageService& service, const std
 }
 
 void follow_completion(CompletionState& state, LanguageService& service, const std::filesystem::path& path,
-                       const Buffer& buffer, Position caret) {
+                       const Document& document, Position caret) {
     if (!state.open) return;
+    const Buffer& buffer = document.buffer();
     caret = buffer.clamp(caret);
     if (caret.line != state.start.line || caret.byte < state.start.byte) {
         state = {};
         return;
     }
     const std::string typed(buffer.line(caret.line).substr(state.start.byte, caret.byte - state.start.byte));
-    if (!std::ranges::all_of(typed, word_byte)) {
+    if (!std::ranges::all_of(typed, [&](char c) { return word_byte(document.language(), c); })) {
         state = {};
         return;
     }

@@ -49,11 +49,6 @@ std::string hover_markdown(const Json& contents) {
     return std::format("```{}\n{}\n```", string_of(contents, "language"), string_of(contents, "value"));
 }
 
-bool word_byte(char c) {
-    const auto u = static_cast<unsigned char>(c);
-    return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') || u == '_' || u >= 0x80;
-}
-
 Severity severity_of(const Json& diagnostic) {
     switch (size_of(diagnostic, "severity")) {
         case 2: return Severity::Warning;
@@ -130,7 +125,7 @@ std::vector<Diagnostic> diagnostics_from(const Json& diagnostics, const Position
 }
 
 std::vector<Completion> completions_from(const Json& result, Position at, std::string_view line,
-                                         const Positions& positions, bool* incomplete) {
+                                         const Language& language, const Positions& positions, bool* incomplete) {
     std::vector<Completion> out;
     const Json* items = &result;
     if (result.is_object()) {
@@ -145,7 +140,7 @@ std::vector<Completion> completions_from(const Json& result, Position at, std::s
 
     // The word being typed, which an entry with no edit of its own replaces.
     std::size_t word = std::min(at.byte, line.size());
-    while (word > 0 && word_byte(line[word - 1])) --word;
+    while (word > 0 && word_byte(language, line[word - 1])) --word;
     const Span typed{.from = {at.line, word}, .to = at};
 
     for (const Json& item : *items) {

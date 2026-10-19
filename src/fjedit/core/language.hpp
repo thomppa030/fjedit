@@ -17,7 +17,14 @@ struct Language {
     /// the language has none.
     std::string_view line_comment;
     Folding folding{Folding::Brackets};
+    /// What a word takes besides letters, digits, `_` and bytes past ASCII,
+    /// as completion reads the word being typed: FJSS's names run through
+    /// `-` (`justify-content`, `--accent`).
+    std::string_view word_also{};
 };
+
+/// Whether `c` belongs to a word of `language`.
+[[nodiscard]] bool word_byte(const Language& language, char c);
 
 /// The language `file_name` is written in, by its extension (case aside);
 /// plain text for one fjedit doesn't know.

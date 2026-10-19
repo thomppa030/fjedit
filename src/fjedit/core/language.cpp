@@ -1,6 +1,7 @@
 #include "fjedit/core/language.hpp"
 
 #include "fjedit/core/lex/lexers.hpp"
+#include "fjedit/core/lex/scan.hpp"
 
 #include <string>
 
@@ -29,7 +30,7 @@ const Language& fjsl() {
 }
 
 const Language& fjss() {
-    static const Language language{.name = "FJSS", .lexer = lex::fjss(), .line_comment = ""};
+    static const Language language{.name = "FJSS", .lexer = lex::fjss(), .line_comment = "", .word_also = "-"};
     return language;
 }
 
@@ -62,6 +63,10 @@ constexpr Known BY_EXTENSION[] = {
 };
 
 } // namespace
+
+bool word_byte(const Language& language, char c) {
+    return lex::name_char(c) || (c != '\0' && language.word_also.find(c) != std::string_view::npos);
+}
 
 const Language& plain_text() {
     static const PlainLexer lexer;

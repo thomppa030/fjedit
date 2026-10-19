@@ -64,7 +64,8 @@ TEST_CASE("Completions are read from a list, with their edits, or replace the wo
                                  "newText":"#include <glm/ext/quaternion_transform.hpp>\n"}],
          "filterText":"rotate","sortText":"0001"},
         {"label":"roll","kind":2}]})json"),
-                                                          Position{4, 10}, "  glm::ro", UTF8, &incomplete);
+                                                          Position{4, 10}, "  glm::ro", language_for("x.cpp"), UTF8,
+                                                          &incomplete);
     REQUIRE(incomplete);
     REQUIRE(read.size() == 2);
     REQUIRE(read[0].label == "rotate");
@@ -147,4 +148,14 @@ TEST_CASE("Semantic tokens are read from their numbers by the server's legend", 
     REQUIRE(tokens.lines[0][1].end == 20);
     REQUIRE(tokens.lines[2].size() == 1);
     REQUIRE(tokens.lines[2][0].kind == TokenKind::Text);
+}
+
+TEST_CASE("An entry with no edit of its own replaces the word as the file's language has it", "[lsp][convert]") {
+    const Json answer = parsed(R"json([{"label":"justify-content"}])json");
+    // A sheet's word runs through its hyphens; C++'s stops at one.
+    const std::vector<Completion> sheet = completions_from(answer, Position{0, 13}, "    justify-c", language_for("hud.fjss"), UTF8);
+    REQUIRE(sheet.size() == 1);
+    REQUIRE(sheet[0].change == Change{.span = {{0, 4}, {0, 13}}, .text = "justify-content"});
+    const std::vector<Completion> code = completions_from(answer, Position{0, 13}, "    justify-c", language_for("x.cpp"), UTF8);
+    REQUIRE(code[0].change == Change{.span = {{0, 12}, {0, 13}}, .text = "justify-content"});
 }
