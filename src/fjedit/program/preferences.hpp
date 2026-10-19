@@ -36,6 +36,8 @@ struct Preferences {
     /// How many rows the views keep in sight above and below the caret as
     /// the keys move it.
     int around_caret{0};
+    /// The views take Vim's keys rather than the standard ones.
+    bool vim{false};
     /// clangd, which answers for C and C++: a path, or a name looked for
     /// along the PATH.
     std::string clangd{"clangd"};

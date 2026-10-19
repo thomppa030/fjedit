@@ -5,6 +5,7 @@
 #include "fjedit/core/language.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/text_file.hpp"
+#include "fjedit/core/vim/notation.hpp"
 #include "fjedit/lsp/client.hpp"
 #include "fjedit/program/icons.hpp"
 
@@ -77,6 +78,24 @@ void show_as_preferred(EditorView& view, const Preferences& preferences) {
     view.text_size = static_cast<float>(preferences.text_size);
     view.line_numbers = preferences.line_numbers;
     view.around_caret = static_cast<std::size_t>(preferences.around_caret);
+    // Vim turned on starts each view in its normal mode.
+    if (preferences.vim && !view.vim) view.vim.emplace();
+    if (!preferences.vim) view.vim.reset();
+}
+
+// How the status bar names Vim's mode, and the tone of its pill (sheet 47,
+// M1).
+struct ModeShown {
+    const char* name;
+    ui::StatusTone tone;
+};
+
+ModeShown mode_shown(vim::Mode mode) {
+    switch (mode) {
+        case vim::Mode::Insert: return {"Insert", ui::StatusTone::On};
+        case vim::Mode::Normal: break;
+    }
+    return {"Normal", ui::StatusTone::Plain};
 }
 
 // The keys that run `command`, as a menu shows them: the program's, else a
@@ -676,12 +695,27 @@ void Program::draw_group(Group& group, std::size_t index) {
 
 void Program::draw_status() {
     if (auto bar = ui::StatusBar()) {
+        const Tab* tab = front_tab();
+        // With Vim on, the mode of the view in front first, then the keys of
+        // a command half typed in it, in the mono face.
+        if (tab != nullptr && tab->view->vim) {
+            const vim::Engine& engine = *tab->view->vim;
+            const ModeShown mode = mode_shown(engine.mode());
+            ui::status_pill(nullptr, mode.name, mode.tone);
+            std::string keys = engine.pending();
+            for (const Chord& key : tab->view->pending) keys += vim::notation(key);
+            if (!keys.empty()) {
+                const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
+                ui::status_item(nullptr, keys);
+            }
+            ui::status_rule();
+        }
+
         // The problems in the files open, and the first of the worst in the
         // file in front, with the file and line it is at.
         std::size_t errors = 0;
         std::size_t warnings = 0;
         const Diagnostic* first = nullptr;
-        const Tab* tab = front_tab();
         for (const std::filesystem::path& path : services_.files()) {
             for (const Diagnostic& problem : services_.diagnostics(path)) {
                 errors += problem.severity == Severity::Error ? 1 : 0;

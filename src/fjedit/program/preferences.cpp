@@ -36,6 +36,7 @@ namespace theme = ftk::theme;
 //     Minimap=1
 //     LineNumbers=Relative
 //     AroundCaret=20
+//     VimKeys=1
 //     Clangd=clangd
 //     Fjls=fjls
 constexpr const char* SECTION = "fjedit";
@@ -82,6 +83,8 @@ void read_line(Preferences& preferences, std::string_view entry, std::string_vie
         preferences.minimap = number != 0;
     } else if (key == "AroundCaret") {
         preferences.around_caret = std::clamp(number, 0, AROUND_CARET_MAX);
+    } else if (key == "VimKeys") {
+        preferences.vim = number != 0;
     }
 }
 
@@ -137,6 +140,12 @@ void draw_code_editor(Preferences& preferences, const LanguageServerShown& clang
         });
         ui::hint("Lines kept in sight above and below the caret");
     }
+    ui::subheading("Keys");
+    if (auto table = ui::PropertyTable("##keys")) {
+        ui::row("Vim keys", [&] {
+            if (ui::checkbox("##vim", preferences.vim).changed) ui::settings_changed();
+        });
+    }
 }
 
 } // namespace
@@ -153,6 +162,7 @@ ui::SettingsSection preferences_section(Preferences& preferences) {
                       std::format("Minimap={}", preferences.minimap ? 1 : 0),
                       std::format("LineNumbers={}", line_numbers_name(preferences.line_numbers)),
                       std::format("AroundCaret={}", preferences.around_caret),
+                      std::format("VimKeys={}", preferences.vim ? 1 : 0),
                       std::format("Clangd={}", preferences.clangd),
                       std::format("Fjls={}", preferences.fjls)}}};
             }};

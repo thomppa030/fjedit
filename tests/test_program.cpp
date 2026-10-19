@@ -470,7 +470,9 @@ TEST_CASE("The minimap's checkbox in the preferences turns it off", "[program][p
     for (const auto& node : run.h.ui().semantics()) {
         if (node.role == Role::Toggle) toggles.push_back(node.rect);
     }
-    REQUIRE(toggles.size() == 1);
+    // The page's checkboxes, in the order drawn: Minimap's, in Text, before
+    // Vim keys', in Keys.
+    REQUIRE(toggles.size() == 2);
     run.h.click_at(toggles.front().centre());
     run.h.step();
     REQUIRE_FALSE(run.program->preferences().minimap);
@@ -489,6 +491,37 @@ TEST_CASE("Every view shows its code at the text size preferred", "[program][pre
     run.h.step();
     run.h.type("x");
     REQUIRE(run.document("a.txt").buffer().text() == "a\nbx\nc\nd\n");
+}
+
+TEST_CASE("Vim keys preferred give every view Vim's keys, and the status bar its mode", "[program][preferences][vim]") {
+    Running run({{"a.txt", "abc\n"}});
+    run.press_row("a.txt");
+    run.program->preferences().vim = true;
+    run.h.step(2);
+    // The insert mode's pill: the toggle colour drawn on the status bar.
+    const auto pill_on = [&] {
+        ftk::ui::Color toggle = ftk::theme::toggle_on();
+        toggle.a = 1.0f;
+        const uint32_t on = ftk::ui::core::pack_colour(toggle);
+        const float bar_top = run.h.size().y - ftk::theme::STATUS_BAR;
+        for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+            for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+                if (p.colour == on && p.min.y >= bar_top) return true;
+            }
+        }
+        return false;
+    };
+    CHECK_FALSE(pill_on());
+    // A, as Vim has it, appends at the line's end: without Vim it would be
+    // typed.
+    run.h.type("A");
+    run.h.step();
+    CHECK(pill_on());
+    run.h.type("Z");
+    run.h.press(Key::Escape);
+    run.h.step();
+    REQUIRE(run.document("a.txt").buffer().text() == "abcZ\n");
+    CHECK_FALSE(pill_on());
 }
 
 TEST_CASE("Every view keeps the rows preferred in sight around the caret", "[program][preferences]") {
@@ -518,7 +551,8 @@ TEST_CASE("Every view keeps the rows preferred in sight around the caret", "[pro
 }
 
 TEST_CASE("The preferences are kept in the settings file and read back held to their range", "[program][preferences]") {
-    Preferences kept{.text_size = 17, .minimap = false, .line_numbers = LineNumbers::Relative, .around_caret = 20};
+    Preferences kept{
+        .text_size = 17, .minimap = false, .line_numbers = LineNumbers::Relative, .around_caret = 20, .vim = true};
     const ftk::ui::SettingsSection section = preferences_section(kept);
     const std::vector<ftk::ui::SettingsEntry> written = section.write();
     REQUIRE(written.size() == 1);
@@ -530,6 +564,7 @@ TEST_CASE("The preferences are kept in the settings file and read back held to t
     REQUIRE_FALSE(read.minimap);
     REQUIRE(read.line_numbers == LineNumbers::Relative);
     REQUIRE(read.around_caret == 20);
+    REQUIRE(read.vim);
 
     reading.read(written.front().name, "TextSize=400");
     REQUIRE(read.text_size == TEXT_SIZE_MAX);
