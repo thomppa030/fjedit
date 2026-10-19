@@ -490,12 +490,7 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ac
             continue;
         }
         view.pending.push_back(key);
-        const vim::Mode mode = view.vim->mode();
-        const bool typing = mode == vim::Mode::Insert || mode == vim::Mode::Replace;
-        const std::string_view keymap_mode = typing             ? Keymap::VIM_INSERT
-                                             : vim::visual(mode) ? Keymap::VIM_VISUAL
-                                                                 : Keymap::VIM_NORMAL;
-        KeyMatch match = keymap.find(keymap_mode, view.pending);
+        KeyMatch match = keymap.find(vim::keymap_mode(view.vim->mode()), view.pending);
         if (view.completing.open) {
             const KeyMatch completing = keymap.find(Keymap::VIM_COMPLETING, view.pending);
             if (completing.command) match = completing;

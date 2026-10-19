@@ -113,20 +113,6 @@ ModeShown mode_shown(vim::Mode mode) {
     return {"Normal", ui::StatusTone::Plain};
 }
 
-// The keys that run `command`, as a menu shows them: the program's in
-// `program_mode`, else a view's.
-std::string shortcut(const Keymap& keys, std::string_view program_mode, std::string_view command) {
-    std::optional<std::vector<Chord>> chords = keys.keys_for(program_mode, command);
-    if (!chords) chords = keys.keys_for(Keymap::EDITING, command);
-    if (!chords) return {};
-    std::string out;
-    for (const Chord& chord : *chords) {
-        if (!out.empty()) out += ' ';
-        out += chord_text(chord);
-    }
-    return out;
-}
-
 // How many lines `kept` and the file at `path` differ in, between the lines
 // alike at their starts and ends; nothing when the file can't be read.
 std::optional<std::size_t> lines_changed(const std::filesystem::path& path, std::string_view kept) {
@@ -565,11 +551,25 @@ void Program::draw() {
     draw_prompts();
 }
 
+std::string Program::shortcut(std::string_view command) const {
+    std::optional<std::vector<Chord>> chords = keymap_.keys_for(preferences_.vim ? VIM_PROGRAM : PROGRAM, command);
+    if (!preferences_.vim) {
+        if (!chords) chords = keymap_.keys_for(Keymap::EDITING, command);
+    } else {
+        // A view's Vim starts in normal mode, so with none open, normal's.
+        const Tab* tab = front_tab();
+        const vim::Mode mode = tab != nullptr && tab->view->vim ? tab->view->vim->mode() : vim::Mode::Normal;
+        if (!chords) chords = keymap_.keys_for(vim::keymap_mode(mode), command);
+        if (!chords) chords = vim::keys_for(command, mode);
+    }
+    return chords ? chords_text(*chords) : std::string();
+}
+
 void Program::draw_menus() {
     const bool open_file = front_tab() != nullptr;
     const auto entry = [&](std::string label, std::string_view command, bool enabled = true) {
         return ui::MenuEntry{.label = std::move(label),
-                             .shortcut = shortcut(keymap_, preferences_.vim ? VIM_PROGRAM : PROGRAM, command),
+                             .shortcut = shortcut(command),
                              .enabled = enabled,
                              .chosen = [this, command] { (void)run(command); }};
     };

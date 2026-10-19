@@ -443,6 +443,36 @@ std::optional<std::size_t> count_of(const Command& command) {
 
 } // namespace
 
+std::string_view keymap_mode(Mode mode) {
+    if (typing(mode)) return Keymap::VIM_INSERT;
+    if (visual(mode)) return Keymap::VIM_VISUAL;
+    return Keymap::VIM_NORMAL;
+}
+
+std::optional<std::vector<Chord>> keys_for(std::string_view name, Mode mode) {
+    // The clipboard is Vim's + register.
+    struct CommandKeys {
+        std::string_view command;
+        std::string_view normal;
+        std::string_view visual;
+        std::string_view insert;
+    };
+    static constexpr CommandKeys COMMAND_KEYS[] = {
+        {"edit.undo", "u", "", "<C-o>u"},
+        {"edit.redo", "<C-r>", "", "<C-o><C-r>"},
+        {"edit.cut", "\"+dd", "\"+d", ""},
+        {"edit.copy", "\"+yy", "\"+y", ""},
+        {"edit.paste", "\"+P", "\"+p", "<C-r>+"},
+    };
+    for (const CommandKeys& keys : COMMAND_KEYS) {
+        if (keys.command != name) continue;
+        const std::string_view in_mode = typing(mode) ? keys.insert : visual(mode) ? keys.visual : keys.normal;
+        if (in_mode.empty()) return std::nullopt;
+        return parse_notation(in_mode);
+    }
+    return std::nullopt;
+}
+
 std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
     // A key of Ctrl-O's one command, which may go through visual mode.
     const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_));

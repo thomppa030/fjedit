@@ -524,6 +524,33 @@ TEST_CASE("Vim keys preferred give every view Vim's keys, and the status bar its
     CHECK_FALSE(pill_on());
 }
 
+TEST_CASE("The menus show the keys of the mode the view in front is in", "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}});
+    run.press_row("a.txt");
+    CHECK(run.program->shortcut("edit.undo") == "Ctrl Z");
+    CHECK(run.program->shortcut("file.close") == "Ctrl W");
+    run.program->preferences().vim = true;
+    run.h.step();
+    CHECK(run.program->shortcut("edit.undo") == "u");
+    CHECK(run.program->shortcut("edit.redo") == "Ctrl R");
+    CHECK(run.program->shortcut("edit.copy") == "\"+yy");
+    // The program's keys and the bindings Vim keeps, and none for what Vim
+    // has no keys for yet.
+    CHECK(run.program->shortcut("file.save") == "Ctrl S");
+    CHECK(run.program->shortcut("format.document") == "Ctrl Shift I");
+    CHECK(run.program->shortcut("file.close").empty());
+    CHECK(run.program->shortcut("find.open").empty());
+    run.h.type("v");
+    run.h.step();
+    CHECK(run.program->shortcut("edit.copy") == "\"+y");
+    CHECK(run.program->shortcut("edit.undo").empty());
+    run.h.press(Key::Escape);
+    run.h.type("i");
+    run.h.step();
+    CHECK(run.program->shortcut("edit.undo") == "Ctrl O u");
+    CHECK(run.program->shortcut("edit.paste") == "Ctrl R +");
+}
+
 TEST_CASE("With Vim on, Ctrl W is Vim's and closes no tab", "[program][vim]") {
     Running run({{"a.txt", "foo bar\n"}});
     run.program->preferences().vim = true;

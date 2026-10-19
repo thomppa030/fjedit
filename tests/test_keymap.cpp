@@ -99,6 +99,15 @@ TEST_CASE("A binding can be characters typed, which keys don't match", "[keymap]
     REQUIRE(chord_text(Chord::typed("$")) == "$");
 }
 
+TEST_CASE("Chords one after another are written apart, characters typed together", "[keymap]") {
+    CHECK(chords_text(std::vector<Chord>{ctrl(Key::K), ctrl(Key::C)}) == "Ctrl K Ctrl C");
+    CHECK(chords_text(std::vector<Chord>{Chord::typed("\""), Chord::typed("+"), Chord::typed("y"), Chord::typed("y")}) ==
+          "\"+yy");
+    CHECK(chords_text(std::vector<Chord>{ctrl(Key::O), Chord::typed("u")}) == "Ctrl O u");
+    CHECK(chords_text(std::vector<Chord>{ctrl(Key::R), Chord::typed("+")}) == "Ctrl R +");
+    CHECK(chords_text(std::vector<Chord>{}).empty());
+}
+
 TEST_CASE("Vim's Ctrl-N and Ctrl-P open the completion list in insert mode, then step through it", "[keymap]") {
     const Keymap keys = Keymap::standard();
     CHECK(keys.find(Keymap::VIM_INSERT, std::vector<Chord>{ctrl(Key::N)}).command == "completion.open");

@@ -44,6 +44,18 @@ std::string chord_text(const Chord& chord) {
     return text;
 }
 
+std::string chords_text(std::span<const Chord> chords) {
+    std::string text;
+    bool typed_before = false;
+    for (const Chord& chord : chords) {
+        const bool typed = !chord.text.empty();
+        if (!text.empty() && !(typed && typed_before)) text += ' ';
+        text += chord_text(chord);
+        typed_before = typed;
+    }
+    return text;
+}
+
 std::optional<Chord> parse_chord(std::string_view text) {
     Chord chord;
     std::optional<Key> key;

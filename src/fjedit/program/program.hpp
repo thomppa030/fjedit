@@ -70,6 +70,11 @@ public:
     /// there is none.
     bool run(std::string_view command);
 
+    /// The keys a menu shows for `command` ("Ctrl S"): the program's, else
+    /// those of the view's keys; with Vim on, those of the mode the view in
+    /// front is in ("u", "\"+yy"). Empty when no keys run it.
+    [[nodiscard]] std::string shortcut(std::string_view command) const;
+
     /// Asked to quit, by the window or the menu: true when nothing unsaved
     /// stands in the way. Otherwise it asks what to do with the unsaved
     /// files on its next draw and answers false; quitting() then says when

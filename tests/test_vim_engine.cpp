@@ -701,6 +701,27 @@ TEST_CASE("Settling puts a caret past a line's end back on its last character", 
     CHECK(v.shown() == "a|b");
 }
 
+TEST_CASE("Each mode looks up its own keymap mode first", "[vim][engine]") {
+    CHECK(vim::keymap_mode(vim::Mode::Normal) == Keymap::VIM_NORMAL);
+    CHECK(vim::keymap_mode(vim::Mode::Insert) == Keymap::VIM_INSERT);
+    CHECK(vim::keymap_mode(vim::Mode::Replace) == Keymap::VIM_INSERT);
+    CHECK(vim::keymap_mode(vim::Mode::Visual) == Keymap::VIM_VISUAL);
+    CHECK(vim::keymap_mode(vim::Mode::VisualBlock) == Keymap::VIM_VISUAL);
+}
+
+TEST_CASE("Vim's keys for a command are those of the mode it is in", "[vim][engine]") {
+    CHECK(vim::keys_for("edit.undo", vim::Mode::Normal) == vim::parse_notation("u"));
+    CHECK(vim::keys_for("edit.redo", vim::Mode::Normal) == vim::parse_notation("<C-r>"));
+    CHECK(vim::keys_for("edit.copy", vim::Mode::Normal) == vim::parse_notation("\"+yy"));
+    CHECK(vim::keys_for("edit.copy", vim::Mode::VisualLine) == vim::parse_notation("\"+y"));
+    CHECK(vim::keys_for("edit.undo", vim::Mode::Insert) == vim::parse_notation("<C-o>u"));
+    CHECK(vim::keys_for("edit.paste", vim::Mode::Replace) == vim::parse_notation("<C-r>+"));
+    // Visual mode's u makes letters lower; insert mode has no cut.
+    CHECK_FALSE(vim::keys_for("edit.undo", vim::Mode::Visual));
+    CHECK_FALSE(vim::keys_for("edit.cut", vim::Mode::Insert));
+    CHECK_FALSE(vim::keys_for("find.open", vim::Mode::Normal));
+}
+
 TEST_CASE("A dot makes the last change again, a count given it for its own", "[vim][repeat]") {
     Vim x("|abcdefgh");
     x.keys("x");

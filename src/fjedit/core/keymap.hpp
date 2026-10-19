@@ -41,6 +41,11 @@ struct Chord {
 /// K", "Alt Up", "Ctrl ]"); a character typed as itself.
 [[nodiscard]] std::string chord_text(const Chord& chord);
 
+/// Chords pressed one after another as menus show them: each as
+/// chord_text() writes it, apart by spaces, characters typed one after
+/// another run together ("Ctrl K Ctrl C", "\"+yy", "Ctrl O u").
+[[nodiscard]] std::string chords_text(std::span<const Chord> chords);
+
 /// The chord written as chord_text() writes it, or nothing when it names no
 /// key or a modifier twice. Modifiers may come in any order.
 [[nodiscard]] std::optional<Chord> parse_chord(std::string_view text);

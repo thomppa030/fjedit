@@ -52,6 +52,16 @@ enum class Mode : uint8_t {
     return mode == Mode::Visual || mode == Mode::VisualLine || mode == Mode::VisualBlock;
 }
 
+/// The keymap mode whose bindings Vim in `mode` looks up before its own
+/// keys: insert's in insert and replace mode, visual's in the visual modes,
+/// normal's otherwise.
+[[nodiscard]] std::string_view keymap_mode(Mode mode);
+
+/// The keys that do in `mode` what the command `name` does, as Vim has them
+/// (`u` for edit.undo in normal mode, `"+y` for edit.copy in visual mode);
+/// nothing when Vim has none for it there.
+[[nodiscard]] std::optional<std::vector<Chord>> keys_for(std::string_view name, Mode mode);
+
 /// How a view draws the carets in a mode (sheet 47, C1).
 enum class CaretShape : uint8_t {
     /// The whole of the character's cell, the character cut out of it:
