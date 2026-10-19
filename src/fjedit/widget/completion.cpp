@@ -134,23 +134,29 @@ std::vector<std::size_t> matching(const Completions& completions, std::string_vi
 
 } // namespace
 
-bool asks_completion(const Language& language, std::string_view line, std::size_t caret) {
-    if (caret == 0 || caret > line.size()) return false;
-    const char last = line[caret - 1];
-    if (word_byte(language, last)) {
+std::optional<CompletionTrigger> asks_completion(const Language& language, std::span<const std::string> triggers,
+                                                 std::string_view line, std::size_t caret) {
+    if (caret == 0 || caret > line.size()) return std::nullopt;
+    if (word_byte(language, line[caret - 1])) {
         // A word, not a number: in a language whose words take `-`, not a
         // negative one either.
         std::size_t first = word_start(language, line, caret);
         while (first < caret && line[first] == '-') ++first;
-        return first == caret || !digit(line[first]);
+        if (first < caret && digit(line[first])) return std::nullopt;
+        return CompletionTrigger{};
     }
-    if (last == '.') return caret < 2 || !digit(line[caret - 2]);
-    if (caret >= 2 && last == '>' && line[caret - 2] == '-') return true;
-    return caret >= 2 && last == ':' && line[caret - 2] == ':';
+    const std::string_view before = line.substr(0, caret);
+    for (const std::string& trigger : triggers) {
+        if (!before.ends_with(trigger)) continue;
+        // A number's point is no member access.
+        if (trigger == "." && caret >= 2 && digit(line[caret - 2])) return std::nullopt;
+        return CompletionTrigger{.kind = CompletionTrigger::Kind::Character, .character = trigger};
+    }
+    return std::nullopt;
 }
 
 void open_completion(CompletionState& state, LanguageService& service, const std::filesystem::path& path,
-                     const Document& document, Position caret) {
+                     const Document& document, Position caret, const CompletionTrigger& trigger) {
     const Buffer& buffer = document.buffer();
     caret = buffer.clamp(caret);
     const std::string_view line = buffer.line(caret.line);
@@ -158,7 +164,7 @@ void open_completion(CompletionState& state, LanguageService& service, const std
     std::string typed(line.substr(start.byte, caret.byte - start.byte));
     state = CompletionState{.open = true,
                             .start = start,
-                            .asked = service.complete(path, caret),
+                            .asked = service.complete(path, caret, trigger),
                             .asked_for = typed,
                             .typed = typed};
 }
@@ -183,7 +189,7 @@ void follow_completion(CompletionState& state, LanguageService& service, const s
     }
     const Completions& answer = state.asked->answer;
     if (typed != state.asked_for && answer.incomplete) {
-        state.asked = service.complete(path, caret);
+        state.asked = service.complete(path, caret, {.kind = CompletionTrigger::Kind::Incomplete, .character = {}});
         state.asked_for = typed;
         state.typed = typed;
         state.shown.clear();

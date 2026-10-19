@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1033,19 +1035,65 @@ TEST_CASE("A list said to be incomplete asks again as more is typed, and a space
     REQUIRE(listed(c.e).empty());
 }
 
-TEST_CASE("A word begun asks, as the language has its words", "[completion]") {
+TEST_CASE("A word begun asks, as the language has its words, and so does what the service names", "[completion]") {
     const Language& code = language_for("x.cpp");
     const Language& sheet = language_for("hud.fjss");
-    const auto asks = [](const Language& language, std::string_view line) {
-        return asks_completion(language, line, line.size());
+    const std::vector<std::string> clangd{".", "->"};
+    const auto asks = [](const Language& language, std::span<const std::string> triggers, std::string_view line) {
+        return asks_completion(language, triggers, line, line.size());
     };
-    CHECK(asks(code, "    ro"));
-    CHECK_FALSE(asks(code, "    12"));
-    CHECK_FALSE(asks(code, "    a-"));
+    const auto character = [](std::string typed) {
+        return CompletionTrigger{.kind = CompletionTrigger::Kind::Character, .character = std::move(typed)};
+    };
+    CHECK(asks(code, clangd, "    ro") == CompletionTrigger{});
+    CHECK(asks(code, clangd, "    12") == std::nullopt);
+    CHECK(asks(code, clangd, "    coin.") == character("."));
+    CHECK(asks(code, clangd, "    coin->") == character("->"));
+    // A number's point; a hyphen in C++; what no service names.
+    CHECK(asks(code, clangd, "    1.") == std::nullopt);
+    CHECK(asks(code, clangd, "    a-") == std::nullopt);
+    CHECK(asks(code, {}, "    coin.") == std::nullopt);
     // A sheet's words run through hyphens; a negative number is still one.
-    CHECK(asks(sheet, "    justify-c"));
-    CHECK(asks(sheet, "    color: var(--"));
-    CHECK_FALSE(asks(sheet, "    margin: -1"));
+    CHECK(asks(sheet, {}, "    justify-c") == CompletionTrigger{});
+    CHECK(asks(sheet, {}, "    color: var(--") == CompletionTrigger{});
+    CHECK(asks(sheet, {}, "    margin: -1") == std::nullopt);
+    CHECK(asks(sheet, std::vector<std::string>{"@"}, "@") == character("@"));
+}
+
+TEST_CASE("What the service names asks anew, even with a list open", "[code_view][completion]") {
+    Completing c;
+    c.language.triggers = {".", "->"};
+    c.e.h.type("ro");
+    c.e.h.step();
+    c.answer({entry("rotation", TYPED_R, "1")});
+    REQUIRE(listed(c.e) == std::vector<std::string>{"rotation"});
+
+    c.e.h.type(".");
+    c.e.h.step();
+    REQUIRE(c.language.completions.size() == 2);
+    REQUIRE(c.language.completions.back().at == Position{1, 7});
+    REQUIRE(c.language.completions_why.back() ==
+            CompletionTrigger{.kind = CompletionTrigger::Kind::Character, .character = "."});
+    const Span after_dot{{1, 7}, {1, 7}};
+    c.answer({entry("x", after_dot, "1"), entry("y", after_dot, "2")});
+    REQUIRE(listed(c.e) == std::vector<std::string>{"x", "y"});
+
+    // A word narrows the open list; a hyphen closes it; -> asks again.
+    c.e.h.type("x");
+    c.e.h.step(2);
+    REQUIRE(listed(c.e) == std::vector<std::string>{"x"});
+    c.e.h.type("-");
+    c.e.h.step();
+    REQUIRE(listed(c.e).empty());
+    c.e.h.type(">");
+    c.e.h.step();
+    REQUIRE(c.language.completions.size() == 3);
+    REQUIRE(c.language.completions_why.back().character == "->");
+
+    // A number's point asks nothing.
+    c.e.h.type(" 1.");
+    c.e.h.step();
+    REQUIRE(c.language.completions.size() == 3);
 }
 
 TEST_CASE("In a sheet a word runs through its hyphens, the list open across them", "[code_view][completion]") {

@@ -21,8 +21,8 @@ const Json TOKEN_TYPES = {"namespace", "type",     "class",    "enum",   "interf
                           "keyword",   "modifier", "comment",  "string", "number",    "operator", "concept"};
 
 // What fjedit tells a server it can do: positions in UTF-8 when the server
-// counts that way too, no snippets in completions, documentation in
-// Markdown, and the rest of what the editor asks.
+// counts that way too, no snippets in completions, why a completion was
+// asked, documentation in Markdown, and the rest of what the editor asks.
 Json capabilities() {
     return {
         {"general", {{"positionEncodings", {"utf-8", "utf-16"}}}},
@@ -36,7 +36,8 @@ Json capabilities() {
               {{"completionItem",
                 {{"snippetSupport", false},
                  {"documentationFormat", {"markdown", "plaintext"}},
-                 {"labelDetailsSupport", true}}}}},
+                 {"labelDetailsSupport", true}}},
+               {"contextSupport", true}}},
              {"hover", {{"contentFormat", {"markdown", "plaintext"}}}},
              {"definition", {{"linkSupport", true}}},
              {"rename", Json::object()},
@@ -131,6 +132,14 @@ void Client::initialized(const jsonrpc::Answer& answer) {
     }
     if (const auto provider = capabilities.find("semanticTokensProvider"); provider != capabilities.end() && provider->is_object()) {
         colour_kinds_ = token_kinds(provider->value("legend", Json::object()).value("tokenTypes", Json::array()));
+    }
+    if (const auto provider = capabilities.find("completionProvider"); provider != capabilities.end() && provider->is_object()) {
+        const auto triggers = provider->find("triggerCharacters");
+        if (triggers != provider->end() && triggers->is_array()) {
+            for (const Json& trigger : *triggers) {
+                if (trigger.is_string() && !trigger.get<std::string>().empty()) triggers_.push_back(trigger.get<std::string>());
+            }
+        }
     }
     connection_->peer().notify("initialized", Json::object());
     status_ = {.state = ServiceState::Ready, .note = {}};
@@ -400,7 +409,11 @@ void Client::fail_waiting(const std::string& why) {
     for (const Waiting& waiting : std::exchange(waiting_, {})) waiting.fail(why);
 }
 
-Asked<Completions> Client::complete(const fs::path& path, Position at) {
+std::vector<std::string> Client::completion_triggers(const fs::path& path) const {
+    return serves(path) ? triggers_ : std::vector<std::string>{};
+}
+
+Asked<Completions> Client::complete(const fs::path& path, Position at, const CompletionTrigger& trigger) {
     const auto found = open_.find(path);
     if (found == open_.end()) return std::make_shared<const Pending<Completions>>(Pending<Completions>{.answered = true});
     Open& file = found->second;
@@ -411,7 +424,11 @@ Asked<Completions> Client::complete(const fs::path& path, Position at) {
     // Languages live as long as the program.
     const Language* language = &file.document->language();
     return ask<Completions>("textDocument/completion",
-                            [this, path, uri = file.uri, caret] { return document_at(path, uri, caret); },
+                            [this, path, uri = file.uri, caret, trigger] {
+                                Json params = document_at(path, uri, caret);
+                                params["context"] = completion_context(trigger);
+                                return params;
+                            },
                             [this, path, at = caret, version, line, language](const jsonrpc::Answer& answer) {
                                 Completions out{.items = {}, .incomplete = false, .at = at, .version = version};
                                 if (answer) {

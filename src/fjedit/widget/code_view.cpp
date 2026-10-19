@@ -434,7 +434,7 @@ void run_view_command(std::string_view name, const Document& document, EditorVie
     FindState& find = view.find;
     if (name == "completion.open") {
         if (view.service != nullptr) {
-            open_completion(view.completing, *view.service, view.path, document, view.selections.primary().caret);
+            open_completion(view.completing, *view.service, view.path, document, view.selections.primary().caret, {});
         }
     } else if (name == "completion.close") {
         view.completing = {};
@@ -1161,11 +1161,16 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         const bool shortcut = (held.ctrl || held.super) && !held.alt;
         if (!ui.typed().empty() && !shortcut) {
             run("edit.type", ui.typed());
-            // A word begun, or . -> or :: typed, asks what completes it.
+            // A word begun, or what the service names typed, asks what
+            // completes it. A word goes on narrowing a list already open;
+            // what the service names asks anew.
             const Position caret = view.selections.primary().caret;
-            if (view.service != nullptr && !view.completing.open && view.selections.all().size() == 1 &&
-                asks_completion(document.language(), buffer.line(caret.line), caret.byte)) {
-                open_completion(view.completing, *view.service, view.path, document, caret);
+            if (view.service != nullptr && view.selections.all().size() == 1) {
+                const auto asked = asks_completion(document.language(), view.service->completion_triggers(view.path),
+                                                   buffer.line(caret.line), caret.byte);
+                if (asked && (asked->kind == CompletionTrigger::Kind::Character || !view.completing.open)) {
+                    open_completion(view.completing, *view.service, view.path, document, caret, *asked);
+                }
             }
         }
         take_keys(ui, keymap, view, run);

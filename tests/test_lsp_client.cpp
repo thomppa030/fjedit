@@ -127,7 +127,7 @@ TEST_CASE("clangd completes a member, and says what code is and where it is defi
     REQUIRE(definition.front().path == path);
     REQUIRE(definition.front().span == Span{{1, 8}, {1, 18}});
 
-    const Completions completions = project.answer(project.clangd->complete(path, Position{4, 44}));
+    const Completions completions = project.answer(project.clangd->complete(path, Position{4, 44}, {}));
     std::vector<std::string> labels;
     for (const Completion& completion : completions.items) labels.push_back(completion.label);
     REQUIRE(std::ranges::contains(labels, "spin_speed"));
@@ -197,6 +197,45 @@ TEST_CASE("A client whose server isn't there is stopped, and answers at once wit
     REQUIRE_FALSE(hover->answer.has_value());
     REQUIRE(client.serves("x/coin.CPP"));
     REQUIRE_FALSE(client.serves("x/coin.fjsl"));
+}
+
+TEST_CASE("A server's trigger characters are kept from initialize, and a completion tells it why", "[lsp]") {
+    const TempFolder folder;
+    lsp::Client fake({.command = {FJEDIT_FAKE_SERVER},
+                      .root = folder.path,
+                      .extensions = {"fjss"},
+                      .language_id = [](const fs::path&) { return std::string("fjss"); },
+                      .arrived = {}});
+    // Brings the client up to date until `done`, for at most 10 seconds.
+    const auto until = [&](const std::function<bool()>& done) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            fake.update();
+            if (done()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    // None until the server has said.
+    REQUIRE(fake.completion_triggers("hud.fjss").empty());
+    REQUIRE(until([&] { return fake.status().state == ServiceState::Ready; }));
+    REQUIRE(fake.completion_triggers("hud.fjss") == std::vector<std::string>{".", "@"});
+    REQUIRE(fake.completion_triggers("coin.cpp").empty());
+
+    const fs::path path = folder.write("hud.fjss", "@\n");
+    const Document sheet("@\n", language_for("hud.fjss"));
+    fake.open(path, sheet);
+    // The fake labels its one entry with the context it was sent.
+    const auto told = [&](const CompletionTrigger& trigger) {
+        const Asked<Completions> asked = fake.complete(path, Position{0, 1}, trigger);
+        REQUIRE(until([&] { return asked->answered; }));
+        REQUIRE(asked->answer.items.size() == 1);
+        return asked->answer.items.front().label;
+    };
+    CHECK(told({.kind = CompletionTrigger::Kind::Character, .character = "@"}) ==
+          R"({"triggerCharacter":"@","triggerKind":2})");
+    CHECK(told({}) == R"({"triggerKind":1})");
+    CHECK(told({.kind = CompletionTrigger::Kind::Incomplete, .character = {}}) == R"({"triggerKind":3})");
 }
 
 TEST_CASE("A server named by a path that isn't there says so, and what to do about it", "[lsp]") {

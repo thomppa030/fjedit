@@ -1,6 +1,12 @@
-// A language server for the connection's tests (test_lsp.cpp): it speaks
-// the protocol's framing and answers what the tests send it.
+// A language server for the connection's and the client's tests
+// (test_lsp.cpp, test_lsp_client.cpp): it speaks the protocol's framing and
+// answers what the tests send it.
 //
+//     initialize      answers that it counts in UTF-8 and that "." and "@"
+//                     ask it for completion
+//     textDocument/completion
+//                     answers one entry, labelled with the context it was
+//                     sent ({"triggerKind":1}), or "none"
 //     echo            answers with its params
 //     fail            answers with an error, code 7
 //     tell            notifies "told" with its params, then answers null
@@ -50,6 +56,13 @@ int main() {
                 send({{"jsonrpc", "2.0"},
                       {"method", "heard"},
                       {"params", message.contains("error") ? message["error"] : message["result"]}});
+            } else if (method == "initialize") {
+                answer(message["id"], {{"capabilities",
+                                         {{"positionEncoding", "utf-8"},
+                                          {"completionProvider", {{"triggerCharacters", {".", "@"}}}}}}});
+            } else if (method == "textDocument/completion") {
+                const std::string context = params.contains("context") ? params["context"].dump() : "none";
+                answer(message["id"], {{"isIncomplete", false}, {"items", {{{"label", context}}}}});
             } else if (method == "echo") {
                 answer(message["id"], params);
             } else if (method == "fail") {

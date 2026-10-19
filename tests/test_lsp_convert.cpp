@@ -150,6 +150,14 @@ TEST_CASE("Semantic tokens are read from their numbers by the server's legend", 
     REQUIRE(tokens.lines[2][0].kind == TokenKind::Text);
 }
 
+TEST_CASE("Why a completion was asked goes to the server as its context", "[lsp][convert]") {
+    REQUIRE(completion_context({}) == parsed(R"({"triggerKind":1})"));
+    REQUIRE(completion_context({.kind = CompletionTrigger::Kind::Character, .character = "@"}) ==
+            parsed(R"({"triggerKind":2,"triggerCharacter":"@"})"));
+    REQUIRE(completion_context({.kind = CompletionTrigger::Kind::Incomplete, .character = {}}) ==
+            parsed(R"({"triggerKind":3})"));
+}
+
 TEST_CASE("An entry with no edit of its own replaces the word as the file's language has it", "[lsp][convert]") {
     const Json answer = parsed(R"json([{"label":"justify-content"}])json");
     // A sheet's word runs through its hyphens; C++'s stops at one.

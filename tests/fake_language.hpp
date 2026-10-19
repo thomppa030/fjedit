@@ -32,8 +32,12 @@ struct FakeLanguage final : fjedit::LanguageService {
     std::vector<fjedit::Diagnostic> problems;
     std::optional<fjedit::SemanticTokens> colours;
     fjedit::ServiceStatus state{.state = fjedit::ServiceState::Ready, .note = {}};
+    /// What, typed, asks it for completion.
+    std::vector<std::string> triggers;
 
     std::vector<Question<fjedit::Completions>> completions;
+    /// Why each completion was asked, in order.
+    std::vector<fjedit::CompletionTrigger> completions_why;
     std::vector<Question<std::optional<fjedit::Hover>>> hovers;
     std::vector<Question<std::vector<fjedit::Location>>> definitions;
     std::vector<Question<ftk::Result<fjedit::WorkspaceEdit>>> renames;
@@ -63,8 +67,12 @@ struct FakeLanguage final : fjedit::LanguageService {
         return colours ? &*colours : nullptr;
     }
 
-    [[nodiscard]] fjedit::Asked<fjedit::Completions> complete(const std::filesystem::path& path,
-                                                              fjedit::Position at) override {
+    [[nodiscard]] std::vector<std::string> completion_triggers(const std::filesystem::path&) const override {
+        return triggers;
+    }
+    [[nodiscard]] fjedit::Asked<fjedit::Completions> complete(const std::filesystem::path& path, fjedit::Position at,
+                                                              const fjedit::CompletionTrigger& trigger) override {
+        completions_why.push_back(trigger);
         return ask(completions, path, at);
     }
     [[nodiscard]] fjedit::Asked<std::optional<fjedit::Hover>> hover(const std::filesystem::path& path,

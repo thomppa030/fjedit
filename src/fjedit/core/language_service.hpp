@@ -11,7 +11,7 @@
 // comes back as a Pending filled in when the answer comes; one that no one
 // holds any more is given up.
 //
-//     auto asked = service.complete(path, caret);
+//     auto asked = service.complete(path, caret, {});
 //     // frames later:
 //     if (asked->answered) show(asked->answer);
 
@@ -114,6 +114,23 @@ struct Completions {
     uint64_t version{0};
 };
 
+/// What asked for a completion, as the protocol tells a server why.
+struct CompletionTrigger {
+    enum class Kind : uint8_t {
+        /// A word begun, or asked for by hand (Ctrl Space).
+        Invoked,
+        /// `character` typed, one the service named
+        /// (LanguageService::completion_triggers()).
+        Character,
+        /// More typed of a word whose answer said more would come.
+        Incomplete,
+    };
+    Kind kind{Kind::Invoked};
+    std::string character{};
+
+    bool operator==(const CompletionTrigger&) const = default;
+};
+
 /// What the code at a place is, in Markdown, and the span it is about.
 struct Hover {
     std::string markdown{};
@@ -205,8 +222,14 @@ public:
     /// is now; nothing when it knows none, or none that still fit.
     [[nodiscard]] virtual const SemanticTokens* tokens(const std::filesystem::path& path) = 0;
 
-    /// What completes the word typed at `at`.
-    [[nodiscard]] virtual Asked<Completions> complete(const std::filesystem::path& path, Position at) = 0;
+    /// What, typed in the file at `path`, asks it for completion besides a
+    /// word begun: "." and "->" for C++. None while it starts, or from a
+    /// service that names none.
+    [[nodiscard]] virtual std::vector<std::string> completion_triggers(const std::filesystem::path& path) const = 0;
+
+    /// What completes the word typed at `at`, asked for by `trigger`.
+    [[nodiscard]] virtual Asked<Completions> complete(const std::filesystem::path& path, Position at,
+                                                      const CompletionTrigger& trigger) = 0;
 
     /// What the code at `at` is; nothing when there is nothing to say.
     [[nodiscard]] virtual Asked<std::optional<Hover>> hover(const std::filesystem::path& path, Position at) = 0;

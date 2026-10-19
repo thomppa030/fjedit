@@ -65,7 +65,10 @@ public:
     [[nodiscard]] ServiceStatus status() const override { return status_; }
     [[nodiscard]] const std::vector<Diagnostic>& diagnostics(const std::filesystem::path& path) override;
     [[nodiscard]] const SemanticTokens* tokens(const std::filesystem::path& path) override;
-    [[nodiscard]] Asked<Completions> complete(const std::filesystem::path& path, Position at) override;
+    /// The server's trigger characters, as it named them at initialize.
+    [[nodiscard]] std::vector<std::string> completion_triggers(const std::filesystem::path& path) const override;
+    [[nodiscard]] Asked<Completions> complete(const std::filesystem::path& path, Position at,
+                                              const CompletionTrigger& trigger) override;
     [[nodiscard]] Asked<std::optional<Hover>> hover(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<std::vector<Location>> definition(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<ftk::Result<WorkspaceEdit>> rename(const std::filesystem::path& path, Position at,
@@ -135,11 +138,13 @@ private:
     std::unique_ptr<Connection> connection_;
     ServiceStatus status_;
     // How the server counts along a line, how it takes changes (whole, or
-    // by the edit), whether it wants saves, and its colours' legend.
+    // by the edit), whether it wants saves, its colours' legend, and what
+    // typed asks it for completion.
     ftk::jsonrpc::Encoding encoding_{ftk::jsonrpc::Encoding::Utf16};
     bool incremental_{false};
     bool wants_saves_{false};
     std::vector<TokenKind> colour_kinds_;
+    std::vector<std::string> triggers_;
     std::map<std::filesystem::path, Open> open_;
     std::vector<Watched> watched_;
     std::vector<Waiting> waiting_;

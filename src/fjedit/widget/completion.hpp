@@ -3,9 +3,10 @@
 // Completion (sheet 39, P1): what the language service says completes the
 // word being typed, in a list under it, narrowed as more is typed, the
 // selected entry's signature and documentation beside it. It opens at Ctrl
-// Space, on typing a word as the file's language has its words, and after .
-// -> and ::; Up and Down move through it, Enter and Tab take the entry,
-// Escape closes it, and a click takes the entry clicked.
+// Space, on typing a word as the file's language has its words, and on
+// typing what the service names (. and -> for C++); Up and Down move through
+// it, Enter and Tab take the entry, Escape closes it, and a click takes the
+// entry clicked.
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/commands.hpp"
@@ -18,6 +19,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -42,14 +44,17 @@ struct CompletionState {
 };
 
 /// Whether `line` of a file in `language`, with the caret at `caret` just
-/// after what was typed, asks for completion: a word begun (not a number),
-/// or . -> or :: just typed.
-[[nodiscard]] bool asks_completion(const Language& language, std::string_view line, std::size_t caret);
+/// after what was typed, asks for completion, and why: a word begun (not a
+/// number), or one of `triggers` just typed (not a number's point).
+/// @return nothing when it doesn't ask
+[[nodiscard]] std::optional<CompletionTrigger> asks_completion(const Language& language,
+                                                               std::span<const std::string> triggers,
+                                                               std::string_view line, std::size_t caret);
 
 /// Opens completion for the word the caret is in or after, asking
-/// `service` about the file at `path`.
+/// `service` about the file at `path` for `trigger`.
 void open_completion(CompletionState& state, LanguageService& service, const std::filesystem::path& path,
-                     const Document& document, Position caret);
+                     const Document& document, Position caret, const CompletionTrigger& trigger);
 
 /// Follows the caret: what is typed of the word, and the entries that match
 /// it. Closes once the caret leaves the word or nothing matches; asks again

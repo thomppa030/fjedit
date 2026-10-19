@@ -58,6 +58,10 @@ using PositionsFor = std::function<Positions(const std::filesystem::path& path)>
 /// A publishDiagnostics notification's diagnostics.
 [[nodiscard]] std::vector<Diagnostic> diagnostics_from(const Json& diagnostics, const Positions& positions);
 
+/// Why a completion is asked, as the protocol's context tells the server:
+/// the character typed, when one was.
+[[nodiscard]] Json completion_context(const CompletionTrigger& trigger);
+
 /// A completion's answer (a list, or an object holding one) for the caret
 /// at `at` on `line`, written in `language`. An entry with no edit of its
 /// own replaces the word before the caret, as the language has its words.

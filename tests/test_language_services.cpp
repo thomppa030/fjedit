@@ -117,7 +117,7 @@ TEST_CASE("A completion is one list once every service has answered", "[services
     Two two;
     const Document header = document("a.hpp");
     two.services.open("a.hpp", header);
-    const auto asked = two.services.complete("a.hpp", {0, 1});
+    const auto asked = two.services.complete("a.hpp", {0, 1}, {});
     REQUIRE(two.first->completions.size() == 1);
     REQUIRE(two.second->completions.size() == 1);
 
@@ -138,8 +138,51 @@ TEST_CASE("A completion is one list once every service has answered", "[services
     // A file one service answers for has its answers as they are.
     const Document code = document("x.cpp");
     two.services.open("x.cpp", code);
-    const auto alone = two.services.complete("x.cpp", {0, 1});
+    const auto alone = two.services.complete("x.cpp", {0, 1}, {});
     CHECK(alone.get() == two.first->completions.back().pending.get());
+}
+
+TEST_CASE("A character typed is asked only of the services that name it", "[services]") {
+    Two two;
+    const Document header = document("a.hpp");
+    two.services.open("a.hpp", header);
+    two.first->triggers = {".", ":"};
+    two.second->triggers = {":", "("};
+    // What any of the file's services names, each once.
+    CHECK(two.services.completion_triggers("a.hpp") == std::vector<std::string>{".", ":", "("});
+    const auto character = [](std::string typed) {
+        return CompletionTrigger{.kind = CompletionTrigger::Kind::Character, .character = std::move(typed)};
+    };
+
+    // Named by fjls alone: its answer, as it is.
+    const auto paren = two.services.complete("a.hpp", {0, 4}, character("("));
+    REQUIRE(two.first->completions.empty());
+    REQUIRE(two.second->completions.size() == 1);
+    CHECK(paren.get() == two.second->completions.back().pending.get());
+    CHECK(two.second->completions_why.back() == character("("));
+
+    // Named by both: both asked, told why.
+    (void)two.services.complete("a.hpp", {0, 4}, character(":"));
+    CHECK(two.first->completions.size() == 1);
+    CHECK(two.second->completions.size() == 2);
+    CHECK(two.first->completions_why.back() == character(":"));
+
+    // Named by neither: nothing asked, nothing to show.
+    const auto at = two.services.complete("a.hpp", {0, 4}, character("@"));
+    CHECK(two.first->completions.size() == 1);
+    CHECK(two.second->completions.size() == 2);
+    REQUIRE(at->answered);
+    CHECK(at->answer.items.empty());
+
+    // A word begun asks every service.
+    (void)two.services.complete("a.hpp", {0, 4}, {});
+    CHECK(two.first->completions.size() == 2);
+    CHECK(two.second->completions.size() == 3);
+
+    // A file one service answers for has that service's alone.
+    const Document code = document("x.cpp");
+    two.services.open("x.cpp", code);
+    CHECK(two.services.completion_triggers("x.cpp") == std::vector<std::string>{".", ":"});
 }
 
 TEST_CASE("A hover is one card, a rule between its services' answers", "[services]") {

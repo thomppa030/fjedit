@@ -124,6 +124,19 @@ std::vector<Diagnostic> diagnostics_from(const Json& diagnostics, const Position
     return out;
 }
 
+Json completion_context(const CompletionTrigger& trigger) {
+    // The protocol's CompletionTriggerKind, counted from 1.
+    switch (trigger.kind) {
+        case CompletionTrigger::Kind::Character:
+            return {{"triggerKind", 2}, {"triggerCharacter", trigger.character}};
+        case CompletionTrigger::Kind::Incomplete:
+            return {{"triggerKind", 3}};
+        case CompletionTrigger::Kind::Invoked:
+            break;
+    }
+    return {{"triggerKind", 1}};
+}
+
 std::vector<Completion> completions_from(const Json& result, Position at, std::string_view line,
                                          const Language& language, const Positions& positions, bool* incomplete) {
     std::vector<Completion> out;

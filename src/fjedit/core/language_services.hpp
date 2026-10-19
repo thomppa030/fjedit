@@ -3,8 +3,9 @@
 // Every language service a program runs, answering as one: a file is asked
 // of each service that answers for its kind, in the order they were given,
 // and their answers come back as one. Problems are all of theirs together; a
-// completion is one list, each entry keeping its own service's change; a
-// hover is one card, each answer under the one before with a rule between.
+// completion is one list, each entry keeping its own service's change, and a
+// character typed is asked only of the services that name it; a hover is one
+// card, each answer under the one before with a rule between.
 // A definition, a rename and a format come from the first service that has
 // one, colours from the first that knows any. A file one service answers for
 // is that service's alone, its answers passed on as they are.
@@ -72,7 +73,10 @@ public:
     [[nodiscard]] ServiceStatus status() const override;
     [[nodiscard]] const std::vector<Diagnostic>& diagnostics(const std::filesystem::path& path) override;
     [[nodiscard]] const SemanticTokens* tokens(const std::filesystem::path& path) override;
-    [[nodiscard]] Asked<Completions> complete(const std::filesystem::path& path, Position at) override;
+    /// What any of the file's services names, each once, in order.
+    [[nodiscard]] std::vector<std::string> completion_triggers(const std::filesystem::path& path) const override;
+    [[nodiscard]] Asked<Completions> complete(const std::filesystem::path& path, Position at,
+                                              const CompletionTrigger& trigger) override;
     [[nodiscard]] Asked<std::optional<Hover>> hover(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<std::vector<Location>> definition(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<ftk::Result<WorkspaceEdit>> rename(const std::filesystem::path& path, Position at,
@@ -110,12 +114,12 @@ private:
     // The running services told of the file at `path`, in order.
     [[nodiscard]] std::vector<Running*> told_of(const std::filesystem::path& path);
 
-    // Asks every service told of `path` with `ask`; puts their answers
-    // together with `fold`, in order, once all have answered. `none` is the
-    // answer when no service is told of the file, or none of those asked
-    // could answer.
+    // Asks each of `services` with `ask`; puts their answers together with
+    // `fold`, in order, once all have answered. A lone service's answer is
+    // its own. `none` is the answer when there is no service to ask, or none
+    // of those asked could answer.
     template <typename T>
-    Asked<T> ask_all(const std::filesystem::path& path, const std::function<Asked<T>(LanguageService&)>& ask,
+    Asked<T> ask_all(std::vector<Running*> services, const std::function<Asked<T>(LanguageService&)>& ask,
                      std::function<T(std::vector<T> answers)> fold, T none);
 
     std::vector<Running> services_;

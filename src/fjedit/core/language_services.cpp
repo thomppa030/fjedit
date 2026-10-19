@@ -122,12 +122,22 @@ const SemanticTokens* LanguageServices::tokens(const fs::path& path) {
     return nullptr;
 }
 
+std::vector<std::string> LanguageServices::completion_triggers(const fs::path& path) const {
+    std::vector<std::string> all;
+    for (const Running& running : services_) {
+        if (!running.service || !running.told.contains(path)) continue;
+        for (std::string& trigger : running.service->completion_triggers(path)) {
+            if (!std::ranges::contains(all, trigger)) all.push_back(std::move(trigger));
+        }
+    }
+    return all;
+}
+
 template <typename T>
-Asked<T> LanguageServices::ask_all(const fs::path& path, const std::function<Asked<T>(LanguageService&)>& ask,
+Asked<T> LanguageServices::ask_all(std::vector<Running*> services, const std::function<Asked<T>(LanguageService&)>& ask,
                                    std::function<T(std::vector<T> answers)> fold, T none) {
-    const std::vector<Running*> told = told_of(path);
-    if (told.empty()) return answered(std::move(none));
-    if (told.size() == 1) return ask(*told.front()->service);
+    if (services.empty()) return answered(std::move(none));
+    if (services.size() == 1) return ask(*services.front()->service);
 
     struct Part {
         Running* running;
@@ -135,7 +145,7 @@ Asked<T> LanguageServices::ask_all(const fs::path& path, const std::function<Ask
         Asked<T> asked;
     };
     std::vector<Part> parts;
-    for (Running* running : told) parts.push_back({running, running->generation, ask(*running->service)});
+    for (Running* running : services) parts.push_back({running, running->generation, ask(*running->service)});
     auto merged = std::make_shared<Pending<T>>();
     std::weak_ptr<Pending<T>> asker = merged;
     merging_.push_back([parts = std::move(parts), asker, fold = std::move(fold), none = std::move(none)] {
@@ -156,7 +166,7 @@ Asked<T> LanguageServices::ask_all(const fs::path& path, const std::function<Ask
     return merged;
 }
 
-Asked<Completions> LanguageServices::complete(const fs::path& path, Position at) {
+Asked<Completions> LanguageServices::complete(const fs::path& path, Position at, const CompletionTrigger& trigger) {
     const auto fold = [at](std::vector<Completions> answers) {
         Completions all{.items = {}, .incomplete = false, .at = at, .version = 0};
         for (Completions& answer : answers) {
@@ -168,8 +178,16 @@ Asked<Completions> LanguageServices::complete(const fs::path& path, Position at)
         }
         return all;
     };
+    std::vector<Running*> asked = told_of(path);
+    // A character asks only the services that name it: another would take
+    // it for a word begun, and answer with everything.
+    if (trigger.kind == CompletionTrigger::Kind::Character) {
+        std::erase_if(asked, [&](const Running* running) {
+            return !std::ranges::contains(running->service->completion_triggers(path), trigger.character);
+        });
+    }
     return ask_all<Completions>(
-        path, [&](LanguageService& service) { return service.complete(path, at); }, fold,
+        std::move(asked), [&](LanguageService& service) { return service.complete(path, at, trigger); }, fold,
         Completions{.items = {}, .incomplete = false, .at = at, .version = 0});
 }
 
@@ -187,7 +205,7 @@ Asked<std::optional<Hover>> LanguageServices::hover(const fs::path& path, Positi
         return card;
     };
     return ask_all<std::optional<Hover>>(
-        path, [&](LanguageService& service) { return service.hover(path, at); }, fold, std::nullopt);
+        told_of(path), [&](LanguageService& service) { return service.hover(path, at); }, fold, std::nullopt);
 }
 
 Asked<std::vector<Location>> LanguageServices::definition(const fs::path& path, Position at) {
@@ -196,7 +214,7 @@ Asked<std::vector<Location>> LanguageServices::definition(const fs::path& path, 
         return found != answers.end() ? std::move(*found) : std::vector<Location>{};
     };
     return ask_all<std::vector<Location>>(
-        path, [&](LanguageService& service) { return service.definition(path, at); }, fold, {});
+        told_of(path), [&](LanguageService& service) { return service.definition(path, at); }, fold, {});
 }
 
 Asked<ftk::Result<WorkspaceEdit>> LanguageServices::rename(const fs::path& path, Position at, std::string_view name) {
@@ -206,7 +224,7 @@ Asked<ftk::Result<WorkspaceEdit>> LanguageServices::rename(const fs::path& path,
         return found != answers.end() ? std::move(*found) : std::move(answers.front());
     };
     return ask_all<ftk::Result<WorkspaceEdit>>(
-        path, [&](LanguageService& service) { return service.rename(path, at, name); }, fold,
+        told_of(path), [&](LanguageService& service) { return service.rename(path, at, name); }, fold,
         ftk::make_error("No language service can rename here"));
 }
 
@@ -216,7 +234,7 @@ Asked<std::optional<VersionedEdit>> LanguageServices::format(const fs::path& pat
         return found != answers.end() ? std::move(*found) : std::optional<VersionedEdit>{};
     };
     return ask_all<std::optional<VersionedEdit>>(
-        path, [&](LanguageService& service) { return service.format(path); }, fold, std::nullopt);
+        told_of(path), [&](LanguageService& service) { return service.format(path); }, fold, std::nullopt);
 }
 
 std::set<fs::path> LanguageServices::files() const {
