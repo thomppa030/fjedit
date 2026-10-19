@@ -600,10 +600,12 @@ TEST_CASE("Esc leaves visual mode with the caret where the selection's was", "[v
     CHECK(v.shown() == "ab|c");
 }
 
-TEST_CASE("Visual mode's operators: shift by a count, case, r, J", "[vim][visual]") {
+TEST_CASE("Visual mode's operators: shift by a count and back, case, r, J", "[vim][visual]") {
     Vim shift("|a\nb");
     shift.keys("Vj2>");
     CHECK(shift.shown() == "        |a\n        b");
+    shift.keys("Vj<");
+    CHECK(shift.shown() == "    |a\n    b");
     Vim upper("|abc");
     upper.keys("vlU");
     CHECK(upper.shown() == "|ABc");

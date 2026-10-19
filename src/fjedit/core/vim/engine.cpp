@@ -960,7 +960,7 @@ bool Engine::act_on_visual(std::string_view name, std::string_view argument, std
         {"s", Operator::Change, false, false},      {"S", Operator::Change, true, false},
         {"R", Operator::Change, true, false},       {"C", Operator::Change, true, true},
         {"y", Operator::Yank, false, false},        {"Y", Operator::Yank, true, true},
-        {">", Operator::ShiftRight, true, false},   {"<", Operator::ShiftLeft, true, false},
+        {">", Operator::ShiftRight, true, false},   {"<lt>", Operator::ShiftLeft, true, false},
         {"=", Operator::Indent, true, false},       {"~", Operator::ToggleCase, false, false},
         {"g~", Operator::ToggleCase, false, false}, {"u", Operator::Lower, false, false},
         {"gu", Operator::Lower, false, false},      {"U", Operator::Upper, false, false},
