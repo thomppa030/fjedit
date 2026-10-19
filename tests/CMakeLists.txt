@@ -36,6 +36,7 @@ add_executable(fjedit-tests
     test_selections.cpp
     test_structure.cpp
     test_syntax.cpp
+    test_vim_engine.cpp
     test_vim_motions.cpp
     test_workspace.cpp)
 ftk_target_defaults(fjedit-tests)
