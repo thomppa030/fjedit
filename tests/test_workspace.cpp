@@ -142,7 +142,9 @@ TEST_CASE("A change another program makes is named once, and reloaded as one ste
     REQUIRE_FALSE(workspace.unsaved(file));
     // Only the line that changed was replaced: a caret on another stays.
     Selections caret(Selection::at({3, 2}));
-    for (const Edit& edit : *document.edits_since(seen)) caret.map(edit);
+    const auto edits = document.edits_since(seen);
+    REQUIRE(edits.has_value());
+    for (const Edit& edit : *edits) caret.map(edit);
     REQUIRE(caret.primary().caret == Position{3, 2});
 
     // It can be undone, back to what was here, which the file doesn't hold.

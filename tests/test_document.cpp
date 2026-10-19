@@ -65,7 +65,9 @@ TEST_CASE("A second view's selections follow edits made through the first", "[do
     const uint64_t seen = document.version();
 
     (void)document.apply(insert({0, 0}, "zero\n"));
-    for (const Edit& edit : *document.edits_since(seen)) other.map(edit);
+    const auto edits = document.edits_since(seen);
+    REQUIRE(edits.has_value());
+    for (const Edit& edit : *edits) other.map(edit);
     REQUIRE(other.primary() == Selection::at({2, 1}));
 }
 
