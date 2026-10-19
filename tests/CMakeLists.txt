@@ -38,6 +38,7 @@ add_executable(fjedit-tests
     test_syntax.cpp
     test_vim_engine.cpp
     test_vim_motions.cpp
+    test_vim_text_objects.cpp
     test_workspace.cpp)
 ftk_target_defaults(fjedit-tests)
 target_link_libraries(fjedit-tests PRIVATE fjedit::core Catch2::Catch2WithMain)

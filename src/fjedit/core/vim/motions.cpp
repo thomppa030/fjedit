@@ -1,7 +1,7 @@
 #include "fjedit/core/vim/motions.hpp"
 
-#include "fjedit/core/motion.hpp"
 #include "fjedit/core/structure.hpp"
+#include "fjedit/core/vim/walk.hpp"
 
 #include "ftk/base/utf8.hpp"
 
@@ -30,164 +30,29 @@ std::size_t previous_byte(std::string_view line, std::size_t byte) {
     return byte;
 }
 
-// The classes Vim's word motions tell characters apart by.
-constexpr int BLANK = 0;
-constexpr int PUNCTUATION = 1;
-constexpr int WORD = 2;
-
-// What a step of a walk did.
-constexpr int ALONG = 0;
-constexpr int ONTO_NEXT_LINE = 1;
-constexpr int ONTO_LINE_END = 2;
-constexpr int AT_TEXT_EDGE = -1;
-
-// A place in the text as Vim's word motions walk it, a character at a time
-// with each line's end a place of its own, where its break is.
-class Walk {
-public:
-    Walk(const Buffer& buffer, Position at, bool big) : buffer_(buffer), at_(at), big_(big) {}
-
-    [[nodiscard]] Position at() const { return at_; }
-
-    // BLANK for a space, a tab or a line's end; for a WORD, PUNCTUATION
-    // for anything else; otherwise WORD or PUNCTUATION by the character.
-    [[nodiscard]] int kind() const {
-        const std::string_view line = buffer_.line(at_.line);
-        if (at_.byte >= line.size()) return BLANK;
-        std::size_t byte = at_.byte;
-        const CharKind kind = char_kind(ftk::utf8::next(line, byte));
-        if (kind == CharKind::Space) return BLANK;
-        if (big_) return PUNCTUATION;
-        return kind == CharKind::Word ? WORD : PUNCTUATION;
-    }
-
-    [[nodiscard]] bool on_empty_line() const { return at_.byte == 0 && buffer_.line(at_.line).empty(); }
-    [[nodiscard]] bool on_last_line() const { return at_.line + 1 == buffer_.line_count(); }
-
-    // A step on: ALONG the line, ONTO_LINE_END, or ONTO_NEXT_LINE's start;
-    // AT_TEXT_EDGE at the last line's end, where it stays.
-    int forward() {
-        const std::string_view line = buffer_.line(at_.line);
-        if (at_.byte < line.size()) {
-            at_.byte = next_byte(line, at_.byte);
-            return at_.byte < line.size() ? ALONG : ONTO_LINE_END;
-        }
-        if (at_.line + 1 < buffer_.line_count()) {
-            at_ = {.line = at_.line + 1, .byte = 0};
-            return ONTO_NEXT_LINE;
-        }
-        return AT_TEXT_EDGE;
-    }
-
-    // A step back: ALONG the line, or onto the end of the line before
-    // (ONTO_NEXT_LINE, the next line back); AT_TEXT_EDGE at the text's
-    // start, where it stays.
-    int back() {
-        if (at_.byte > 0) {
-            at_.byte = previous_byte(buffer_.line(at_.line), at_.byte);
-            return ALONG;
-        }
-        if (at_.line > 0) {
-            --at_.line;
-            at_.byte = buffer_.line(at_.line).size();
-            return ONTO_NEXT_LINE;
-        }
-        return AT_TEXT_EDGE;
-    }
-
-    // Steps on, or back, over places of `kind`; true when the text's edge
-    // came first.
-    bool skip(int kind, bool on) {
-        while (this->kind() == kind) {
-            if ((on ? forward() : back()) == AT_TEXT_EDGE) return true;
-        }
-        return false;
-    }
-
-private:
-    const Buffer& buffer_;
-    Position at_;
-    bool big_;
-};
-
 } // namespace
 
 Position word_start_after(const Buffer& buffer, Position at, std::size_t count, bool big, bool stop_at_line_end) {
-    Walk walk(buffer, at, big);
-    for (; count > 0; --count) {
-        // A step that leaves the line ends an operator's last count there.
-        const bool stops = stop_at_line_end && count == 1;
-        const auto ends = [&](int step) { return step == AT_TEXT_EDGE || (step != ALONG && stops); };
-        const int from = walk.kind();
-        const bool last_line = walk.on_last_line();
-        const int step = walk.forward();
-        if (step == AT_TEXT_EDGE || (step != ALONG && last_line) || ends(step)) break;
-        bool ended = false;
-        if (from != BLANK) {
-            while (!ended && walk.kind() == from) ended = ends(walk.forward());
-        }
-        while (!ended && walk.kind() == BLANK && !walk.on_empty_line()) ended = ends(walk.forward());
-        if (ended) break;
-    }
+    detail::Walk walk(buffer, at, big);
+    (void)detail::forward_words(walk, count, stop_at_line_end);
     return walk.at();
 }
 
 Position word_end_after(const Buffer& buffer, Position at, std::size_t count, bool big, bool stay) {
-    Walk walk(buffer, at, big);
-    for (; count > 0; --count) {
-        const int from = walk.kind();
-        if (walk.forward() == AT_TEXT_EDGE) break;
-        if (walk.kind() == from && from != BLANK) {
-            // Inside a word: on to its end.
-            if (walk.skip(from, true)) break;
-        } else if (!stay || from == BLANK) {
-            // At a word's end: past the blanks, to the next word's end.
-            bool edge = false;
-            while (!edge && walk.kind() == BLANK) edge = walk.forward() == AT_TEXT_EDGE;
-            if (edge || walk.skip(walk.kind(), true)) break;
-        }
-        (void)walk.back();
-        stay = false;
-    }
+    detail::Walk walk(buffer, at, big);
+    (void)detail::end_of_words(walk, count, stay, false);
     return walk.at();
 }
 
 Position word_start_before(const Buffer& buffer, Position at, std::size_t count, bool big) {
-    Walk walk(buffer, at, big);
-    for (; count > 0; --count) {
-        if (walk.back() == AT_TEXT_EDGE) break;
-        bool empty_line = false;
-        bool edge = false;
-        while (walk.kind() == BLANK) {
-            if (walk.on_empty_line()) {
-                empty_line = true;
-                break;
-            }
-            if (walk.back() == AT_TEXT_EDGE) {
-                edge = true;
-                break;
-            }
-        }
-        if (edge) break;
-        if (empty_line) continue;
-        if (walk.skip(walk.kind(), false)) break;
-        (void)walk.forward();
-    }
+    detail::Walk walk(buffer, at, big);
+    (void)detail::back_words(walk, count);
     return walk.at();
 }
 
 Position word_end_before(const Buffer& buffer, Position at, std::size_t count, bool big) {
-    Walk walk(buffer, at, big);
-    for (; count > 0; --count) {
-        const int from = walk.kind();
-        if (walk.back() == AT_TEXT_EDGE) break;
-        bool edge = false;
-        if (from != BLANK) {
-            while (!edge && walk.kind() == from) edge = walk.back() == AT_TEXT_EDGE;
-        }
-        while (!edge && walk.kind() == BLANK && !walk.on_empty_line()) edge = walk.back() == AT_TEXT_EDGE;
-        if (edge) break;
-    }
+    detail::Walk walk(buffer, at, big);
+    (void)detail::back_ends_of_words(walk, count);
     return walk.at();
 }
 
