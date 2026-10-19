@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -35,7 +36,19 @@ enum class Mode : uint8_t {
     Normal,
     /// Keys type text, each caret between characters.
     Insert,
+    /// Keys move one end of each selection, `v`; an operator acts on the
+    /// selections. They take the characters at both ends.
+    Visual,
+    /// The same with whole lines, `V`.
+    VisualLine,
+    /// A block of columns, `Ctrl-V`: a selection on each of its lines.
+    VisualBlock,
 };
+
+/// Whether `mode` is one of the visual modes.
+[[nodiscard]] constexpr bool visual(Mode mode) {
+    return mode == Mode::Visual || mode == Mode::VisualLine || mode == Mode::VisualBlock;
+}
 
 /// How a view draws the carets in a mode (sheet 47, C1).
 enum class CaretShape : uint8_t {
@@ -63,13 +76,21 @@ public:
     /// run (view_commands(), the program's), when it runs none itself.
     std::optional<std::string> take(const Chord& key, CommandContext& context);
 
-    /// Each caret put where the mode keeps it, after something other than
-    /// the keys moved them (the mouse, an edit made in another view): in
-    /// normal mode, on a character rather than past a line's last.
-    void settle(CommandContext& context) const;
+    /// The selections put where the mode keeps them, after something other
+    /// than the keys moved them: in normal mode each caret on a character
+    /// rather than past a line's last; a selection begins visual mode when
+    /// `by_mouse` made it (a drag, a double click), and otherwise becomes a
+    /// caret at its start (a definition gone to). In visual mode, carets
+    /// alone end it, and selections the mouse made become its own.
+    void settle(CommandContext& context, bool by_mouse = false);
 
     [[nodiscard]] Mode mode() const { return mode_; }
     [[nodiscard]] CaretShape caret_shape() const;
+
+    /// In visual mode, where each block caret is: on the character at the
+    /// end of each selection that moves, one for a block. Empty in the other
+    /// modes, whose carets are the selections' own.
+    [[nodiscard]] std::vector<Position> cursors() const;
 
     /// The keys of a command typed so far, in Vim's notation, as its
     /// showcmd shows them (`2d`, `g`); empty while none waits.
@@ -90,8 +111,32 @@ public:
     [[nodiscard]] Registers& registers() { return *registers_; }
 
 private:
+    // Where a visual selection begins and where its caret is, a character
+    // each (a block's corners), and the goal along the line the caret keeps.
+    struct VisualEnds {
+        Position anchor;
+        Position caret;
+        std::optional<float> goal;
+    };
+
     void take_normal(const Chord& key, CommandContext& context);
     void take_insert(const Chord& key, CommandContext& context);
+    void take_visual(const Chord& key, CommandContext& context);
+    // Visual mode's operators and its other commands, `name` with the
+    // character `argument` it takes, a count of `count` and the register
+    // `reg`; false for a name that is none of them.
+    bool act_on_visual(std::string_view name, std::string_view argument, std::size_t count, char reg,
+                       CommandContext& context);
+
+    // Into visual mode `mode` from normal mode or another visual mode.
+    void enter_visual(Mode mode, CommandContext& context);
+    // The selections visual mode's ends make.
+    void show_visual(CommandContext& context);
+    // Out to normal mode, each caret where its selection's was; the ends
+    // kept for gv.
+    void leave_visual(CommandContext& context);
+    // Visual mode's ends for `selections` as something else made them.
+    static std::vector<VisualEnds> ends_of(const Buffer& buffer, const Selections& selections);
 
     std::shared_ptr<Registers> registers_;
     Mode mode_{Mode::Normal};
@@ -101,6 +146,15 @@ private:
     bool operator_waits_{false};
     // What f, t, F or T last looked for, which ; and , look for again.
     std::optional<CharSearch> search_;
+    // Visual mode's ends, and the selections it last made from them: others
+    // than those were made by the mouse or an edit.
+    std::vector<VisualEnds> visual_;
+    Selections shown_;
+    // The last visual selection and its mode, which gv selects again.
+    std::vector<VisualEnds> last_visual_;
+    Mode last_visual_mode_{Mode::Visual};
+    // An insert begun from a block, which leaves one caret when it ends.
+    bool block_insert_{false};
 };
 
 } // namespace fjedit::vim

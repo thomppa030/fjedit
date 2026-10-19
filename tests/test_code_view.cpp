@@ -1407,6 +1407,18 @@ TEST_CASE("With Vim on, the caret is a block in normal mode, a bar in insert mod
     CHECK(bar.front().max.x - bar.front().min.x < 3.0f);
 }
 
+TEST_CASE("With Vim on, a drag selects in visual mode", "[code_view][vim]") {
+    WithVim v("one\ntwo\nthree");
+    // From a row below the setup's click, which a press there would make a
+    // double click of.
+    v.e.h.drag({PAST_END, row_y(1)}, {PAST_END, row_y(2)});
+    REQUIRE(v.e.view.vim->mode() == vim::Mode::Visual);
+    REQUIRE(v.e.view.selections.primary() == Selection{.anchor = {1, 3}, .caret = {2, 5}});
+    v.e.h.type("d");
+    REQUIRE(v.e.text() == "one\ntwo");
+    REQUIRE(v.e.view.vim->mode() == vim::Mode::Normal);
+}
+
 TEST_CASE("With Vim on, leaving insert mode takes the completion list with it", "[code_view][vim][completion]") {
     Completing c;
     c.e.view.vim.emplace();

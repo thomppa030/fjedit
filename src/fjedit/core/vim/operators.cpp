@@ -3,6 +3,8 @@
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/structure.hpp"
 
+#include "ftk/base/utf8.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <iterator>
@@ -514,6 +516,40 @@ bool replace_characters(std::string_view with, std::size_t count, CommandContext
         return next;
     });
     return true;
+}
+
+void replace_in(std::span<const std::optional<Range>> ranges, std::string_view with, CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
+    const std::vector<Selection> was = selections_of(context);
+    std::vector<Change> spans;
+    for (const std::optional<Range>& range : ranges) {
+        if (range) spans.push_back({.span = range->linewise ? line_span(buffer, *range) : range->span, .text = ""});
+    }
+    const Edit merged = ordered(std::move(spans));
+    std::vector<Change> changes;
+    for (const Change& change : merged.changes) {
+        const std::string text = buffer.text(change.span);
+        std::string replaced;
+        for (std::size_t byte = 0; byte < text.size();) {
+            if (text[byte] == '\n') {
+                replaced += '\n';
+                ++byte;
+                continue;
+            }
+            (void)ftk::utf8::next(text, byte);
+            replaced += with;
+        }
+        if (replaced != text) changes.push_back({.span = change.span, .text = std::move(replaced)});
+    }
+    commit(context, ordered(std::move(changes)), [&](const Edit& made) {
+        std::vector<Selection> next;
+        for (std::size_t i = 0; i < was.size(); ++i) {
+            const Position from = ranges[i] ? (ranges[i]->linewise ? Position{ranges[i]->span.from.line, 0} : ranges[i]->span.from)
+                                            : was[i].caret;
+            next.push_back(Selection::at(map(made, from, Bias::Before)));
+        }
+        return next;
+    });
 }
 
 void toggle_case_characters(std::size_t count, CommandContext& context) {

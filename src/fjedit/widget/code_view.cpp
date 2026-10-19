@@ -488,8 +488,11 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ru
             continue;
         }
         view.pending.push_back(key);
-        const bool inserting = view.vim->mode() == vim::Mode::Insert;
-        KeyMatch match = keymap.find(inserting ? Keymap::VIM_INSERT : Keymap::VIM_NORMAL, view.pending);
+        const vim::Mode mode = view.vim->mode();
+        const std::string_view keymap_mode = mode == vim::Mode::Insert ? Keymap::VIM_INSERT
+                                             : vim::visual(mode)        ? Keymap::VIM_VISUAL
+                                                                         : Keymap::VIM_NORMAL;
+        KeyMatch match = keymap.find(keymap_mode, view.pending);
         if (view.completing.open) {
             const KeyMatch completing = keymap.find(Keymap::VIM_COMPLETING, view.pending);
             if (completing.command) match = completing;
@@ -1113,15 +1116,21 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
     if (focused && (!bar || std::fmod(ui.time() - view.moved, BLINK) <= BLINK_ON)) {
         const auto composed_cursor = static_cast<std::size_t>(
             std::clamp(ui.composition_cursor(), 0, static_cast<int>(composing.size())));
-        for (const Selection& selection : view.selections.all()) {
-            const std::optional<std::size_t> index = rows.index_of(folds, selection.caret.line);
+        // Each selection's caret; in visual mode, the blocks where Vim says,
+        // on the character at the end each selection moves by.
+        std::vector<Position> carets = view.vim ? view.vim->cursors() : std::vector<Position>{};
+        if (carets.empty()) {
+            for (const Selection& selection : view.selections.all()) carets.push_back(selection.caret);
+        }
+        const Position primary = view.selections.primary().caret;
+        for (const Position& at : carets) {
+            const std::optional<std::size_t> index = rows.index_of(folds, at.line);
             if (!index) continue;
-            const Position at = selection.caret;
             const float top = rows.y(*index) + 1.0f;
             const float bottom = rows.y(*index) + frame.line - 1.0f;
             float along = layout.x_of(buffer, at);
             if (bar) {
-                if (!composing.empty() && &selection == &view.selections.primary()) {
+                if (!composing.empty() && at == primary) {
                     along = layout.advance(composing, 0, composed_cursor, along);
                 }
                 const float x = std::round(frame.origin_x + along);
@@ -1332,10 +1341,11 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     // placed never scrolls the text from under it.
     const bool placed = view.selections != before_mouse;
     // A caret the mouse or another view's edit put past a line's end goes
-    // where Vim's mode keeps it.
+    // where Vim's mode keeps it; a selection the mouse made begins its
+    // visual mode.
     if (view.vim) {
         CommandContext context = vim_context();
-        view.vim->settle(context);
+        view.vim->settle(context, placed);
     }
 
     const glm::vec2 scrolled = view.scroll;

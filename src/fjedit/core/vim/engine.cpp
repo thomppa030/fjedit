@@ -6,6 +6,7 @@
 #include "fjedit/core/vim/walk.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <span>
 #include <string_view>
@@ -39,6 +40,28 @@ Position on_character(const Buffer& buffer, Position at) {
     const std::string_view line = buffer.line(at.line);
     if (!line.empty() && at.byte >= line.size()) return last_character(buffer, at.line);
     return at;
+}
+
+// Past the character at `at`: the next one, or the next line's start after a
+// line's end, whose break a selection then takes; `at` at the text's end.
+Position past(const Buffer& buffer, Position at) {
+    if (at.byte < buffer.line(at.line).size()) return right_in_line(buffer, at, 1);
+    if (at.line + 1 < buffer.line_count()) return {.line = at.line + 1, .byte = 0};
+    return at;
+}
+
+// The character before `at`, the line break before a line's start.
+Position before(const Buffer& buffer, Position at) {
+    if (at.byte > 0) return left_in_line(buffer, at, 1);
+    if (at.line > 0) return {.line = at.line - 1, .byte = buffer.line(at.line - 1).size()};
+    return at;
+}
+
+// How wide the character at `at` is along its line; at a line's end, a
+// width enough to take the end.
+float cell_width(const Layout& layout, const Buffer& buffer, Position at) {
+    if (at.byte >= buffer.line(at.line).size()) return 1.0f;
+    return layout.x_of(buffer, right_in_line(buffer, at, 1)) - layout.x_of(buffer, at);
 }
 
 // A normal-mode command as its keys spell it: a register, a count, an
@@ -117,9 +140,9 @@ Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) 
     return ends_at(keys, i + 2);
 }
 
-// What `keys`, typed so far, come to.
-Parsed parse(std::span<const Chord> keys, Command& command) {
-    std::size_t i = 0;
+// A register named with " at `keys[i]`, and a count after it: nothing when
+// they are whole, else what the keys come to so far.
+std::optional<Parsed> read_register_and_count(std::span<const Chord> keys, std::size_t& i, Command& command) {
     if (keys[i].text == "\"") {
         if (i + 1 == keys.size()) return Parsed::Waiting;
         const std::string& name = keys[i + 1].text;
@@ -129,6 +152,27 @@ Parsed parse(std::span<const Chord> keys, Command& command) {
     }
     read_count(keys, i, command.count);
     if (i == keys.size()) return Parsed::Waiting;
+    return std::nullopt;
+}
+
+// What `keys`, typed so far in visual mode, come to: an operator acts at
+// once, on the selections, and a text object needs no operator before it.
+Parsed parse_visual(std::span<const Chord> keys, Command& command) {
+    std::size_t i = 0;
+    if (const std::optional<Parsed> unfinished = read_register_and_count(keys, i, command)) return *unfinished;
+    if (keys[i].text == "i" || keys[i].text == "a") {
+        if (i + 1 == keys.size()) return Parsed::Waiting;
+        if (keys[i + 1].text.empty()) return Parsed::Invalid;
+        command.name = keys[i].text + keys[i + 1].text;
+        return ends_at(keys, i + 2);
+    }
+    return parse_name(keys, i, command);
+}
+
+// What `keys`, typed so far, come to.
+Parsed parse(std::span<const Chord> keys, Command& command) {
+    std::size_t i = 0;
+    if (const std::optional<Parsed> unfinished = read_register_and_count(keys, i, command)) return *unfinished;
 
     const std::string& key = keys[i].text;
     if (key == "d" || key == "c" || key == "y" || key == "<" || key == ">" || key == "=") {
@@ -365,24 +409,45 @@ bool run_operator(const Command& command, CommandContext& c, Registers& register
 std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
     if (mode_ == Mode::Insert) {
         take_insert(key, context);
+    } else if (visual(mode_)) {
+        take_visual(key, context);
     } else {
         take_normal(key, context);
     }
     return std::nullopt;
 }
 
-void Engine::settle(CommandContext& context) const {
-    if (mode_ != Mode::Normal) return;
+void Engine::settle(CommandContext& context, bool by_mouse) {
+    if (mode_ == Mode::Insert) return;
     const Buffer& buffer = context.document.buffer();
+    const std::span<const Selection> all = context.selections.all();
+    const bool selecting = std::ranges::any_of(all, [](const Selection& s) { return !s.empty(); });
+    if (visual(mode_)) {
+        if (context.selections == shown_) return;
+        // Carets alone end visual mode; selections become its own.
+        if (!selecting) {
+            last_visual_ = visual_;
+            last_visual_mode_ = mode_;
+            mode_ = Mode::Normal;
+        } else {
+            visual_ = ends_of(buffer, context.selections);
+            mode_ = Mode::Visual;
+            show_visual(context);
+            return;
+        }
+    } else if (selecting && by_mouse) {
+        visual_ = ends_of(buffer, context.selections);
+        mode_ = Mode::Visual;
+        show_visual(context);
+        return;
+    }
+    // Normal mode: carets on characters, a selection made otherwise than by
+    // the mouse a caret at its start.
     std::vector<Selection> settled;
     bool changed = false;
-    for (const Selection& selection : context.selections.all()) {
-        if (!selection.empty()) {
-            settled.push_back(selection);
-            continue;
-        }
-        const Position at = on_character(buffer, selection.caret);
-        changed = changed || at != selection.caret;
+    for (const Selection& selection : all) {
+        const Position at = on_character(buffer, selection.empty() ? selection.caret : selection.span().from);
+        changed = changed || !selection.empty() || at != selection.caret;
         settled.push_back({.anchor = at, .caret = at, .goal = selection.goal});
     }
     if (changed) context.selections.set(std::move(settled), context.selections.primary_index());
@@ -393,6 +458,16 @@ CaretShape Engine::caret_shape() const {
     return operator_waits_ ? CaretShape::HalfBlock : CaretShape::Block;
 }
 
+std::vector<Position> Engine::cursors() const {
+    std::vector<Position> out;
+    if (!visual(mode_)) return out;
+    for (const VisualEnds& ends : visual_) {
+        out.push_back(ends.caret);
+        if (mode_ == Mode::VisualBlock) break;
+    }
+    return out;
+}
+
 std::string Engine::pending() const {
     std::string out;
     for (const Chord& key : keys_) out += notation(key);
@@ -400,11 +475,11 @@ std::string Engine::pending() const {
 }
 
 bool Engine::wants_character() const {
-    if (mode_ != Mode::Normal || keys_.empty()) return false;
+    if (mode_ == Mode::Insert || keys_.empty()) return false;
     const std::string& last = keys_.back().text;
     if (last != "f" && last != "t" && last != "F" && last != "T" && last != "r" && last != "\"") return false;
     Command command;
-    return parse(keys_, command) == Parsed::Waiting;
+    return (visual(mode_) ? parse_visual(keys_, command) : parse(keys_, command)) == Parsed::Waiting;
 }
 
 void Engine::take_normal(const Chord& key, CommandContext& c) {
@@ -487,6 +562,21 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         if (c.selections.size() > 1) c.selections.keep_primary();
         return;
     }
+    if (name == "v") return enter_visual(Mode::Visual, c);
+    if (name == "V") return enter_visual(Mode::VisualLine, c);
+    if (name == "<C-v>") return enter_visual(Mode::VisualBlock, c);
+    if (name == "gv") {
+        // The last visual selection again, its ends kept inside the text.
+        if (last_visual_.empty()) return;
+        visual_ = last_visual_;
+        for (VisualEnds& ends : visual_) {
+            ends.anchor = on_character(buffer, buffer.clamp(ends.anchor));
+            ends.caret = on_character(buffer, buffer.clamp(ends.caret));
+        }
+        mode_ = last_visual_mode_;
+        show_visual(c);
+        return;
+    }
     if (name == "i" || name == "<Insert>") return insert([](Position at) { return at; });
     if (name == "a") return insert([&](Position at) { return right_in_line(buffer, at, 1); });
     if (name == "I") return insert([&](Position at) { return first_non_blank(buffer, at.line); });
@@ -528,6 +618,10 @@ void Engine::take_insert(const Chord& key, CommandContext& c) {
             back.push_back(Selection::at(left_in_line(c.document.buffer(), selection.caret, 1)));
         }
         c.selections.set(std::move(back), c.selections.primary_index());
+        // A block's insert, made at each of its lines, leaves the caret on
+        // the first.
+        if (block_insert_) c.selections = Selections(c.selections.all().front());
+        block_insert_ = false;
         mode_ = Mode::Normal;
         settle(c);
         return;
@@ -556,6 +650,277 @@ void Engine::take_insert(const Chord& key, CommandContext& c) {
             return;
         }
     }
+}
+
+std::vector<Engine::VisualEnds> Engine::ends_of(const Buffer& buffer, const Selections& selections) {
+    std::vector<VisualEnds> ends;
+    for (const Selection& selection : selections.all()) {
+        if (selection.empty()) {
+            ends.push_back({.anchor = selection.caret, .caret = selection.caret, .goal = selection.goal});
+        } else if (selection.anchor < selection.caret) {
+            ends.push_back({.anchor = selection.anchor, .caret = before(buffer, selection.caret), .goal = selection.goal});
+        } else {
+            ends.push_back({.anchor = before(buffer, selection.anchor), .caret = selection.caret, .goal = selection.goal});
+        }
+    }
+    return ends;
+}
+
+void Engine::enter_visual(Mode mode, CommandContext& context) {
+    if (!visual(mode_)) {
+        visual_.clear();
+        for (const Selection& selection : context.selections.all()) {
+            visual_.push_back({.anchor = selection.caret, .caret = selection.caret, .goal = selection.goal});
+        }
+    }
+    // A block is one, the primary caret's.
+    if (mode == Mode::VisualBlock && visual_.size() > 1) {
+        const std::size_t primary = std::min(context.selections.primary_index(), visual_.size() - 1);
+        visual_ = {visual_[primary]};
+    }
+    mode_ = mode;
+    context.document.history().close();
+    show_visual(context);
+}
+
+void Engine::show_visual(CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
+    if (mode_ == Mode::VisualBlock) {
+        // From the left corner's left to the right corner's right, or on to
+        // each line's end after $.
+        const VisualEnds& ends = visual_.front();
+        const bool to_line_ends = ends.goal && std::isinf(*ends.goal);
+        const float anchor_x = context.layout.x_of(buffer, ends.anchor);
+        const float caret_x = to_line_ends ? LINE_END_GOAL : context.layout.x_of(buffer, ends.caret);
+        const bool rightward = anchor_x <= caret_x;
+        const float from = rightward ? anchor_x : anchor_x + cell_width(context.layout, buffer, ends.anchor);
+        const float to = !rightward || to_line_ends ? caret_x : caret_x + cell_width(context.layout, buffer, ends.caret);
+        context.selections = column_selection(buffer, context.layout, ends.anchor.line, from, ends.caret.line, to);
+        shown_ = context.selections;
+        return;
+    }
+    std::vector<Selection> made;
+    for (const VisualEnds& ends : visual_) {
+        if (mode_ == Mode::Visual) {
+            made.push_back(ends.anchor <= ends.caret
+                               ? Selection{.anchor = ends.anchor, .caret = past(buffer, ends.caret), .goal = ends.goal}
+                               : Selection{.anchor = past(buffer, ends.anchor), .caret = ends.caret, .goal = ends.goal});
+            continue;
+        }
+        // Whole lines, with their last one's break.
+        const std::size_t first = std::min(ends.anchor.line, ends.caret.line);
+        const std::size_t last = std::max(ends.anchor.line, ends.caret.line);
+        const Position start{.line = first, .byte = 0};
+        const Position end = last + 1 < buffer.line_count() ? Position{.line = last + 1, .byte = 0}
+                                                             : Position{.line = last, .byte = buffer.line(last).size()};
+        made.push_back(ends.anchor.line <= ends.caret.line ? Selection{.anchor = start, .caret = end, .goal = ends.goal}
+                                                            : Selection{.anchor = end, .caret = start, .goal = ends.goal});
+    }
+    const std::size_t primary = std::min(context.selections.primary_index(), made.size() - 1);
+    context.selections.set(std::move(made), primary);
+    // Selections that came to overlap were made one: their ends are theirs.
+    if (context.selections.size() != visual_.size()) visual_ = ends_of(buffer, context.selections);
+    shown_ = context.selections;
+}
+
+void Engine::leave_visual(CommandContext& context) {
+    last_visual_ = visual_;
+    last_visual_mode_ = mode_;
+    std::vector<Selection> carets;
+    for (const VisualEnds& ends : visual_) {
+        carets.push_back({.anchor = ends.caret, .caret = ends.caret, .goal = ends.goal});
+        if (mode_ == Mode::VisualBlock) break;
+    }
+    const std::size_t primary = std::min(context.selections.primary_index(), carets.size() - 1);
+    mode_ = Mode::Normal;
+    context.selections.set(std::move(carets), primary);
+    settle(context);
+}
+
+void Engine::take_visual(const Chord& key, CommandContext& c) {
+    keys_.push_back(key);
+    Command command;
+    const Parsed parsed = parse_visual(keys_, command);
+    if (parsed == Parsed::Waiting) return;
+    keys_.clear();
+    if (parsed == Parsed::Invalid) return;
+    const Buffer& buffer = c.document.buffer();
+    const std::string_view name = command.name;
+    const std::size_t n = command.count.value_or(1);
+
+    if (escape(key)) return leave_visual(c);
+    // v, V and Ctrl-V: that visual mode, or out of it from itself.
+    const std::optional<Mode> kind = name == "v"       ? std::optional(Mode::Visual)
+                                     : name == "V"     ? std::optional(Mode::VisualLine)
+                                     : name == "<C-v>" ? std::optional(Mode::VisualBlock)
+                                                       : std::nullopt;
+    if (kind) {
+        if (*kind == mode_) return leave_visual(c);
+        return enter_visual(*kind, c);
+    }
+    if (name == "o" || name == "O") {
+        for (VisualEnds& ends : visual_) {
+            std::swap(ends.anchor, ends.caret);
+            ends.goal.reset();
+        }
+        return show_visual(c);
+    }
+    // A text object: each selection becomes it, whole lines for ip and ap.
+    if (name.size() == 2 && (name[0] == 'i' || name[0] == 'a')) {
+        for (VisualEnds& ends : visual_) {
+            const std::optional<Taken> taken = text_object(buffer, c.document.syntax(), ends.caret, name, n);
+            if (!taken) continue;
+            if (taken->linewise && mode_ == Mode::Visual) mode_ = Mode::VisualLine;
+            ends.anchor = taken->span.from;
+            ends.caret = taken->linewise ? Position{.line = taken->span.to.line, .byte = 0} : before(buffer, taken->span.to);
+            ends.goal.reset();
+        }
+        return show_visual(c);
+    }
+    if (act_on_visual(name, command.argument, n, command.reg, c)) return;
+
+    // A motion moves each selection's caret end.
+    bool any = false;
+    for (VisualEnds& ends : visual_) {
+        const Selection at{.anchor = ends.caret, .caret = ends.caret, .goal = ends.goal};
+        if (const std::optional<Went> went = motion(c, command, at, search_)) {
+            ends.caret = on_character(buffer, went->to);
+            ends.goal = went->goal;
+            any = true;
+        }
+    }
+    if (any) show_visual(c);
+}
+
+bool Engine::act_on_visual(std::string_view name, std::string_view argument, std::size_t count, char reg,
+                           CommandContext& c) {
+    const Buffer& buffer = c.document.buffer();
+    const bool block = mode_ == Mode::VisualBlock;
+    const bool by_lines = mode_ == Mode::VisualLine;
+
+    // The ranges the selections give an operator: their text; whole lines
+    // in visual line mode or with `lines`; on to each line's end with
+    // `to_line_ends`, as a block's X, D, Y and C take.
+    const auto ranges_of = [&](bool lines, bool to_line_ends) {
+        std::vector<std::optional<Range>> ranges;
+        for (const Selection& selection : c.selections.all()) {
+            const Span span = selection.span();
+            if (to_line_ends) {
+                const Position end{.line = span.from.line, .byte = buffer.line(span.from.line).size()};
+                ranges.push_back(Range{.span = {span.from, end}, .linewise = false});
+            } else if (lines || by_lines) {
+                const bool ends_at_line_start = span.to.byte == 0 && span.to.line > span.from.line;
+                const std::size_t last = ends_at_line_start ? span.to.line - 1 : span.to.line;
+                ranges.push_back(Range{.span = {span.from, {last, 0}}, .linewise = true});
+            } else {
+                ranges.push_back(Range{.span = span, .linewise = false});
+            }
+        }
+        return ranges;
+    };
+    // Out of visual mode for a change, its selection kept for gv.
+    const auto leave_for_change = [&] {
+        last_visual_ = visual_;
+        last_visual_mode_ = mode_;
+        mode_ = Mode::Normal;
+        c.document.history().close();
+    };
+    // After a block's change, one caret at its top left.
+    const auto finish = [&] {
+        if (block && c.selections.size() > 1) c.selections = Selections(c.selections.all().front());
+        settle(c);
+    };
+
+    struct Acting {
+        std::string_view name;
+        Operator op;
+        bool lines;
+        bool block_to_line_ends;
+    };
+    static constexpr Acting ACTING[] = {
+        {"d", Operator::Delete, false, false},      {"x", Operator::Delete, false, false},
+        {"<Del>", Operator::Delete, false, false},  {"X", Operator::Delete, true, true},
+        {"D", Operator::Delete, true, true},        {"c", Operator::Change, false, false},
+        {"s", Operator::Change, false, false},      {"S", Operator::Change, true, false},
+        {"R", Operator::Change, true, false},       {"C", Operator::Change, true, true},
+        {"y", Operator::Yank, false, false},        {"Y", Operator::Yank, true, true},
+        {">", Operator::ShiftRight, true, false},   {"<", Operator::ShiftLeft, true, false},
+        {"=", Operator::Indent, true, false},       {"~", Operator::ToggleCase, false, false},
+        {"g~", Operator::ToggleCase, false, false}, {"u", Operator::Lower, false, false},
+        {"gu", Operator::Lower, false, false},      {"U", Operator::Upper, false, false},
+        {"gU", Operator::Upper, false, false},
+    };
+    for (const Acting& acting : ACTING) {
+        if (acting.name != name) continue;
+        const std::vector<std::optional<Range>> ranges = ranges_of(acting.lines, block && acting.block_to_line_ends);
+        leave_for_change();
+        // A count shifts that many levels.
+        const bool shifting = acting.op == Operator::ShiftRight || acting.op == Operator::ShiftLeft;
+        operate(acting.op, ranges, reg, c, *registers_, shifting ? count : 1);
+        if (acting.op == Operator::Change) {
+            mode_ = Mode::Insert;
+            block_insert_ = block;
+        } else {
+            finish();
+        }
+        return true;
+    }
+    if (name == "J") {
+        // Each selection's lines joined, two at least.
+        const std::vector<std::optional<Range>> ranges = ranges_of(true, false);
+        const std::size_t primary = c.selections.primary_index();
+        const Range& primary_range = *ranges[primary];
+        const std::size_t lines =
+            std::max<std::size_t>(primary_range.span.to.line - primary_range.span.from.line + 1, 2);
+        leave_for_change();
+        std::vector<Selection> starts;
+        for (const std::optional<Range>& range : ranges) starts.push_back(Selection::at({range->span.from.line, 0}));
+        c.selections.set(std::move(starts), primary);
+        join_lines(lines, c);
+        finish();
+        return true;
+    }
+    if (name == "r") {
+        const std::vector<std::optional<Range>> ranges = ranges_of(false, false);
+        leave_for_change();
+        replace_in(ranges, argument, c);
+        finish();
+        return true;
+    }
+    if (name == "p" || name == "P") {
+        const std::optional<Yanked> yanked = registers_->get(reg, c.clipboard);
+        if (!yanked) return true;
+        const std::vector<std::optional<Range>> ranges = ranges_of(false, false);
+        leave_for_change();
+        // The selection gone and the register's text in its place, one step;
+        // p leaves what it replaced in the unnamed register, P doesn't.
+        c.document.history().hold();
+        operate(Operator::Delete, ranges, name == "p" ? '"' : '_', c, *registers_);
+        put(*yanked, false, count, c);
+        c.document.history().close();
+        finish();
+        return true;
+    }
+    if (name == "I" || name == "A") {
+        // Insert at each selection's start or end: at every line of a block.
+        std::vector<Selection> carets;
+        for (const Selection& selection : c.selections.all()) {
+            const Span span = selection.span();
+            Position at = name == "I" ? span.from : span.to;
+            // A selection of lines ends after its last line's break: before it.
+            if (name == "A" && at.byte == 0 && at.line > span.from.line) at = {at.line - 1, buffer.line(at.line - 1).size()};
+            carets.push_back(Selection::at(at));
+        }
+        const std::size_t primary = c.selections.primary_index();
+        last_visual_ = visual_;
+        last_visual_mode_ = mode_;
+        mode_ = Mode::Insert;
+        block_insert_ = block;
+        c.selections.set(std::move(carets), primary);
+        c.document.history().hold();
+        return true;
+    }
+    return false;
 }
 
 } // namespace fjedit::vim

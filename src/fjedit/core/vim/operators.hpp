@@ -95,6 +95,10 @@ void join_lines(std::size_t count, CommandContext& context);
 /// that many is left as it is. False when no caret had them.
 bool replace_characters(std::string_view with, std::size_t count, CommandContext& context);
 
+/// `r` in visual mode: every character `ranges` take, but line breaks,
+/// replaced by `with`, as one step; each caret at its range's start.
+void replace_in(std::span<const std::optional<Range>> ranges, std::string_view with, CommandContext& context);
+
 /// `~`: the case of `count` letters from each caret along its line turned
 /// over, the caret going past them.
 void toggle_case_characters(std::size_t count, CommandContext& context);

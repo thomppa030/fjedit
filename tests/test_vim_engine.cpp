@@ -22,15 +22,27 @@ struct Vim {
 
     explicit Vim(std::string_view marked) : view(marked) {}
 
+    // What the engine acts through.
+    CommandContext context() {
+        view.folds.catch_up(view.document);
+        return {.document = view.document, .selections = view.selections, .layout = view.layout,
+                .clipboard = &view.clipboard, .folds = &view.folds, .text = {}};
+    }
+
     void keys(std::string_view typed) {
         const std::optional<std::vector<Chord>> chords = vim::parse_notation(typed);
         REQUIRE(chords);
         for (const Chord& key : *chords) {
-            view.folds.catch_up(view.document);
-            CommandContext context{.document = view.document, .selections = view.selections, .layout = view.layout,
-                                   .clipboard = &view.clipboard, .folds = &view.folds, .text = {}};
-            (void)engine.take(key, context);
+            CommandContext acting = context();
+            (void)engine.take(key, acting);
         }
+    }
+
+    // Selections made as the mouse or a command makes them, then settled.
+    void select(Selection selection, bool by_mouse) {
+        view.selections = Selections(selection);
+        CommandContext acting = context();
+        engine.settle(acting, by_mouse);
     }
 
     [[nodiscard]] std::string shown() const { return view.shown(); }
@@ -433,6 +445,126 @@ TEST_CASE("An operator waiting for its motion shows the lower half of a block", 
     v.keys("<Esc>");
     CHECK(v.engine.caret_shape() == vim::CaretShape::Block);
     CHECK(v.shown() == "|a");
+}
+
+TEST_CASE("v and a motion select to the caret, its character taken; d deletes them", "[vim][visual]") {
+    Vim v("|abc def");
+    v.keys("vl");
+    CHECK(v.engine.mode() == vim::Mode::Visual);
+    CHECK(v.shown() == "[ab]c def");
+    CHECK(v.engine.cursors() == std::vector<Position>{{0, 1}});
+    v.keys("d");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    CHECK(v.shown() == "|c def");
+    // Backwards, both ends' characters are taken.
+    Vim back("ab|c");
+    back.keys("vhd");
+    CHECK(back.shown() == "|a");
+}
+
+TEST_CASE("V takes whole lines", "[vim][visual]") {
+    Vim v("a\n|b\nc");
+    v.keys("Vj");
+    CHECK(v.engine.mode() == vim::Mode::VisualLine);
+    CHECK(v.shown() == "a\n[b\nc]");
+    v.keys("d");
+    CHECK(v.shown() == "|a");
+}
+
+TEST_CASE("Ctrl-V takes a block; an operator over it leaves one caret at its top left", "[vim][visual]") {
+    Vim v("|abc\ndef\nghi");
+    v.keys("<C-v>jl");
+    CHECK(v.engine.mode() == vim::Mode::VisualBlock);
+    CHECK(v.shown() == "[ab]c\n[de]f\nghi");
+    CHECK(v.engine.cursors() == std::vector<Position>{{1, 1}});
+    v.keys("d");
+    CHECK(v.shown() == "|c\nf\nghi");
+}
+
+TEST_CASE("A block's I and A insert on each of its lines, and leave one caret", "[vim][visual]") {
+    Vim before("|abc\ndef");
+    before.keys("<C-v>jIx<Esc>");
+    CHECK(before.shown() == "|xabc\nxdef");
+    Vim after("|abc\ndef");
+    after.keys("<C-v>jAy<Esc>");
+    CHECK(after.shown() == "a|ybc\ndyef");
+}
+
+TEST_CASE("o swaps a selection's ends; v, V and Ctrl-V switch, the same one leaves", "[vim][visual]") {
+    Vim v("a|bc");
+    v.keys("vloh");
+    CHECK(v.shown() == "[abc]");
+    Vim kinds("a|b\nc");
+    kinds.keys("vV");
+    CHECK(kinds.shown() == "[ab\n]c");
+    kinds.keys("v");
+    CHECK(kinds.shown() == "a[b]\nc");
+    kinds.keys("v");
+    CHECK(kinds.engine.mode() == vim::Mode::Normal);
+    CHECK(kinds.shown() == "a|b\nc");
+}
+
+TEST_CASE("Esc leaves visual mode with the caret where the selection's was", "[vim][visual]") {
+    Vim v("|abc");
+    v.keys("vlll<Esc>");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    CHECK(v.shown() == "ab|c");
+}
+
+TEST_CASE("Visual mode's operators: shift by a count, case, r, J", "[vim][visual]") {
+    Vim shift("|a\nb");
+    shift.keys("Vj2>");
+    CHECK(shift.shown() == "        |a\n        b");
+    Vim upper("|abc");
+    upper.keys("vlU");
+    CHECK(upper.shown() == "|ABc");
+    Vim replace("|abc");
+    replace.keys("vlrx");
+    CHECK(replace.shown() == "|xxc");
+    Vim join("|a\nb\nc");
+    join.keys("VjjJ");
+    CHECK(join.shown() == "a b| c");
+}
+
+TEST_CASE("p over a selection puts the register in its place, keeping what it replaced", "[vim][visual]") {
+    Vim v("|foo bar");
+    v.keys("yiwwviwp");
+    CHECK(v.shown() == "foo fo|o");
+    CHECK(v.engine.registers().get('"', nullptr) == vim::Yanked{.pieces = {"bar"}, .linewise = false});
+}
+
+TEST_CASE("A text object in visual mode selects it; gv selects the last selection again", "[vim][visual]") {
+    Vim v("f(a, |b)");
+    v.keys("vi(d");
+    CHECK(v.shown() == "f(|)");
+    Vim again("|abc def");
+    again.keys("vl<Esc>wgv");
+    CHECK(again.engine.mode() == vim::Mode::Visual);
+    CHECK(again.shown() == "[ab]c def");
+}
+
+TEST_CASE("A selection the mouse made begins visual mode; one made otherwise is a caret at its start", "[vim][visual]") {
+    Vim mouse("abc|");
+    mouse.select({.anchor = {0, 0}, .caret = {0, 2}}, true);
+    CHECK(mouse.engine.mode() == vim::Mode::Visual);
+    CHECK(mouse.shown() == "[ab]c");
+    mouse.keys("d");
+    CHECK(mouse.shown() == "|c");
+    // A click in visual mode leaves it.
+    Vim click("|abc");
+    click.keys("vl");
+    click.select(Selection::at({0, 2}), true);
+    CHECK(click.engine.mode() == vim::Mode::Normal);
+    Vim other("|abcd");
+    other.select({.anchor = {0, 1}, .caret = {0, 3}}, false);
+    CHECK(other.engine.mode() == vim::Mode::Normal);
+    CHECK(other.shown() == "a|bcd");
+}
+
+TEST_CASE("Visual mode acts at every caret", "[vim][visual]") {
+    Vim v("|ab\n|cd");
+    v.keys("vld");
+    CHECK(v.shown() == "|\n|");
 }
 
 TEST_CASE("Settling puts a caret past a line's end back on its last character", "[vim][engine]") {
