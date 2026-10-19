@@ -890,15 +890,20 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
                        look_of(found->second->severity)->tint);
     }
 
-    // Line numbers, right-aligned, the caret's line's brighter; after them a
-    // chevron where a fold begins, pointing along the row while it's closed.
+    // Line numbers, right-aligned, the caret's line's brighter; relative,
+    // the primary caret's own number goes against the gutter's left. After
+    // them a chevron where a fold begins, pointing along the row while it's
+    // closed.
     const std::vector<FoldRange>& ranges = document.folds();
+    const std::size_t caret_line = view.selections.primary().caret.line;
     for (std::size_t index = 0; index < rows.lines.size(); ++index) {
         const std::size_t line = rows.lines[index];
-        const std::string number = std::to_string(line + 1);
+        const std::string number = std::to_string(line_number_shown(view.line_numbers, folds, line, caret_line));
         const float width = ui.text().caret_x(number, faces.numbers, number.size());
         const Color colour = caret_on(line) ? theme::text_secondary() : theme::text_disabled();
-        ui.text().draw(dl, {frame.numbers_right - width, rows.y(index)}, colour, number, faces.numbers);
+        const bool left = view.line_numbers == LineNumbers::Relative && line == caret_line;
+        const float x = left ? frame.rect.min.x + GUTTER_PAD : frame.numbers_right - width;
+        ui.text().draw(dl, {x, rows.y(index)}, colour, number, faces.numbers);
         if (std::ranges::binary_search(ranges, line, {}, &FoldRange::first)) {
             const std::string_view chevron = folds.closed_at(line) ? ftk::ui::icon::fold_closed : ftk::ui::icon::fold_open;
             const float chevron_width = ui.text().caret_x(chevron, faces.numbers, chevron.size());
@@ -1064,6 +1069,13 @@ void draw_hover_card(core::Context& ui, const Buffer& buffer, EditorView& view, 
 
 float code_line(float text_size) {
     return std::round(text_size * CODE_LINE / CODE_TEXT);
+}
+
+std::size_t line_number_shown(LineNumbers numbers, const Folds& folds, std::size_t line, std::size_t caret_line) {
+    if (numbers == LineNumbers::Absolute || line == caret_line) return line + 1;
+    const std::size_t row = folds.row_of(line);
+    const std::size_t caret_row = folds.row_of(caret_line);
+    return row > caret_row ? row - caret_row : caret_row - row;
 }
 
 CodeViewResult code_view(std::string_view label, Document& document, EditorView& view, const Keymap& keymap,

@@ -43,6 +43,21 @@ inline constexpr float GUTTER_TEXT = 12.0f;
 /// scaled with it to a whole pixel.
 [[nodiscard]] float code_line(float text_size);
 
+/// How a view numbers its lines (sheet 47, R2).
+enum class LineNumbers : uint8_t {
+    /// Each line its own number, from 1.
+    Absolute,
+    /// Each line how many rows it is from the caret's, a closed fold one
+    /// row, as moving up and down counts them; the caret's line its own
+    /// number, drawn against the gutter's left.
+    Relative,
+};
+
+/// The number the gutter shows beside `line` with the caret on
+/// `caret_line`, as `numbers` has it, `folds` closed.
+[[nodiscard]] std::size_t line_number_shown(LineNumbers numbers, const Folds& folds, std::size_t line,
+                                            std::size_t caret_line);
+
 /// One view of a document: what it selects, where it is scrolled, and the
 /// keys it waits on.
 struct EditorView {
@@ -75,6 +90,8 @@ struct EditorView {
     /// The code's text size; its lines, its line numbers and the marks on
     /// it scale with it.
     float text_size{CODE_TEXT};
+    /// How the gutter numbers the lines.
+    LineNumbers line_numbers{LineNumbers::Absolute};
     /// Commands to run on its next draw, by name, as a menu or a palette
     /// asks for them: the core's and the view's own (view_commands()).
     std::vector<std::string> queued;

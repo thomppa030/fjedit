@@ -758,6 +758,39 @@ TEST_CASE("A larger text size spreads the lines further apart", "[code_view]") {
     REQUIRE(e.caret().line == 1);
 }
 
+TEST_CASE("Relative line numbers count rows from the caret's line, which keeps its own", "[code_view][numbers]") {
+    const Document document(FUNCTION, language_for("x.cpp"));
+    Folds folds;
+    CHECK(line_number_shown(LineNumbers::Absolute, folds, 3, 0) == 4);
+    CHECK(line_number_shown(LineNumbers::Relative, folds, 3, 0) == 3);
+    CHECK(line_number_shown(LineNumbers::Relative, folds, 0, 3) == 3);
+    CHECK(line_number_shown(LineNumbers::Relative, folds, 1, 1) == 2);
+    // The function closed is one row, so the line after it is one away.
+    REQUIRE(folds.close(document, 0));
+    CHECK(line_number_shown(LineNumbers::Relative, folds, 3, 0) == 1);
+    CHECK(line_number_shown(LineNumbers::Relative, folds, 0, 3) == 1);
+}
+
+TEST_CASE("Relative, the caret's own line number goes against the gutter's left", "[code_view][numbers]") {
+    // Twelve lines, so the gutter is two digits wide, and the caret on the
+    // second: its "2" is the only number in the brighter colour.
+    Editor e("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl");
+    e.h.click_at({PAST_END, row_y(1)});
+    const auto caret_number_left = [&] {
+        float left = 1e9f;
+        for (const ftk::ui::core::Rect& r : drawn(e.h, ftk::theme::text_secondary())) {
+            if (r.max.x < FOLD_X) left = std::min(left, r.min.x);
+        }
+        return left;
+    };
+    const float right_aligned = caret_number_left();
+    e.view.line_numbers = LineNumbers::Relative;
+    e.h.step();
+    const float left_aligned = caret_number_left();
+    CHECK(left_aligned < 12.0f);
+    CHECK(left_aligned < right_aligned - 4.0f);
+}
+
 namespace {
 
 // Whether every shape in `shapes` lies on row `row`.
