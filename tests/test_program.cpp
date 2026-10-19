@@ -462,6 +462,25 @@ TEST_CASE("Ctrl , opens the preferences, where the text size steps", "[program][
     REQUIRE(run.program->preferences().text_size == before + 1);
 }
 
+TEST_CASE("Ctrl and the wheel over the code size every view's text, as far as the preferences go",
+          "[program][preferences]") {
+    Running run({{"a.txt", "a\n"}});
+    run.press_row("a.txt");
+    const glm::vec2 over = code_rect(run).centre();
+    const int before = run.program->preferences().text_size;
+    run.h.hold(CTRL);
+    run.h.wheel(over, 2.0f);
+    run.h.step();
+    REQUIRE(run.program->preferences().text_size == before + 2);
+    run.h.wheel(over, 100.0f);
+    run.h.step();
+    REQUIRE(run.program->preferences().text_size == TEXT_SIZE_MAX);
+    run.h.wheel(over, -100.0f);
+    run.h.step();
+    REQUIRE(run.program->preferences().text_size == TEXT_SIZE_MIN);
+    run.h.hold({});
+}
+
 TEST_CASE("The minimap's checkbox in the preferences turns it off", "[program][preferences]") {
     Running run({{"a.txt", "a\n"}});
     REQUIRE(run.program->run("edit.preferences"));

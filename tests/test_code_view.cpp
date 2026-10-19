@@ -35,6 +35,8 @@ struct Editor {
     // What the view handed out, in whichever frame it did.
     std::optional<Location> went{};
     std::optional<Position> renamed{};
+    // Steps of text size asked for, all frames together.
+    int zoomed{0};
 
     explicit Editor(std::string_view text, std::string_view file = "x.cpp")
         : document(text, language_for(file)), view(document) {
@@ -42,6 +44,7 @@ struct Editor {
             const CodeViewResult result = code_view("Code", document, view, keys, {.min = {0.0f, 0.0f}, .max = {800.0f, 600.0f}});
             if (result.go) went = result.go;
             if (result.rename) renamed = result.rename;
+            zoomed += result.zoom;
         });
         h.step(2);
     }
@@ -195,6 +198,38 @@ TEST_CASE("The wheel scrolls, never past the start", "[code_view]") {
     REQUIRE(e.view.scroll.y > 0.0f);
     e.h.wheel({400.0f, 300.0f}, 10.0f);
     REQUIRE(e.view.scroll.y == 0.0f);
+}
+
+TEST_CASE("Ctrl and the wheel ask for the text to grow or shrink, and scroll nothing", "[code_view]") {
+    std::string text;
+    for (int i = 0; i < 100; ++i) text += "line\n";
+    Editor e(text);
+    e.h.hold(CTRL);
+    e.h.wheel({400.0f, 300.0f}, 2.0f);
+    REQUIRE(e.zoomed == 2);
+    e.h.wheel({400.0f, 300.0f}, -3.0f);
+    REQUIRE(e.zoomed == -1);
+    REQUIRE(e.view.scroll.y == 0.0f);
+    // A touchpad's small turns add up to a step.
+    e.h.wheel({400.0f, 300.0f}, 0.5f);
+    REQUIRE(e.zoomed == -1);
+    e.h.wheel({400.0f, 300.0f}, 0.5f);
+    REQUIRE(e.zoomed == 0);
+    // Over the minimap too.
+    e.h.wheel({CODE_RIGHT + 40.0f, 300.0f}, 1.0f);
+    REQUIRE(e.zoomed == 1);
+    e.h.hold({});
+}
+
+TEST_CASE("A new text size keeps the line at the top where it was", "[code_view]") {
+    std::string text;
+    for (int i = 0; i < 100; ++i) text += "line\n";
+    Editor e(text);
+    e.view.scroll.y = 10.0f * code_line(CODE_TEXT);
+    e.h.step();
+    e.view.text_size = 2.0f * CODE_TEXT;
+    e.h.step();
+    REQUIRE(e.view.scroll.y == 10.0f * code_line(2.0f * CODE_TEXT));
 }
 
 TEST_CASE("A caret moved out of sight brings the view after it", "[code_view]") {

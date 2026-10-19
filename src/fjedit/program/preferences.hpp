@@ -20,7 +20,7 @@ namespace fjedit {
 
 /// The code's text size steps between these, in pixels.
 inline constexpr int TEXT_SIZE_MIN = 10;
-inline constexpr int TEXT_SIZE_MAX = 24;
+inline constexpr int TEXT_SIZE_MAX = 32;
 
 struct Preferences {
     /// The code's text size, in pixels; its lines and line numbers scale
