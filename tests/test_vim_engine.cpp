@@ -567,6 +567,41 @@ TEST_CASE("Visual mode acts at every caret", "[vim][visual]") {
     CHECK(v.shown() == "|\n|");
 }
 
+TEST_CASE("R types over the characters, on past a line's end, an underline its caret", "[vim][replace]") {
+    Vim v("|abc");
+    v.keys("Rx");
+    CHECK(v.engine.mode() == vim::Mode::Replace);
+    CHECK(v.engine.caret_shape() == vim::CaretShape::Underline);
+    v.keys("y<Esc>");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    CHECK(v.shown() == "x|yc");
+    Vim past("a|b");
+    past.keys("Rxyz<Esc>");
+    CHECK(past.shown() == "axy|z");
+}
+
+TEST_CASE("Backspace in replace mode puts back what was typed over, and before that only moves", "[vim][replace]") {
+    Vim v("|abc");
+    v.keys("Rxy<BS><BS><Esc>");
+    CHECK(v.shown() == "|abc");
+    Vim before("a|bc");
+    before.keys("Rx<BS><BS><Esc>");
+    CHECK(before.shown() == "|abc");
+    // What was put on past the end goes again.
+    Vim added("a|b");
+    added.keys("Rxy<BS><Esc>");
+    CHECK(added.shown() == "a|x");
+}
+
+TEST_CASE("A replace is one step of the history, and acts at every caret", "[vim][replace]") {
+    Vim v("|abc");
+    v.keys("Rxy<Esc>u");
+    CHECK(v.shown() == "|abc");
+    Vim carets("|ab\n|cd");
+    carets.keys("Rx<Esc>");
+    CHECK(carets.shown() == "|xb\n|xd");
+}
+
 TEST_CASE("Settling puts a caret past a line's end back on its last character", "[vim][engine]") {
     Vim v("ab|");
     CommandContext context{.document = v.view.document, .selections = v.view.selections, .layout = v.view.layout,

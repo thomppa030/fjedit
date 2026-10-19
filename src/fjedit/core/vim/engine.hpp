@@ -36,6 +36,8 @@ enum class Mode : uint8_t {
     Normal,
     /// Keys type text, each caret between characters.
     Insert,
+    /// Keys type text over the characters at the carets, `R`.
+    Replace,
     /// Keys move one end of each selection, `v`; an operator acts on the
     /// selections. They take the characters at both ends.
     Visual,
@@ -121,7 +123,11 @@ private:
 
     void take_normal(const Chord& key, CommandContext& context);
     void take_insert(const Chord& key, CommandContext& context);
+    void take_replace(const Chord& key, CommandContext& context);
     void take_visual(const Chord& key, CommandContext& context);
+    // Out of insert or replace mode to normal mode, each caret onto the
+    // character before it.
+    void leave_insert(CommandContext& context);
     // Visual mode's operators and its other commands, `name` with the
     // character `argument` it takes, a count of `count` and the register
     // `reg`; false for a name that is none of them.
@@ -155,6 +161,8 @@ private:
     Mode last_visual_mode_{Mode::Visual};
     // An insert begun from a block, which leaves one caret when it ends.
     bool block_insert_{false};
+    // In replace mode, what each caret wrote over, for Backspace to put back.
+    std::vector<std::vector<std::string>> overwritten_;
 };
 
 } // namespace fjedit::vim

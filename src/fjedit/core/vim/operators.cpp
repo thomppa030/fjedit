@@ -518,6 +518,52 @@ bool replace_characters(std::string_view with, std::size_t count, CommandContext
     return true;
 }
 
+void overtype(std::string_view character, CommandContext& context, std::vector<std::vector<std::string>>& overwritten) {
+    const Buffer& buffer = context.document.buffer();
+    const std::vector<Selection> was = selections_of(context);
+    overwritten.resize(was.size());
+    Edit edit;
+    for (std::size_t i = 0; i < was.size(); ++i) {
+        const Position at = was[i].caret;
+        const Position over = right_in_line(buffer, at, 1);
+        overwritten[i].push_back(buffer.text({at, over}));
+        edit.changes.push_back({.span = {at, over}, .text = std::string(character)});
+    }
+    commit(context, std::move(edit), [&](const Edit& made) {
+        std::vector<Selection> next;
+        for (const Span& span : spans_after(made)) next.push_back(Selection::at(span.to));
+        return next;
+    });
+}
+
+void take_back_overtyped(CommandContext& context, std::vector<std::vector<std::string>>& overwritten) {
+    const Buffer& buffer = context.document.buffer();
+    const std::vector<Selection> was = selections_of(context);
+    overwritten.resize(was.size());
+    std::vector<Change> changes;
+    std::vector<Position> back;
+    std::vector<std::optional<std::size_t>> made_by(was.size());
+    for (std::size_t i = 0; i < was.size(); ++i) {
+        const Position at = was[i].caret;
+        const Position before = left_in_line(buffer, at, 1);
+        back.push_back(before);
+        if (overwritten[i].empty() || before == at) continue;
+        made_by[i] = changes.size();
+        changes.push_back({.span = {before, at}, .text = std::move(overwritten[i].back())});
+        overwritten[i].pop_back();
+    }
+    Edit edit;
+    edit.changes = std::move(changes);
+    commit(context, std::move(edit), [&](const Edit& made) {
+        const std::vector<Span> spans = spans_after(made);
+        std::vector<Selection> next;
+        for (std::size_t i = 0; i < was.size(); ++i) {
+            next.push_back(Selection::at(made_by[i] ? spans[*made_by[i]].from : map(made, back[i], Bias::Before)));
+        }
+        return next;
+    });
+}
+
 void replace_in(std::span<const std::optional<Range>> ranges, std::string_view with, CommandContext& context) {
     const Buffer& buffer = context.document.buffer();
     const std::vector<Selection> was = selections_of(context);

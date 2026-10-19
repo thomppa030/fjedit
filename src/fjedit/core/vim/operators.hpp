@@ -17,7 +17,9 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace fjedit::vim {
 
@@ -94,6 +96,18 @@ void join_lines(std::size_t count, CommandContext& context);
 /// each; a line break replaces them all with one. A caret whose line hasn't
 /// that many is left as it is. False when no caret had them.
 bool replace_characters(std::string_view with, std::size_t count, CommandContext& context);
+
+/// Replace mode's typing: `character` written over the character at each
+/// caret, or past a line's end put in, the caret after it. What each caret
+/// wrote over goes on its stack in `overwritten` ("" for nothing), for
+/// take_back_overtyped() to put back.
+void overtype(std::string_view character, CommandContext& context,
+              std::vector<std::vector<std::string>>& overwritten);
+
+/// Replace mode's Backspace: each caret a character back, what it wrote over
+/// there put back off its stack in `overwritten`; past where its replacing
+/// began, it only moves.
+void take_back_overtyped(CommandContext& context, std::vector<std::vector<std::string>>& overwritten);
 
 /// `r` in visual mode: every character `ranges` take, but line breaks,
 /// replaced by `with`, as one step; each caret at its range's start.

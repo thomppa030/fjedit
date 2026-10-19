@@ -95,6 +95,7 @@ struct ModeShown {
 ModeShown mode_shown(vim::Mode mode) {
     switch (mode) {
         case vim::Mode::Insert: return {"Insert", ui::StatusTone::On};
+        case vim::Mode::Replace: return {"Replace", ui::StatusTone::Warning};
         case vim::Mode::Visual: return {"Visual", ui::StatusTone::Selected};
         case vim::Mode::VisualLine: return {"Visual line", ui::StatusTone::Selected};
         case vim::Mode::VisualBlock: return {"Visual block", ui::StatusTone::Selected};

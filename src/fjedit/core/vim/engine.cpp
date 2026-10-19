@@ -5,6 +5,8 @@
 #include "fjedit/core/vim/text_objects.hpp"
 #include "fjedit/core/vim/walk.hpp"
 
+#include "ftk/base/utf8.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -409,6 +411,8 @@ bool run_operator(const Command& command, CommandContext& c, Registers& register
 std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
     if (mode_ == Mode::Insert) {
         take_insert(key, context);
+    } else if (mode_ == Mode::Replace) {
+        take_replace(key, context);
     } else if (visual(mode_)) {
         take_visual(key, context);
     } else {
@@ -418,7 +422,7 @@ std::optional<std::string> Engine::take(const Chord& key, CommandContext& contex
 }
 
 void Engine::settle(CommandContext& context, bool by_mouse) {
-    if (mode_ == Mode::Insert) return;
+    if (mode_ == Mode::Insert || mode_ == Mode::Replace) return;
     const Buffer& buffer = context.document.buffer();
     const std::span<const Selection> all = context.selections.all();
     const bool selecting = std::ranges::any_of(all, [](const Selection& s) { return !s.empty(); });
@@ -455,6 +459,7 @@ void Engine::settle(CommandContext& context, bool by_mouse) {
 
 CaretShape Engine::caret_shape() const {
     if (mode_ == Mode::Insert) return CaretShape::Bar;
+    if (mode_ == Mode::Replace) return CaretShape::Underline;
     return operator_waits_ ? CaretShape::HalfBlock : CaretShape::Block;
 }
 
@@ -475,7 +480,7 @@ std::string Engine::pending() const {
 }
 
 bool Engine::wants_character() const {
-    if (mode_ == Mode::Insert || keys_.empty()) return false;
+    if (mode_ == Mode::Insert || mode_ == Mode::Replace || keys_.empty()) return false;
     const std::string& last = keys_.back().text;
     if (last != "f" && last != "t" && last != "F" && last != "T" && last != "r" && last != "\"") return false;
     Command command;
@@ -587,6 +592,12 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         mode_ = Mode::Insert;
         return;
     }
+    if (name == "R") {
+        c.document.history().hold();
+        overwritten_.clear();
+        mode_ = Mode::Replace;
+        return;
+    }
     if (name == "u" || name == "<C-r>") {
         for (std::size_t i = 0; i < n; ++i) (void)run_command(name == "u" ? "edit.undo" : "edit.redo", c);
         settle(c);
@@ -609,23 +620,41 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     settle(c);
 }
 
-void Engine::take_insert(const Chord& key, CommandContext& c) {
-    if (escape(key)) {
-        // Back to normal mode, each caret onto the character before it.
-        c.document.history().close();
-        std::vector<Selection> back;
-        for (const Selection& selection : c.selections.all()) {
-            back.push_back(Selection::at(left_in_line(c.document.buffer(), selection.caret, 1)));
+void Engine::leave_insert(CommandContext& c) {
+    c.document.history().close();
+    std::vector<Selection> back;
+    for (const Selection& selection : c.selections.all()) {
+        back.push_back(Selection::at(left_in_line(c.document.buffer(), selection.caret, 1)));
+    }
+    c.selections.set(std::move(back), c.selections.primary_index());
+    // A block's insert, made at each of its lines, leaves the caret on the
+    // first.
+    if (block_insert_) c.selections = Selections(c.selections.all().front());
+    block_insert_ = false;
+    overwritten_.clear();
+    mode_ = Mode::Normal;
+    settle(c);
+}
+
+void Engine::take_replace(const Chord& key, CommandContext& c) {
+    if (escape(key)) return leave_insert(c);
+    if (!key.text.empty()) {
+        for (std::size_t at = 0; at < key.text.size();) {
+            const std::size_t from = at;
+            (void)ftk::utf8::next(key.text, at);
+            overtype(std::string_view(key.text).substr(from, at - from), c, overwritten_);
         }
-        c.selections.set(std::move(back), c.selections.primary_index());
-        // A block's insert, made at each of its lines, leaves the caret on
-        // the first.
-        if (block_insert_) c.selections = Selections(c.selections.all().front());
-        block_insert_ = false;
-        mode_ = Mode::Normal;
-        settle(c);
         return;
     }
+    if (pressed(key, Key::Backspace)) return take_back_overtyped(c, overwritten_);
+    // Enter breaks the line, and the other keys edit or move as in insert
+    // mode; after them Backspace has nothing of before to put back.
+    overwritten_.clear();
+    take_insert(key, c);
+}
+
+void Engine::take_insert(const Chord& key, CommandContext& c) {
+    if (escape(key)) return leave_insert(c);
     if (!key.text.empty()) {
         CommandContext typed = c;
         typed.text = key.text;
