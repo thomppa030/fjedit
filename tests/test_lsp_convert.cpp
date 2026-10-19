@@ -166,4 +166,9 @@ TEST_CASE("An entry with no edit of its own replaces the word as the file's lang
     REQUIRE(sheet[0].change == Change{.span = {{0, 4}, {0, 13}}, .text = "justify-content"});
     const std::vector<Completion> code = completions_from(answer, Position{0, 13}, "    justify-c", language_for("x.cpp"), UTF8);
     REQUIRE(code[0].change == Change{.span = {{0, 12}, {0, 13}}, .text = "justify-content"});
+    // A widget's runs through its colons as well.
+    const Json click = parsed(R"json([{"label":"on:click"}])json");
+    const std::vector<Completion> widget =
+        completions_from(click, Position{0, 14}, "    <div on:cl", language_for("hud.fjwidget"), UTF8);
+    REQUIRE(widget[0].change == Change{.span = {{0, 9}, {0, 14}}, .text = "on:click"});
 }

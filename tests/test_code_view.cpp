@@ -1058,6 +1058,14 @@ TEST_CASE("A word begun asks, as the language has its words, and so does what th
     CHECK(asks(sheet, {}, "    color: var(--") == CompletionTrigger{});
     CHECK(asks(sheet, {}, "    margin: -1") == std::nullopt);
     CHECK(asks(sheet, std::vector<std::string>{"@"}, "@") == character("@"));
+    // A widget's run through hyphens and colons too; its quote and brace are
+    // what fjls names.
+    const Language& widget = language_for("hud.fjwidget");
+    const std::vector<std::string> fjls{"<", "{", "\""};
+    CHECK(asks(widget, fjls, "    <health-b") == CompletionTrigger{});
+    CHECK(asks(widget, fjls, "    <div on:") == CompletionTrigger{});
+    CHECK(asks(widget, fjls, "    <div class=\"") == character("\""));
+    CHECK(asks(widget, fjls, "    <text>{") == character("{"));
 }
 
 TEST_CASE("What the service names asks anew, even with a list open", "[code_view][completion]") {

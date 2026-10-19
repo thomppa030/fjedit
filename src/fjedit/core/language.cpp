@@ -35,8 +35,10 @@ const Language& fjss() {
 }
 
 const Language& widget() {
+    // A widget's tags, attributes and properties run through hyphens and
+    // colons: health-bar, on:click, class:low, style---fill.
     static const Language language{.name = "Widget", .lexer = lex::markup(), .line_comment = "",
-                                   .folding = Folding::Indentation};
+                                   .folding = Folding::Indentation, .word_also = "-:"};
     return language;
 }
 
