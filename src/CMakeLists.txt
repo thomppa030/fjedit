@@ -25,6 +25,7 @@ add_library(fjedit-core STATIC
     fjedit/core/structure.cpp
     fjedit/core/syntax.cpp
     fjedit/core/text_file.cpp
+    fjedit/core/vim/motions.cpp
     fjedit/core/workspace.cpp)
 add_library(fjedit::core ALIAS fjedit-core)
 ftk_target_defaults(fjedit-core)
