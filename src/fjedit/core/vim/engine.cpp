@@ -1,6 +1,9 @@
 #include "fjedit/core/vim/engine.hpp"
 
 #include "fjedit/core/vim/notation.hpp"
+#include "fjedit/core/vim/operators.hpp"
+#include "fjedit/core/vim/text_objects.hpp"
+#include "fjedit/core/vim/walk.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -38,12 +41,20 @@ Position on_character(const Buffer& buffer, Position at) {
     return at;
 }
 
-// A normal-mode command as its keys spell it.
+// A normal-mode command as its keys spell it: a register, a count, an
+// operator with a count of its own, and what it acts on or does.
 struct Command {
+    // The register named with ", or " itself.
+    char reg{'"'};
     std::optional<std::size_t> count;
-    // What it is, by its keys in Vim's notation: "w", "gg", "<C-r>".
+    // The operator: d c y < > = g~ gu gU; empty for none.
+    std::string op;
+    std::optional<std::size_t> op_count;
+    // What it is or acts on, by its keys in Vim's notation: a motion ("w",
+    // "gg"), a text object ("iw"), a command ("x", "<C-r>"), or "line" for
+    // the operator doubled (dd).
     std::string name;
-    // The character f, t, F and T look for.
+    // The character f, t, F, T and r take.
     std::string argument;
 };
 
@@ -59,34 +70,103 @@ bool digit(const Chord& key) {
     return key.text.size() == 1 && key.text[0] >= '0' && key.text[0] <= '9';
 }
 
+// A count from `keys[i]` on, which never begins with 0: 0 alone goes to the
+// line's start.
+void read_count(std::span<const Chord> keys, std::size_t& i, std::optional<std::size_t>& count) {
+    while (i < keys.size() && digit(keys[i]) && (count || keys[i].text != "0")) {
+        const auto value = static_cast<std::size_t>(keys[i].text[0] - '0');
+        count = std::min(count.value_or(0) * 10 + value, COUNT_MAX);
+        ++i;
+    }
+}
+
+// The keys ending at `end`: Whole when that is the last, else too many.
+Parsed ends_at(std::span<const Chord> keys, std::size_t end) {
+    return end == keys.size() ? Parsed::Whole : Parsed::Invalid;
+}
+
+// The character a key types as f, t and r take it: what it types, or a line
+// break or a tab for Enter and Tab; empty for any other key.
+std::string argument_of(const Chord& key) {
+    if (!key.text.empty()) return key.text;
+    if (key.modifiers == ftk::ui::Modifiers{} && key.key == Key::Enter) return "\n";
+    if (key.modifiers == ftk::ui::Modifiers{} && key.key == Key::Tab) return "\t";
+    return {};
+}
+
+// A motion or a command from `keys[i]` on.
+Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) {
+    const Chord& key = keys[i];
+    const bool prefix = key.text == "g";
+    const bool takes_character = key.text == "f" || key.text == "t" || key.text == "F" || key.text == "T" ||
+                                 (key.text == "r" && command.op.empty());
+    if (!prefix && !takes_character) {
+        command.name = notation(key);
+        return ends_at(keys, i + 1);
+    }
+    if (i + 1 == keys.size()) return Parsed::Waiting;
+    const Chord& next = keys[i + 1];
+    if (prefix) {
+        if (next.text.empty()) return Parsed::Invalid;
+        command.name = key.text + next.text;
+    } else {
+        command.argument = argument_of(next);
+        if (command.argument.empty()) return Parsed::Invalid;
+        command.name = key.text;
+    }
+    return ends_at(keys, i + 2);
+}
+
 // What `keys`, typed so far, come to.
 Parsed parse(std::span<const Chord> keys, Command& command) {
     std::size_t i = 0;
-    // A count, which never begins with 0: 0 alone goes to the line's start.
-    while (i < keys.size() && digit(keys[i]) && (command.count || keys[i].text != "0")) {
-        const auto value = static_cast<std::size_t>(keys[i].text[0] - '0');
-        command.count = std::min(command.count.value_or(0) * 10 + value, COUNT_MAX);
-        ++i;
+    if (keys[i].text == "\"") {
+        if (i + 1 == keys.size()) return Parsed::Waiting;
+        const std::string& name = keys[i + 1].text;
+        if (name.size() != 1 || !Registers::valid(name[0])) return Parsed::Invalid;
+        command.reg = name[0];
+        i += 2;
     }
+    read_count(keys, i, command.count);
     if (i == keys.size()) return Parsed::Waiting;
-    const Chord& key = keys[i];
-    const std::size_t after = i + 1;
-    const bool prefix = key.text == "g";
-    const bool searching = key.text == "f" || key.text == "t" || key.text == "F" || key.text == "T";
-    if (!prefix && !searching) {
-        command.name = notation(key);
-        return after == keys.size() ? Parsed::Whole : Parsed::Invalid;
+
+    const std::string& key = keys[i].text;
+    if (key == "d" || key == "c" || key == "y" || key == "<" || key == ">" || key == "=") {
+        command.op = key;
+        ++i;
+    } else if (key == "g") {
+        if (i + 1 == keys.size()) return Parsed::Waiting;
+        const std::string& next = keys[i + 1].text;
+        if (next == "~" || next == "u" || next == "U") {
+            command.op = key + next;
+            i += 2;
+        }
     }
-    if (after == keys.size()) return Parsed::Waiting;
-    const Chord& next = keys[after];
-    if (next.text.empty() || after + 1 != keys.size()) return Parsed::Invalid;
-    if (prefix) {
-        command.name = key.text + next.text;
-    } else {
-        command.name = key.text;
-        command.argument = next.text;
+    if (command.op.empty()) return parse_name(keys, i, command);
+
+    read_count(keys, i, command.op_count);
+    if (i == keys.size()) return Parsed::Waiting;
+    // The operator doubled acts on lines: dd, >>, g~~ and g~g~.
+    const std::string last(1, command.op.back());
+    if (keys[i].text == last) {
+        command.name = "line";
+        return ends_at(keys, i + 1);
     }
-    return Parsed::Whole;
+    if (command.op.size() == 2 && keys[i].text == "g") {
+        if (i + 1 == keys.size()) return Parsed::Waiting;
+        if (keys[i + 1].text == last) {
+            command.name = "line";
+            return ends_at(keys, i + 2);
+        }
+    }
+    // A text object.
+    if (keys[i].text == "i" || keys[i].text == "a") {
+        if (i + 1 == keys.size()) return Parsed::Waiting;
+        if (keys[i + 1].text.empty()) return Parsed::Invalid;
+        command.name = keys[i].text + keys[i + 1].text;
+        return ends_at(keys, i + 2);
+    }
+    return parse_name(keys, i, command);
 }
 
 // Where a motion took a caret, the goal along the line it keeps for going
@@ -162,7 +242,15 @@ std::optional<Went> motion(const CommandContext& c, const Command& command, cons
     if (name == "<BS>") return went(across_lines(buffer, at, false, n));
     if (name == "j" || name == "<Down>" || name == "gj") return vertical(c, selection, true, n);
     if (name == "k" || name == "<Up>" || name == "gk") return vertical(c, selection, false, n);
-    if (name == "w" || name == "W") return went(word_start_after(buffer, at, n, name == "W"));
+    if (name == "w" || name == "W") {
+        const bool big = name == "W";
+        // cw on a word changes to its end, as ce; an operator's w stops at
+        // the end of the line it leaves.
+        if (command.op == "c" && detail::Walk(buffer, at, big).kind() != detail::BLANK) {
+            return went(word_end_after(buffer, at, n, big, true), MotionKind::Inclusive);
+        }
+        return went(word_start_after(buffer, at, n, big, !command.op.empty()));
+    }
     if (name == "b" || name == "B") return went(word_start_before(buffer, at, n, name == "B"));
     if (name == "e" || name == "E") return went(word_end_after(buffer, at, n, name == "E"), MotionKind::Inclusive);
     if (name == "ge" || name == "gE") {
@@ -210,6 +298,68 @@ std::optional<Went> motion(const CommandContext& c, const Command& command, cons
     return went(*found, looking.forward ? MotionKind::Inclusive : MotionKind::Exclusive);
 }
 
+Operator operator_named(std::string_view op) {
+    if (op == "d") return Operator::Delete;
+    if (op == "c") return Operator::Change;
+    if (op == "y") return Operator::Yank;
+    if (op == ">") return Operator::ShiftRight;
+    if (op == "<") return Operator::ShiftLeft;
+    if (op == "=") return Operator::Indent;
+    if (op == "gu") return Operator::Lower;
+    if (op == "gU") return Operator::Upper;
+    return Operator::ToggleCase;
+}
+
+// The operator `command` names over what it names at every caret: the
+// operator doubled takes lines, from the caret's; a text object what it
+// takes around the caret; a motion what it passes over. The counts before
+// and after the operator multiply. True when a change has begun insert
+// mode.
+bool run_operator(const Command& command, CommandContext& c, Registers& registers, std::optional<CharSearch>& search) {
+    const Buffer& buffer = c.document.buffer();
+    const bool counted = command.count || command.op_count;
+    const std::size_t n = std::min(command.count.value_or(1) * command.op_count.value_or(1), COUNT_MAX);
+    Command moving = command;
+    moving.count = counted ? std::optional<std::size_t>(n) : std::nullopt;
+    const bool object = command.name.size() == 2 && (command.name[0] == 'i' || command.name[0] == 'a');
+
+    const Operator op = operator_named(command.op);
+    std::vector<std::optional<Range>> ranges;
+    bool any = false;
+    // A range with nothing in it: x on an empty line. It changes nothing
+    // and leaves the registers, but a change there still inserts.
+    bool empty = false;
+    for (const Selection& selection : c.selections.all()) {
+        std::optional<Range> range;
+        if (command.name == "line") {
+            const std::size_t last = std::min(selection.caret.line + n - 1, buffer.line_count() - 1);
+            range = Range{.span = {selection.caret, {last, 0}}, .linewise = true};
+        } else if (object) {
+            if (const std::optional<Taken> taken = text_object(buffer, c.document.syntax(), selection.caret, command.name, n)) {
+                range = object_range(buffer, *taken);
+            }
+        } else if (const std::optional<Went> went = motion(c, moving, selection, search)) {
+            range = motion_range(buffer, selection.caret, went->to, went->kind);
+        }
+        if (range && !range->linewise && range->span.empty()) {
+            empty = true;
+            range.reset();
+        }
+        any = any || range.has_value();
+        ranges.push_back(range);
+    }
+    c.document.history().close();
+    if (!any) {
+        if (op != Operator::Change || !empty) return false;
+        c.document.history().hold();
+        return true;
+    }
+    // The motions Vim always puts a delete's text in register 1 for.
+    const bool numbered = command.name == "%" || command.name == "{" || command.name == "}";
+    operate(op, ranges, command.reg, c, registers, 1, numbered);
+    return op == Operator::Change;
+}
+
 } // namespace
 
 std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
@@ -239,7 +389,8 @@ void Engine::settle(CommandContext& context) const {
 }
 
 CaretShape Engine::caret_shape() const {
-    return mode_ == Mode::Insert ? CaretShape::Bar : CaretShape::Block;
+    if (mode_ == Mode::Insert) return CaretShape::Bar;
+    return operator_waits_ ? CaretShape::HalfBlock : CaretShape::Block;
 }
 
 std::string Engine::pending() const {
@@ -251,7 +402,7 @@ std::string Engine::pending() const {
 bool Engine::wants_character() const {
     if (mode_ != Mode::Normal || keys_.empty()) return false;
     const std::string& last = keys_.back().text;
-    if (last != "f" && last != "t" && last != "F" && last != "T") return false;
+    if (last != "f" && last != "t" && last != "F" && last != "T" && last != "r" && last != "\"") return false;
     Command command;
     return parse(keys_, command) == Parsed::Waiting;
 }
@@ -260,13 +411,66 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     keys_.push_back(key);
     Command command;
     const Parsed parsed = parse(keys_, command);
+    operator_waits_ = parsed == Parsed::Waiting && !command.op.empty();
     if (parsed == Parsed::Waiting) return;
     keys_.clear();
     if (parsed == Parsed::Invalid) return;
 
+    if (!command.op.empty()) {
+        if (run_operator(command, c, *registers_, search_)) {
+            mode_ = Mode::Insert;
+        } else {
+            settle(c);
+        }
+        return;
+    }
+
     const Buffer& buffer = c.document.buffer();
     const std::string_view name = command.name;
     const std::size_t n = command.count.value_or(1);
+
+    // The small changes that are an operator over a motion: x is dl, s cl,
+    // S cc, C c$, D d$, and Y y$ (as Neovim has it).
+    struct Shorthand {
+        std::string_view name;
+        std::string_view op;
+        std::string_view motion;
+    };
+    static constexpr Shorthand SHORTHANDS[] = {
+        {"x", "d", "l"}, {"<Del>", "d", "l"}, {"X", "d", "h"}, {"s", "c", "l"}, {"S", "c", "line"},
+        {"C", "c", "$"}, {"D", "d", "$"},     {"Y", "y", "$"},
+    };
+    for (const Shorthand& shorthand : SHORTHANDS) {
+        if (shorthand.name != name) continue;
+        Command expanded = command;
+        expanded.op = shorthand.op;
+        expanded.name = shorthand.motion;
+        if (run_operator(expanded, c, *registers_, search_)) {
+            mode_ = Mode::Insert;
+        } else {
+            settle(c);
+        }
+        return;
+    }
+    // The other small changes, each a step of its own.
+    const auto change = [&](auto&& make) {
+        c.document.history().close();
+        make();
+        settle(c);
+    };
+    if (name == "p" || name == "P") {
+        if (const std::optional<Yanked> yanked = registers_->get(command.reg, c.clipboard)) {
+            change([&] { put(*yanked, name == "p", n, c); });
+        }
+        return;
+    }
+    if (name == "J") return change([&] { join_lines(n, c); });
+    if (name == "r") return change([&] { (void)replace_characters(command.argument, n, c); });
+    if (name == "~") return change([&] { toggle_case_characters(n, c); });
+    if (name == "<C-a>" || name == "<C-x>") {
+        const auto amount = static_cast<long long>(n);
+        return change([&] { (void)add_to_number(name == "<C-a>" ? amount : -amount, c); });
+    }
 
     // Into insert mode with each caret where `place` puts it; what is typed
     // there is one step of the history with what began it.

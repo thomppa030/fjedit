@@ -72,14 +72,16 @@ std::string tab_label(const std::filesystem::path& path) {
     return path.filename().string() + "##" + path.generic_string();
 }
 
-// A view showing its code as `preferences` have it.
-void show_as_preferred(EditorView& view, const Preferences& preferences) {
+// A view showing its code as `preferences` have it, Vim on it sharing
+// `registers` with the other views.
+void show_as_preferred(EditorView& view, const Preferences& preferences,
+                       const std::shared_ptr<vim::Registers>& registers) {
     view.minimap = preferences.minimap;
     view.text_size = static_cast<float>(preferences.text_size);
     view.line_numbers = preferences.line_numbers;
     view.around_caret = static_cast<std::size_t>(preferences.around_caret);
     // Vim turned on starts each view in its normal mode.
-    if (preferences.vim && !view.vim) view.vim.emplace();
+    if (preferences.vim && !view.vim) view.vim.emplace(registers);
     if (!preferences.vim) view.vim.reset();
 }
 
@@ -247,7 +249,7 @@ LanguageServerShown Program::fjls_shown() const {
 
 std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
     auto view = std::make_unique<EditorView>(document);
-    show_as_preferred(*view, preferences_);
+    show_as_preferred(*view, preferences_, registers_);
     if (services_.serves(path)) {
         view->service = &services_;
         view->path = path;
@@ -666,7 +668,7 @@ void Program::draw_group(Group& group, std::size_t index) {
                 }
             }
         }
-        show_as_preferred(*tab.view, preferences_);
+        show_as_preferred(*tab.view, preferences_, registers_);
         Document* document = workspace_.find(tab.path);
         const glm::vec2 at = ui::cursor();
         const glm::vec2 room = ui::space_left();

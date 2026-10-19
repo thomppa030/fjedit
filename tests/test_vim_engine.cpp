@@ -253,6 +253,188 @@ TEST_CASE("f waits for a character, and a command dropped counts for nothing", "
     CHECK(v.shown() == "ab|cb");
 }
 
+TEST_CASE("dw deletes to the next word, and on a line's last word keeps the break", "[vim][operator]") {
+    Vim v("|foo bar\nbaz");
+    v.keys("dw");
+    CHECK(v.shown() == "|bar\nbaz");
+    Vim last("foo |bar\nbaz");
+    last.keys("dw");
+    CHECK(last.shown() == "foo| \nbaz");
+}
+
+TEST_CASE("dd deletes lines, a count more; the last line's leaves the caret on the line before", "[vim][operator]") {
+    Vim v("a\n|b\nc\nd");
+    v.keys("2dd");
+    CHECK(v.shown() == "a\n|d");
+    v.keys("dd");
+    CHECK(v.shown() == "|a");
+    Vim lines("|a\nb\nc");
+    lines.keys("dj");
+    CHECK(lines.shown() == "|c");
+}
+
+TEST_CASE("An exclusive motion ending at a line's start from its first takes whole lines", "[vim][operator]") {
+    Vim v("|a\nb\n\nc");
+    v.keys("d}");
+    CHECK(v.shown() == "|\nc");
+}
+
+TEST_CASE("cw changes to the word's end, undone in one with what was typed", "[vim][operator]") {
+    Vim v("|foo bar");
+    v.keys("cwx<Esc>");
+    CHECK(v.shown() == "|x bar");
+    v.keys("u");
+    CHECK(v.shown() == "|foo bar");
+}
+
+TEST_CASE("Operators take text objects", "[vim][operator]") {
+    Vim brackets("f(|a, b)");
+    brackets.keys("di(");
+    CHECK(brackets.shown() == "f(|)");
+    Vim quotes("say \"h|i\" now");
+    quotes.keys("ci\"yo<Esc>");
+    CHECK(quotes.shown() == "say \"y|o\" now");
+    Vim word("foo |bar baz");
+    word.keys("daw");
+    CHECK(word.shown() == "foo |baz");
+}
+
+TEST_CASE("yy and p put lines below, P above, the caret on the first one's text", "[vim][operator]") {
+    Vim v("|a\nb");
+    v.keys("yyp");
+    CHECK(v.shown() == "a\n|a\nb");
+    v.keys("P");
+    CHECK(v.shown() == "a\n|a\na\nb");
+    // Text put before the caret leaves it on the last character put.
+    Vim words("|ab cd");
+    words.keys("ywP");
+    CHECK(words.shown() == "ab| ab cd");
+}
+
+TEST_CASE("x, X, D, C, s, S and Y are operators over a motion", "[vim][operator]") {
+    Vim x("a|bc");
+    x.keys("x");
+    CHECK(x.shown() == "a|c");
+    x.keys("X");
+    CHECK(x.shown() == "|c");
+    Vim d("a|bc");
+    d.keys("D");
+    CHECK(d.shown() == "|a");
+    Vim c("a|bc");
+    c.keys("Cx<Esc>");
+    CHECK(c.shown() == "a|x");
+    Vim s("|ab");
+    s.keys("sx<Esc>");
+    CHECK(s.shown() == "|xb");
+    Vim big_s("  |ab\ncd");
+    big_s.keys("Sx<Esc>");
+    CHECK(big_s.shown() == "  |x\ncd");
+    Vim y("a|bc");
+    y.keys("Yp");
+    CHECK(y.shown() == "abb|cc");
+    // x on an empty line takes nothing and leaves the register.
+    Vim empty("|a\n\n");
+    empty.keys("xjxp");
+    CHECK(empty.shown() == "\n|a\n");
+}
+
+TEST_CASE("J joins lines with a space, none before )", "[vim][operator]") {
+    Vim v("|a\n  b\nc");
+    v.keys("J");
+    CHECK(v.shown() == "a| b\nc");
+    Vim three("|a\n  b\nc");
+    three.keys("3J");
+    CHECK(three.shown() == "a b| c");
+    Vim paren("|f(\n  )");
+    paren.keys("J");
+    CHECK(paren.shown() == "f(|)");
+}
+
+TEST_CASE("r replaces characters, ~ turns their case", "[vim][operator]") {
+    Vim r("|abc");
+    r.keys("rx");
+    CHECK(r.shown() == "|xbc");
+    r.keys("2rz");
+    CHECK(r.shown() == "z|zc");
+    // Not that many characters: nothing.
+    r.keys("5rq");
+    CHECK(r.shown() == "z|zc");
+    Vim t("|abc");
+    t.keys("~");
+    CHECK(t.shown() == "A|bc");
+    t.keys("2~");
+    CHECK(t.shown() == "AB|C");
+}
+
+TEST_CASE(">> and << shift lines, = indents them as their brackets say", "[vim][operator]") {
+    Vim s("|a\nb");
+    s.keys(">>");
+    CHECK(s.shown() == "    |a\nb");
+    s.keys("<<");
+    CHECK(s.shown() == "|a\nb");
+    s.keys(">j");
+    CHECK(s.shown() == "    |a\n    b");
+    // = indents by the document's level, here four spaces, whatever the
+    // closer's two would have it read as.
+    Vim e("|f() {\nx;\n  }");
+    e.view.document.set_indent({.tabs = false, .width = 4});
+    e.keys("=G");
+    CHECK(e.shown() == "|f() {\n    x;\n}");
+}
+
+TEST_CASE("gU, gu and g~ change the case of what they take", "[vim][operator]") {
+    Vim v("|foo bar");
+    v.keys("gUiw");
+    CHECK(v.shown() == "|FOO bar");
+    v.keys("g~~");
+    CHECK(v.shown() == "|foo BAR");
+    v.keys("guu");
+    CHECK(v.shown() == "|foo bar");
+}
+
+TEST_CASE("Counts before and after an operator multiply", "[vim][operator]") {
+    Vim v("|a b c d e f");
+    v.keys("2d2w");
+    CHECK(v.shown() == "|e f");
+}
+
+TEST_CASE("A register named before an operator takes its text", "[vim][operator]") {
+    Vim v("|a b");
+    v.keys("\"adw");
+    CHECK(v.shown() == "|b");
+    v.keys("\"ap");
+    CHECK(v.shown() == "ba| ");
+    CHECK(v.engine.registers().get('a', nullptr) == vim::Yanked{.pieces = {"a "}, .linewise = false});
+}
+
+TEST_CASE("Ctrl-A and Ctrl-X add to the number at or after the caret", "[vim][operator]") {
+    Vim v("x |9 y");
+    v.keys("<C-a>");
+    CHECK(v.shown() == "x 1|0 y");
+    v.keys("11<C-x>");
+    CHECK(v.shown() == "x -|1 y");
+    Vim hex("|0x0f");
+    hex.keys("<C-a>");
+    CHECK(hex.shown() == "0x1|0");
+}
+
+TEST_CASE("Operators act at every caret, and each caret puts its own piece", "[vim][operator]") {
+    Vim v("|ab cd\n|ef gh");
+    v.keys("dw");
+    CHECK(v.shown() == "|cd\n|gh");
+    v.keys("yiw$p");
+    CHECK(v.shown() == "cdc|d\nghg|h");
+}
+
+TEST_CASE("An operator waiting for its motion shows the lower half of a block", "[vim][operator]") {
+    Vim v("|a");
+    v.keys("d");
+    CHECK(v.engine.caret_shape() == vim::CaretShape::HalfBlock);
+    v.keys("<Esc>");
+    CHECK(v.engine.caret_shape() == vim::CaretShape::Block);
+    CHECK(v.shown() == "|a");
+}
+
 TEST_CASE("Settling puts a caret past a line's end back on its last character", "[vim][engine]") {
     Vim v("ab|");
     CommandContext context{.document = v.view.document, .selections = v.view.selections, .layout = v.view.layout,

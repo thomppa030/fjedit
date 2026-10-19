@@ -524,6 +524,18 @@ TEST_CASE("Vim keys preferred give every view Vim's keys, and the status bar its
     CHECK_FALSE(pill_on());
 }
 
+TEST_CASE("With Vim on, what is yanked in one file can be put in another", "[program][vim]") {
+    Running run({{"a.txt", "spin\n"}, {"b.txt", "roll\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type("yy");
+    run.press_row("b.txt");
+    run.h.step();
+    run.h.type("p");
+    REQUIRE(run.document("b.txt").buffer().text() == "roll\nspin\n");
+}
+
 TEST_CASE("Every view keeps the rows preferred in sight around the caret", "[program][preferences]") {
     std::string text;
     for (int i = 0; i < 100; ++i) text += "line\n";

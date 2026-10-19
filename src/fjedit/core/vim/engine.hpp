@@ -19,10 +19,13 @@
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/vim/motions.hpp"
+#include "fjedit/core/vim/registers.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fjedit::vim {
@@ -50,6 +53,11 @@ enum class CaretShape : uint8_t {
 
 class Engine {
 public:
+    /// An engine in normal mode, keeping what is yanked and deleted in
+    /// `registers`, which the engines of other views may share.
+    explicit Engine(std::shared_ptr<Registers> registers = std::make_shared<Registers>())
+        : registers_(std::move(registers)) {}
+
     /// Takes `key` in the mode it is in, acting at every selection of
     /// `context`. Returns a command it names for the view or the program to
     /// run (view_commands(), the program's), when it runs none itself.
@@ -67,20 +75,30 @@ public:
     /// showcmd shows them (`2d`, `g`); empty while none waits.
     [[nodiscard]] std::string pending() const;
 
-    /// Whether the next key is the character a command waits for, as `f`
-    /// and `t` wait for theirs: a key no binding may take.
+    /// Whether the next key is the character a command waits for, as `f`,
+    /// `t` and `r` wait for theirs, or a register's name after `"`: a key no
+    /// binding may take.
     [[nodiscard]] bool wants_character() const;
 
     /// Drops a command half typed, as a binding run instead of it does.
-    void cancel() { keys_.clear(); }
+    void cancel() {
+        keys_.clear();
+        operator_waits_ = false;
+    }
+
+    /// What is yanked and deleted.
+    [[nodiscard]] Registers& registers() { return *registers_; }
 
 private:
     void take_normal(const Chord& key, CommandContext& context);
     void take_insert(const Chord& key, CommandContext& context);
 
+    std::shared_ptr<Registers> registers_;
     Mode mode_{Mode::Normal};
-    // The keys of the normal-mode command typed so far.
+    // The keys of the normal-mode command typed so far, and whether they
+    // are an operator waiting for what it acts on.
     std::vector<Chord> keys_;
+    bool operator_waits_{false};
     // What f, t, F or T last looked for, which ; and , look for again.
     std::optional<CharSearch> search_;
 };

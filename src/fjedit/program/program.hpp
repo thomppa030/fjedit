@@ -190,6 +190,8 @@ private:
     // How the code is shown, and the window they are edited in.
     Preferences preferences_;
     PreferencesWindow preferences_window_;
+    // Vim's registers, which every view with Vim on shares.
+    std::shared_ptr<vim::Registers> registers_{std::make_shared<vim::Registers>()};
     // Files changed on disk while they had unsaved changes here, until
     // answered; and when the disk is next looked at.
     std::set<std::filesystem::path> changed_;
