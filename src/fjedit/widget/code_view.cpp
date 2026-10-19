@@ -611,16 +611,22 @@ void draw_side(core::Context& ui, const Document& document, EditorView& view, co
     if (view.scroll != scrolled) ui.request_frame();
 }
 
-// Scrolls so the primary caret is in sight, then keeps the scroll inside
+// Scrolls so the primary caret is in sight with `around` rows above and
+// below it, as many as fit and the text has, then keeps the scroll inside
 // the text.
-void reveal(EditorView& view, const Frame& frame, const Buffer& buffer, const TextLayout& layout) {
+void reveal(EditorView& view, const Frame& frame, const Buffer& buffer, const TextLayout& layout, std::size_t around) {
     if (view.reveal) {
         const Position caret = view.selections.primary().caret;
-        const float top = static_cast<float>(view.folds.row_of(caret.line)) * frame.line;
+        const std::size_t row = view.folds.row_of(caret.line);
+        const std::size_t last = view.folds.row_count(buffer.line_count()) - 1;
+        const auto fit = static_cast<std::size_t>(std::max(0.0f, (frame.rect.height() / frame.line - 1.0f) * 0.5f));
+        const std::size_t keep = std::min(around, fit);
+        const float top = static_cast<float>(row - std::min(keep, row)) * frame.line;
+        const float bottom = static_cast<float>(std::min(row + keep, last) + 1) * frame.line;
         if (top < view.scroll.y) {
             view.scroll.y = top;
-        } else if (top + frame.line > view.scroll.y + frame.rect.height()) {
-            view.scroll.y = top + frame.line - frame.rect.height();
+        } else if (bottom > view.scroll.y + frame.rect.height()) {
+            view.scroll.y = bottom - frame.rect.height();
         }
         const float x = layout.x_of(buffer, caret);
         const float width = frame.text.width() - 2.0f * TEXT_PAD;
@@ -1188,7 +1194,11 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         });
     }
 
+    const Selections before_mouse = view.selections;
     take_mouse(ui, in, frame, document, view, layout, faces.pill_width);
+    // The rows kept around the caret are for the keys: a caret the mouse
+    // placed never scrolls the text from under it.
+    const bool placed = view.selections != before_mouse;
 
     const glm::vec2 scrolled = view.scroll;
     if (in.hovered) take_wheel(ui, view);
@@ -1209,7 +1219,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         view.completing = {};
     }
     view.seen = document.version();
-    reveal(view, frame, buffer, layout);
+    reveal(view, frame, buffer, layout, placed ? 0 : view.around_caret);
     if (view.find.open) refresh_matches(view.find, document);
     const Frame drawn = place(code, view, buffer, faces.digit_width, sizes.line);
     static const std::vector<Diagnostic> NO_PROBLEMS;

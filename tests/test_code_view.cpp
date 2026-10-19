@@ -793,6 +793,63 @@ TEST_CASE("Relative, the caret's own line number goes against the gutter's left"
 
 namespace {
 
+// A hundred short lines: the 600 high view shows thirty of them.
+std::string hundred_lines() {
+    std::string text;
+    for (int i = 0; i < 100; ++i) text += "line\n";
+    text.pop_back();
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("Rows are kept in sight around the caret as the keys move it", "[code_view][scroll]") {
+    Editor e(hundred_lines());
+    e.view.around_caret = 5;
+    e.h.click_at({PAST_END, row_y(0)});
+    for (int i = 0; i < 25; ++i) e.h.press(Key::Down);
+    // The caret on row 25 with five rows under it: rows 1 to 30 in sight.
+    REQUIRE(e.caret().line == 25);
+    CHECK(e.view.scroll.y == 20.0f);
+    // Up near the top, the rows above it come back into sight.
+    for (int i = 0; i < 20; ++i) e.h.press(Key::Up);
+    CHECK(e.view.scroll.y == 0.0f);
+}
+
+TEST_CASE("Rows kept around the caret never reach past the text's end", "[code_view][scroll]") {
+    Editor e(hundred_lines());
+    e.view.around_caret = 5;
+    e.h.click_at({PAST_END, row_y(0)});
+    e.h.press(Key::End, CTRL);
+    // The last line at the view's foot, nothing past it.
+    CHECK(e.view.scroll.y == 100.0f * CODE_LINE - 600.0f);
+}
+
+TEST_CASE("More rows kept around the caret than fit keep it in the middle", "[code_view][scroll]") {
+    Editor e(hundred_lines());
+    e.view.around_caret = 100;
+    // A command moving the caret, as go to line does.
+    e.view.selections = Selections(Selection::at({50, 0}));
+    e.view.reveal = true;
+    e.h.step();
+    // Fourteen rows each side of row 50 fit in thirty, so row 64 is the last
+    // in sight.
+    CHECK(e.view.scroll.y == 65.0f * CODE_LINE - 600.0f);
+}
+
+TEST_CASE("A click near the edge never scrolls for the rows kept around the caret", "[code_view][scroll]") {
+    Editor e(hundred_lines());
+    e.view.around_caret = 5;
+    e.h.click_at({PAST_END, row_y(28)});
+    REQUIRE(e.caret().line == 28);
+    CHECK(e.view.scroll.y == 0.0f);
+    // The next key brings them in.
+    e.h.press(Key::Down);
+    CHECK(e.view.scroll.y == 35.0f * CODE_LINE - 600.0f);
+}
+
+namespace {
+
 // Whether every shape in `shapes` lies on row `row`.
 bool on_row(const std::vector<ftk::ui::core::Rect>& shapes, std::size_t row) {
     const float top = static_cast<float>(row) * CODE_LINE;

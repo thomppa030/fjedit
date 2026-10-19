@@ -92,6 +92,11 @@ struct EditorView {
     float text_size{CODE_TEXT};
     /// How the gutter numbers the lines.
     LineNumbers line_numbers{LineNumbers::Absolute};
+    /// How many rows it keeps in sight above and below the primary caret
+    /// as the keys and commands move it, where the text has them; with
+    /// more than fit, the caret stays in the middle. A click or a drag never
+    /// scrolls for them.
+    std::size_t around_caret{0};
     /// Commands to run on its next draw, by name, as a menu or a palette
     /// asks for them: the core's and the view's own (view_commands()).
     std::vector<std::string> queued;
