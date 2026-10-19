@@ -167,6 +167,26 @@ TEST_CASE("Text typed with Ctrl is a shortcut's, with Ctrl and Alt AltGr's", "[c
     REQUIRE(e.text() == "{");
 }
 
+TEST_CASE("Keys and text that share a frame run in the order they came, each one", "[code_view]") {
+    using ftk::ui::core::KeyEvent;
+    Editor e("abc");
+    e.h.click_at({PAST_END, 10.0f});
+    // Left twice in one frame moves the caret twice.
+    for (int i = 0; i < 2; ++i) {
+        e.h.send(KeyEvent{.kind = KeyEvent::Kind::Down, .key = Key::Left});
+        e.h.send(KeyEvent{.kind = KeyEvent::Kind::Up, .key = Key::Left});
+    }
+    e.h.step();
+    REQUIRE(e.caret() == Position{0, 1});
+    // Text, Enter, then text: the line breaks between the two.
+    e.h.ui().add_text("x");
+    e.h.send(KeyEvent{.kind = KeyEvent::Kind::Down, .key = Key::Enter});
+    e.h.send(KeyEvent{.kind = KeyEvent::Kind::Up, .key = Key::Enter});
+    e.h.ui().add_text("y");
+    e.h.step();
+    REQUIRE(e.text() == "ax\nybc");
+}
+
 TEST_CASE("Copy and paste go through the core's clipboard", "[code_view]") {
     Editor e("ab");
     e.h.click_at({PAST_END, 10.0f});

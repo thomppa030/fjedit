@@ -403,15 +403,21 @@ KeyMatch match_keys(const Keymap& keymap, const EditorView& view) {
     return match;
 }
 
-// The keys pressed this frame, through the keymap: a whole binding runs its
-// command, the start of a longer one waits for the next key.
-template <typename Run>
-void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& run) {
-    const ftk::ui::Modifiers held = ui.modifiers();
-    for (std::size_t k = 0; k < ftk::ui::KEY_COUNT; ++k) {
-        const auto key = static_cast<ftk::ui::Key>(k);
-        if (!ui.key_repeated(key)) continue;
-        view.pending.push_back({.key = key, .modifiers = held});
+// The keys pressed and the text typed this frame, in the order they came.
+// Text goes to `type`, unless it was typed with Ctrl alone, which makes it a
+// shortcut's (with Ctrl and Alt it is AltGr's, as Windows reports it). Keys
+// go through the keymap: a whole binding runs its command, the start of a
+// longer one waits for the next key.
+template <typename Run, typename Type>
+void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& run, Type&& type) {
+    for (const core::Keystroke& stroke : ui.keystrokes()) {
+        const ftk::ui::Modifiers held = stroke.modifiers;
+        if (stroke.kind == core::Keystroke::Kind::Text) {
+            const bool shortcut = (held.ctrl || held.super) && !held.alt;
+            if (!shortcut) type(stroke.text);
+            continue;
+        }
+        view.pending.push_back({.key = stroke.key, .modifiers = held});
         const KeyMatch match = match_keys(keymap, view);
         if (match.command) {
             const std::string command(*match.command);
@@ -1154,13 +1160,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
-        // Typed text first, keys after: what came of the keys in this frame
-        // follows what was typed. Text typed with Ctrl alone is a shortcut's;
-        // with Ctrl and Alt it is AltGr's, as Windows reports it.
-        const ftk::ui::Modifiers held = ui.modifiers();
-        const bool shortcut = (held.ctrl || held.super) && !held.alt;
-        if (!ui.typed().empty() && !shortcut) {
-            run("edit.type", ui.typed());
+        take_keys(ui, keymap, view, run, [&](std::string_view text) {
+            run("edit.type", text);
             // A word begun, or what the service names typed, asks what
             // completes it. A word goes on narrowing a list already open;
             // what the service names asks anew.
@@ -1172,8 +1173,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                     open_completion(view.completing, *view.service, view.path, document, caret, *asked);
                 }
             }
-        }
-        take_keys(ui, keymap, view, run);
+        });
     }
 
     take_mouse(ui, in, frame, document, view, layout, faces.pill_width);
