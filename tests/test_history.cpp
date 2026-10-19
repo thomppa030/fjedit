@@ -109,6 +109,51 @@ TEST_CASE("Other edits are steps of their own", "[history]") {
     REQUIRE(doc.buffer.text() == "pasted");
 }
 
+TEST_CASE("A change held is one step, whatever its edits' kinds", "[history]") {
+    Doc doc("spin");
+    doc.selections = Selections(Selection::at({0, 4}));
+    doc.type("s");
+    // As `cw` does: the word deleted, then the new one typed, a slip
+    // taken back on the way.
+    doc.history.hold();
+    doc.edit({.span = {{0, 0}, {0, 5}}, .text = ""}, EditKind::Other);
+    doc.type("turnx");
+    doc.backspace();
+    REQUIRE(doc.buffer.text() == "turn");
+
+    // Undone in one, back to the selections before its first edit; the
+    // typing before the hold was a step of its own.
+    doc.undo();
+    REQUIRE(doc.buffer.text() == "spins");
+    REQUIRE(doc.selections.primary() == Selection::at({0, 5}));
+    doc.undo();
+    REQUIRE(doc.buffer.text() == "spin");
+}
+
+TEST_CASE("A held change ends where any step ends", "[history]") {
+    Doc doc("");
+    doc.history.hold();
+    doc.type("ab");
+    doc.history.close();
+    doc.edit({.span = {{0, 2}, {0, 2}}, .text = "c"}, EditKind::Other);
+    doc.type("d");
+    REQUIRE(doc.buffer.text() == "abcd");
+    // Closed, the hold let go: the edit after it and the typing after that
+    // are steps as they would be without one.
+    doc.undo();
+    REQUIRE(doc.buffer.text() == "abc");
+    doc.undo();
+    REQUIRE(doc.buffer.text() == "ab");
+
+    // Saving lets go too.
+    doc.history.hold();
+    doc.type("x");
+    doc.history.mark_saved();
+    doc.type("y");
+    doc.undo();
+    REQUIRE(doc.buffer.text() == "abx");
+}
+
 TEST_CASE("An edit after an undo drops what could be redone", "[history]") {
     Doc doc("");
     doc.type("first");

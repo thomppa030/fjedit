@@ -58,7 +58,16 @@ public:
     void record(RecordedEdit edit);
 
     /// Ends the open step, so the next edit begins one of its own.
-    void close() { open_ = false; }
+    void close() { end_step(); }
+
+    /// Makes the next edit begin a step that every edit after it joins,
+    /// whatever their kinds, until the step ends: close(), an undo, a redo
+    /// or a save. A change that deletes and then types, as a modal
+    /// editor's `cw`, is undone as one.
+    void hold() {
+        end_step();
+        held_ = true;
+    }
 
     [[nodiscard]] bool can_undo() const { return done_ > 0; }
     [[nodiscard]] bool can_redo() const { return done_ < steps_.size(); }
@@ -97,6 +106,11 @@ private:
 
     static constexpr std::size_t NOWHERE = std::numeric_limits<std::size_t>::max();
 
+    void end_step() {
+        open_ = false;
+        held_ = false;
+    }
+
     std::vector<Step> steps_;
     // The steps before this one are done, the rest undone.
     std::size_t done_{0};
@@ -104,6 +118,8 @@ private:
     // no undo or redo can bring it back.
     std::size_t saved_{0};
     bool open_{false};
+    // hold() was asked: the open step takes every edit until it ends.
+    bool held_{false};
 };
 
 } // namespace fjedit
