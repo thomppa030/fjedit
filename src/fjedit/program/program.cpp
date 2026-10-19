@@ -51,18 +51,27 @@ constexpr double DISK_CHECK = 2.0;
 // The buttons at the end of a tab row, in from its right edge.
 constexpr float TAB_END_PAD = 4.0f;
 
-// The standard keys, with the program's own in its mode.
+// The standard keys, with the program's own in its modes.
 Keymap program_keys() {
     Keymap keys = Keymap::standard();
     const auto ctrl = [](Key key) { return Chord{.key = key, .modifiers = {.ctrl = true}}; };
-    keys.bind(Program::PROGRAM, {ctrl(Key::S)}, "file.save");
-    keys.bind(Program::PROGRAM, {ctrl(Key::W)}, "file.close");
-    keys.bind(Program::PROGRAM, {ctrl(Key::Q)}, "file.quit");
-    keys.bind(Program::PROGRAM, {ctrl(Key::Backslash)}, "view.split");
-    keys.bind(Program::PROGRAM, {{.key = Key::F, .modifiers = {.ctrl = true, .shift = true}}}, "files.find");
-    keys.bind(Program::PROGRAM, {ctrl(Key::PageDown)}, "tab.next");
-    keys.bind(Program::PROGRAM, {ctrl(Key::PageUp)}, "tab.previous");
-    keys.bind(Program::PROGRAM, {ctrl(Key::Comma)}, "edit.preferences");
+    const std::pair<Chord, std::string_view> program[] = {
+        {ctrl(Key::S), "file.save"},
+        {ctrl(Key::W), "file.close"},
+        {ctrl(Key::Q), "file.quit"},
+        {ctrl(Key::Backslash), "view.split"},
+        {{.key = Key::F, .modifiers = {.ctrl = true, .shift = true}}, "files.find"},
+        {ctrl(Key::PageDown), "tab.next"},
+        {ctrl(Key::PageUp), "tab.previous"},
+        {ctrl(Key::Comma), "edit.preferences"},
+    };
+    for (const auto& [chord, command] : program) {
+        keys.bind(Program::PROGRAM, {chord}, std::string(command));
+        // With Vim on, Ctrl W deletes the word before the caret in insert
+        // mode and begins the window commands in normal mode; a tab closes
+        // by its button or the File menu.
+        if (command != "file.close") keys.bind(Program::VIM_PROGRAM, {chord}, std::string(command));
+    }
     return keys;
 }
 
@@ -104,10 +113,10 @@ ModeShown mode_shown(vim::Mode mode) {
     return {"Normal", ui::StatusTone::Plain};
 }
 
-// The keys that run `command`, as a menu shows them: the program's, else a
-// view's.
-std::string shortcut(const Keymap& keys, std::string_view command) {
-    std::optional<std::vector<Chord>> chords = keys.keys_for(Program::PROGRAM, command);
+// The keys that run `command`, as a menu shows them: the program's in
+// `program_mode`, else a view's.
+std::string shortcut(const Keymap& keys, std::string_view program_mode, std::string_view command) {
+    std::optional<std::vector<Chord>> chords = keys.keys_for(program_mode, command);
     if (!chords) chords = keys.keys_for(Keymap::EDITING, command);
     if (!chords) return {};
     std::string out;
@@ -499,7 +508,8 @@ void Program::take_keys() {
     for (std::size_t k = 0; k < ui::KEY_COUNT; ++k) {
         const auto key = static_cast<Key>(k);
         if (!context.key_pressed(key)) continue;
-        const KeyMatch match = keymap_.find(PROGRAM, std::vector<Chord>{{.key = key, .modifiers = held}});
+        const KeyMatch match =
+            keymap_.find(preferences_.vim ? VIM_PROGRAM : PROGRAM, std::vector<Chord>{{.key = key, .modifiers = held}});
         if (match.command) (void)run(*match.command);
     }
 }
@@ -559,7 +569,7 @@ void Program::draw_menus() {
     const bool open_file = front_tab() != nullptr;
     const auto entry = [&](std::string label, std::string_view command, bool enabled = true) {
         return ui::MenuEntry{.label = std::move(label),
-                             .shortcut = shortcut(keymap_, command),
+                             .shortcut = shortcut(keymap_, preferences_.vim ? VIM_PROGRAM : PROGRAM, command),
                              .enabled = enabled,
                              .chosen = [this, command] { (void)run(command); }};
     };

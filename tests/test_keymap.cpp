@@ -49,7 +49,8 @@ TEST_CASE("A key finds its command", "[keymap]") {
 
 TEST_CASE("Every standard binding runs a command fjedit has", "[keymap]") {
     const Keymap keys = Keymap::standard();
-    for (const std::string_view mode : {Keymap::EDITING, Keymap::FINDING}) {
+    for (const std::string_view mode : {Keymap::EDITING, Keymap::FINDING, Keymap::COMPLETING, Keymap::VIM_NORMAL,
+                                        Keymap::VIM_INSERT, Keymap::VIM_VISUAL, Keymap::VIM_COMPLETING}) {
         for (std::size_t key = 0; key < ftk::ui::KEY_COUNT; ++key) {
             for (unsigned held = 0; held < 16; ++held) {
                 const Chord chord{.key = static_cast<Key>(key),
@@ -96,6 +97,17 @@ TEST_CASE("A binding can be characters typed, which keys don't match", "[keymap]
     const Chord g_key{.key = Key::G};
     REQUIRE_FALSE(keys.find("vim", std::vector<Chord>{g_key}).waiting);
     REQUIRE(chord_text(Chord::typed("$")) == "$");
+}
+
+TEST_CASE("Vim's Ctrl-N and Ctrl-P open the completion list in insert mode, then step through it", "[keymap]") {
+    const Keymap keys = Keymap::standard();
+    CHECK(keys.find(Keymap::VIM_INSERT, std::vector<Chord>{ctrl(Key::N)}).command == "completion.open");
+    CHECK(keys.find(Keymap::VIM_INSERT, std::vector<Chord>{ctrl(Key::P)}).command == "completion.open");
+    CHECK(keys.find(Keymap::VIM_COMPLETING, std::vector<Chord>{ctrl(Key::N)}).command == "completion.next");
+    CHECK(keys.find(Keymap::VIM_COMPLETING, std::vector<Chord>{ctrl(Key::P)}).command == "completion.previous");
+    // Without Vim, and in its normal mode, they are no binding's.
+    CHECK_FALSE(keys.find(Keymap::EDITING, std::vector<Chord>{ctrl(Key::P)}).command);
+    CHECK_FALSE(keys.find(Keymap::VIM_NORMAL, std::vector<Chord>{ctrl(Key::N)}).command);
 }
 
 TEST_CASE("Modes keep their bindings apart", "[keymap]") {

@@ -524,6 +524,18 @@ TEST_CASE("Vim keys preferred give every view Vim's keys, and the status bar its
     CHECK_FALSE(pill_on());
 }
 
+TEST_CASE("With Vim on, Ctrl W is Vim's and closes no tab", "[program][vim]") {
+    Running run({{"a.txt", "foo bar\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type("A");
+    run.h.press(Key::W, CTRL);
+    run.h.step(2);
+    REQUIRE(run.program->front().has_value());
+    REQUIRE(run.document("a.txt").buffer().text() == "foo \n");
+}
+
 TEST_CASE("With Vim on, what is yanked in one file can be put in another", "[program][vim]") {
     Running run({{"a.txt", "spin\n"}, {"b.txt", "roll\n"}});
     run.program->preferences().vim = true;

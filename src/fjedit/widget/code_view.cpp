@@ -479,9 +479,11 @@ std::vector<Chord> vim_keys(std::span<const core::Keystroke> strokes) {
 // completion list's first while it is open) run their commands, the start
 // of a longer binding waits for the next key, and the rest go to `take`,
 // for Vim, in the order they came, with any that waited. A character a
-// command waits for (an `f`'s) is never a binding's.
-template <typename Run, typename Take>
-void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& run, Take&& take) {
+// command waits for (an `f`'s) is never a binding's. `acting` makes what
+// Vim acts through.
+template <typename Acting, typename Run, typename Take>
+void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Acting&& acting, Run&& run,
+                   Take&& take) {
     for (const Chord& key : vim_keys(ui.keystrokes())) {
         if (view.pending.empty() && view.vim->wants_character()) {
             take(key);
@@ -502,7 +504,8 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ru
         if (match.command) {
             const std::string command(*match.command);
             view.pending.clear();
-            view.vim->cancel();
+            CommandContext context = acting();
+            view.vim->cancel(context);
             run(command);
         } else if (!match.waiting) {
             for (const Chord& waited : std::exchange(view.pending, {})) take(waited);
@@ -1317,7 +1320,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
         if (view.vim) {
-            take_vim_keys(ui, keymap, view, run, [&](const Chord& key) {
+            take_vim_keys(ui, keymap, view, vim_context, run, [&](const Chord& key) {
                 const bool inserting = view.vim->mode() == vim::Mode::Insert;
                 CommandContext context = vim_context();
                 if (const std::optional<std::string> asked = view.vim->take(key, context)) run(*asked);

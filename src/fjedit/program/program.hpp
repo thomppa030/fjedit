@@ -99,6 +99,9 @@ public:
 
     /// The keymap mode the program's own keys are bound in.
     static constexpr std::string_view PROGRAM = "program";
+    /// The mode they are bound in with Vim on: all but Ctrl W, which is
+    /// Vim's.
+    static constexpr std::string_view VIM_PROGRAM = "vim.program";
 
 private:
     // A file open in a tab, and its view.

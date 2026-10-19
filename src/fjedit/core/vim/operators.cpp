@@ -564,6 +564,49 @@ void take_back_overtyped(CommandContext& context, std::vector<std::vector<std::s
     });
 }
 
+void delete_before_on_line(CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
+    const std::vector<Selection> was = selections_of(context);
+    std::vector<Change> changes;
+    for (const Selection& selection : was) {
+        const Position at = selection.caret;
+        const std::size_t indent = indent_end(buffer.line(at.line));
+        const Position from{at.line, at.byte > indent ? indent : 0};
+        if (from != at) changes.push_back({.span = {from, at}, .text = ""});
+    }
+    commit(context, ordered(std::move(changes)), [&](const Edit& made) {
+        std::vector<Selection> next;
+        for (const Selection& selection : was) next.push_back(Selection::at(map(made, selection.caret, Bias::Before)));
+        return next;
+    });
+}
+
+void shift_caret_lines(bool right, CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
+    const std::vector<Selection> was = selections_of(context);
+    const std::size_t step = std::max<std::size_t>(context.document.indent().width, 1);
+    std::vector<Change> changes;
+    std::optional<std::size_t> last_line;
+    for (const Selection& selection : was) {
+        const std::size_t line = selection.caret.line;
+        if (last_line == line) continue;
+        last_line = line;
+        // To the next whole level in or out, as Vim rounds them.
+        const std::size_t columns = indent_columns(context, line);
+        const std::size_t levels = right ? columns / step + 1 : (columns + step - 1) / step;
+        const std::size_t wanted = right ? levels * step : (levels > 0 ? (levels - 1) * step : 0);
+        const std::string_view text = buffer.line(line);
+        const std::size_t end = indent_end(text);
+        const std::string indent = indent_string(context, wanted);
+        if (indent != text.substr(0, end)) changes.push_back({.span = {{line, 0}, {line, end}}, .text = indent});
+    }
+    commit(context, ordered(std::move(changes)), [&](const Edit& made) {
+        std::vector<Selection> next;
+        for (const Selection& selection : was) next.push_back(Selection::at(map(made, selection.caret, Bias::After)));
+        return next;
+    });
+}
+
 void replace_in(std::span<const std::optional<Range>> ranges, std::string_view with, CommandContext& context) {
     const Buffer& buffer = context.document.buffer();
     const std::vector<Selection> was = selections_of(context);

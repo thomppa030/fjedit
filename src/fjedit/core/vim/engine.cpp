@@ -409,6 +409,8 @@ bool run_operator(const Command& command, CommandContext& c, Registers& register
 } // namespace
 
 std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
+    // A key of Ctrl-O's one command, which may go through visual mode.
+    const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_));
     if (mode_ == Mode::Insert) {
         take_insert(key, context);
     } else if (mode_ == Mode::Replace) {
@@ -418,7 +420,42 @@ std::optional<std::string> Engine::take(const Chord& key, CommandContext& contex
     } else {
         take_normal(key, context);
     }
+    if (for_one_command && (mode_ == Mode::Insert || mode_ == Mode::Replace)) {
+        // The command went into insert mode itself.
+        one_command_ = false;
+    } else if (for_one_command && mode_ == Mode::Normal && keys_.empty()) {
+        end_one_command(context);
+    }
     return std::nullopt;
+}
+
+void Engine::cancel(CommandContext& context) {
+    keys_.clear();
+    operator_waits_ = false;
+    if (one_command_ && mode_ == Mode::Normal) end_one_command(context);
+}
+
+void Engine::end_one_command(CommandContext& context) {
+    // A caret on its line's last character goes past it when it is still on
+    // the line it was at the end of, or the command went to the line's end
+    // (`$`).
+    one_command_ = false;
+    mode_ = resume_;
+    const Buffer& buffer = context.document.buffer();
+    std::vector<Selection> back;
+    for (std::size_t i = 0; i < context.selections.size(); ++i) {
+        Selection selection = context.selections.all()[i];
+        const std::size_t line = selection.caret.line;
+        const bool left_here = i < left_line_ends_.size() && left_line_ends_[i] == line;
+        const bool to_end = selection.goal && std::isinf(*selection.goal);
+        if ((left_here || to_end) && !buffer.line(line).empty() && selection.caret == last_character(buffer, line)) {
+            selection.caret.byte = buffer.line(line).size();
+            selection.anchor = selection.caret;
+        }
+        back.push_back(selection);
+    }
+    context.selections.set(std::move(back), context.selections.primary_index());
+    context.document.history().hold();
 }
 
 void Engine::settle(CommandContext& context, bool by_mouse) {
@@ -474,12 +511,14 @@ std::vector<Position> Engine::cursors() const {
 }
 
 std::string Engine::pending() const {
+    if (register_next_) return "<C-r>";
     std::string out;
     for (const Chord& key : keys_) out += notation(key);
     return out;
 }
 
 bool Engine::wants_character() const {
+    if (register_next_) return true;
     if (mode_ == Mode::Insert || mode_ == Mode::Replace || keys_.empty()) return false;
     const std::string& last = keys_.back().text;
     if (last != "f" && last != "t" && last != "F" && last != "T" && last != "r" && last != "\"") return false;
@@ -636,16 +675,35 @@ void Engine::leave_insert(CommandContext& c) {
     settle(c);
 }
 
-void Engine::take_replace(const Chord& key, CommandContext& c) {
-    if (escape(key)) return leave_insert(c);
-    if (!key.text.empty()) {
-        for (std::size_t at = 0; at < key.text.size();) {
-            const std::size_t from = at;
-            (void)ftk::utf8::next(key.text, at);
-            overtype(std::string_view(key.text).substr(from, at - from), c, overwritten_);
-        }
+void Engine::type_text(std::string_view text, CommandContext& c) {
+    if (mode_ != Mode::Replace) {
+        CommandContext typed = c;
+        typed.text = text;
+        (void)run_command("edit.type", typed);
         return;
     }
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t from = at;
+        (void)ftk::utf8::next(text, at);
+        const std::string_view character = text.substr(from, at - from);
+        if (character == "\n") {
+            // As Enter does, the break leaves Backspace nothing of before
+            // to put back.
+            CommandContext typed = c;
+            typed.text = character;
+            (void)run_command("edit.type", typed);
+            overwritten_.clear();
+        } else {
+            overtype(character, c, overwritten_);
+        }
+    }
+}
+
+void Engine::take_replace(const Chord& key, CommandContext& c) {
+    // A register's name after Ctrl-R, which take_insert reads.
+    if (register_next_) return take_insert(key, c);
+    if (escape(key)) return leave_insert(c);
+    if (!key.text.empty()) return type_text(key.text, c);
     if (pressed(key, Key::Backspace)) return take_back_overtyped(c, overwritten_);
     // Enter breaks the line, and the other keys edit or move as in insert
     // mode; after them Backspace has nothing of before to put back.
@@ -654,13 +712,43 @@ void Engine::take_replace(const Chord& key, CommandContext& c) {
 }
 
 void Engine::take_insert(const Chord& key, CommandContext& c) {
-    if (escape(key)) return leave_insert(c);
-    if (!key.text.empty()) {
-        CommandContext typed = c;
-        typed.text = key.text;
-        (void)run_command("edit.type", typed);
+    if (register_next_) {
+        // Ctrl-R's register: its text typed; any other key goes on.
+        register_next_ = false;
+        if (key.text.size() == 1) {
+            if (const std::optional<Yanked> yanked = registers_->get(key.text[0], c.clipboard)) {
+                type_text(yanked->text(), c);
+            }
+        }
         return;
     }
+    if (escape(key)) return leave_insert(c);
+    if (!key.text.empty()) return type_text(key.text, c);
+    const std::string named = notation(key);
+    if (named == "<C-r>") {
+        register_next_ = true;
+        return;
+    }
+    if (named == "<C-o>") {
+        // One command in normal mode, the insert so far a step of its own.
+        left_line_ends_.clear();
+        for (const Selection& selection : c.selections.all()) {
+            const std::size_t line = selection.caret.line;
+            const bool at_end = !c.document.buffer().line(line).empty() &&
+                                selection.caret.byte >= c.document.buffer().line(line).size();
+            left_line_ends_.push_back(at_end ? std::optional<std::size_t>(line) : std::nullopt);
+        }
+        c.document.history().close();
+        resume_ = mode_;
+        mode_ = Mode::Normal;
+        one_command_ = true;
+        block_insert_ = false;
+        overwritten_.clear();
+        settle(c);
+        return;
+    }
+    if (named == "<C-u>") return delete_before_on_line(c);
+    if (named == "<C-t>" || named == "<C-d>") return shift_caret_lines(named == "<C-t>", c);
     struct InsertKey {
         std::string_view key;
         std::string_view command;
@@ -670,11 +758,10 @@ void Engine::take_insert(const Chord& key, CommandContext& c) {
         {"<Tab>", "edit.tab"},         {"<S-Tab>", "edit.outdent"},    {"<Left>", "caret.left"},
         {"<Right>", "caret.right"},    {"<Up>", "caret.up"},           {"<Down>", "caret.down"},
         {"<Home>", "caret.line_start"}, {"<End>", "caret.line_end"},   {"<C-Left>", "caret.word_left"},
-        {"<C-Right>", "caret.word_right"},
+        {"<C-Right>", "caret.word_right"}, {"<C-w>", "edit.delete_word_left"},
     };
-    const std::string name = notation(key);
     for (const InsertKey& edit : EDITS) {
-        if (edit.key == name) {
+        if (edit.key == named) {
             (void)run_command(edit.command, c);
             return;
         }

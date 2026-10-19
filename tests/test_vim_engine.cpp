@@ -213,6 +213,94 @@ TEST_CASE("Insert mode's keys edit as they do without Vim", "[vim][engine]") {
     CHECK(v.shown() == "\n|b");
 }
 
+TEST_CASE("Ctrl-W deletes the word before; Ctrl-U the line before, back to its indent, then its start",
+          "[vim][engine]") {
+    Vim word("foo bar|");
+    word.keys("A<C-w><Esc>");
+    CHECK(word.shown() == "foo| ");
+    Vim line("|  foo bar");
+    line.keys("A<C-u><Esc>");
+    CHECK(line.shown() == " | ");
+    Vim indent("  |x");
+    indent.keys("i<C-u><Esc>");
+    CHECK(indent.shown() == "|x");
+}
+
+TEST_CASE("Ctrl-R types what a register holds; in replace mode it writes over", "[vim][engine]") {
+    Vim v("|ab");
+    v.keys("ylA<C-r>");
+    CHECK(v.engine.pending() == "<C-r>");
+    CHECK(v.engine.wants_character());
+    v.keys("\"<Esc>");
+    CHECK(v.shown() == "ab|a");
+    Vim replace("|abc");
+    replace.keys("yllR<C-r>\"<Esc>");
+    CHECK(replace.shown() == "a|ac");
+}
+
+TEST_CASE("Ctrl-O runs one command, then goes back to the mode it left", "[vim][engine]") {
+    Vim v("ab|c");
+    v.keys("i<C-o>");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    v.keys("0");
+    CHECK(v.engine.mode() == vim::Mode::Insert);
+    v.keys("x<Esc>");
+    CHECK(v.shown() == "|xabc");
+    // A caret that was at the line's end goes back past it, as after $.
+    Vim end("|ab");
+    end.keys("A<C-o>~x<Esc>");
+    CHECK(end.shown() == "aB|x");
+    Vim dollar("|abc");
+    dollar.keys("i<C-o>$x<Esc>");
+    CHECK(dollar.shown() == "abc|x");
+    // An operator waits for its motion; a command that inserts stays.
+    Vim op("|ab cd");
+    op.keys("i<C-o>d");
+    CHECK(op.engine.mode() == vim::Mode::Normal);
+    op.keys("wx<Esc>");
+    CHECK(op.shown() == "|xcd");
+    Vim inserts("|ab");
+    inserts.keys("i<C-o>Ax<Esc>");
+    CHECK(inserts.shown() == "ab|x");
+    // From replace mode, back to replace mode.
+    Vim replace("|abc");
+    replace.keys("R<C-o>l");
+    CHECK(replace.engine.mode() == vim::Mode::Replace);
+    replace.keys("x<Esc>");
+    CHECK(replace.shown() == "a|xc");
+    // A binding run in its place is the command.
+    Vim bound("|ab");
+    bound.keys("A<C-o>");
+    CommandContext acting = bound.context();
+    bound.engine.cancel(acting);
+    CHECK(bound.engine.mode() == vim::Mode::Insert);
+    bound.keys("x<Esc>");
+    CHECK(bound.shown() == "ab|x");
+}
+
+TEST_CASE("What was typed before Ctrl-O is undone apart from what was typed after", "[vim][engine]") {
+    Vim v("|a");
+    v.keys("ix<C-o>0y<Esc>u");
+    CHECK(v.view.buffer().text() == "xa");
+}
+
+TEST_CASE("Ctrl-T and Ctrl-D indent the line to the next whole level in or out", "[vim][engine]") {
+    Vim v("|ab");
+    v.view.document.set_indent({.tabs = false, .width = 4});
+    v.keys("i<C-t>x<Esc>");
+    CHECK(v.shown() == "    |xab");
+    v.keys("I<C-d><Esc>");
+    CHECK(v.shown() == "|xab");
+    Vim odd("|   ab");
+    odd.view.document.set_indent({.tabs = false, .width = 4});
+    odd.keys("A<C-t><Esc>");
+    CHECK(odd.shown() == "    a|b");
+    Vim out("|   ab");
+    out.view.document.set_indent({.tabs = false, .width = 4});
+    out.keys("A<C-d><Esc>");
+    CHECK(out.shown() == "a|b");
+}
+
 TEST_CASE("u undoes and Ctrl-R redoes", "[vim][engine]") {
     Vim v("|a");
     v.keys("ix<Esc>");
@@ -259,7 +347,8 @@ TEST_CASE("f waits for a character, and a command dropped counts for nothing", "
     CHECK_FALSE(v.engine.wants_character());
     CHECK(v.shown() == "abc|b");
     v.keys("3");
-    v.engine.cancel();
+    CommandContext acting = v.context();
+    v.engine.cancel(acting);
     CHECK(v.engine.pending().empty());
     v.keys("h");
     CHECK(v.shown() == "ab|cb");

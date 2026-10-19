@@ -103,11 +103,10 @@ public:
     /// binding may take.
     [[nodiscard]] bool wants_character() const;
 
-    /// Drops a command half typed, as a binding run instead of it does.
-    void cancel() {
-        keys_.clear();
-        operator_waits_ = false;
-    }
+    /// Drops a command half typed, as a binding run instead of it does. A
+    /// binding run as Ctrl-O's one command is that command: the mode goes
+    /// back to the one Ctrl-O left.
+    void cancel(CommandContext& context);
 
     /// What is yanked and deleted.
     [[nodiscard]] Registers& registers() { return *registers_; }
@@ -128,6 +127,11 @@ private:
     // Out of insert or replace mode to normal mode, each caret onto the
     // character before it.
     void leave_insert(CommandContext& context);
+    // `text` typed at every caret: put in, or in replace mode written over
+    // the characters there, its line breaks put in still.
+    void type_text(std::string_view text, CommandContext& context);
+    // Back to the mode Ctrl-O left, its command done.
+    void end_one_command(CommandContext& context);
     // Visual mode's operators and its other commands, `name` with the
     // character `argument` it takes, a count of `count` and the register
     // `reg`; false for a name that is none of them.
@@ -163,6 +167,13 @@ private:
     bool block_insert_{false};
     // In replace mode, what each caret wrote over, for Backspace to put back.
     std::vector<std::vector<std::string>> overwritten_;
+    // Ctrl-R in insert mode waits for a register's name.
+    bool register_next_{false};
+    // Ctrl-O runs one command in normal mode, then goes back to the mode
+    // it came from. For each caret, the line it was at the end of then.
+    bool one_command_{false};
+    Mode resume_{Mode::Insert};
+    std::vector<std::optional<std::size_t>> left_line_ends_;
 };
 
 } // namespace fjedit::vim

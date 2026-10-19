@@ -109,6 +109,14 @@ void overtype(std::string_view character, CommandContext& context,
 /// began, it only moves.
 void take_back_overtyped(CommandContext& context, std::vector<std::vector<std::string>>& overwritten);
 
+/// Insert mode's `Ctrl-U`: at each caret, its line's text before it deleted,
+/// back to the indent; from within the indent, back to the line's start.
+void delete_before_on_line(CommandContext& context);
+
+/// Insert mode's `Ctrl-T` and `Ctrl-D`: each caret's line indented to the
+/// next whole level further in, or out, the caret moving with the text.
+void shift_caret_lines(bool right, CommandContext& context);
+
 /// `r` in visual mode: every character `ranges` take, but line breaks,
 /// replaced by `with`, as one step; each caret at its range's start.
 void replace_in(std::span<const std::optional<Range>> ranges, std::string_view with, CommandContext& context);

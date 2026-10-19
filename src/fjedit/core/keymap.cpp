@@ -219,6 +219,12 @@ Keymap Keymap::standard() {
         keymap.bind(VIM_NORMAL, {binding.keys}, std::string(binding.command));
         keymap.bind(VIM_INSERT, {binding.keys}, std::string(binding.command));
     }
+    // Insert mode's Ctrl-N and Ctrl-P, Vim's completion keys: they open the
+    // list, then step down and up it.
+    keymap.bind(VIM_INSERT, {chord(Key::N, CTRL)}, "completion.open");
+    keymap.bind(VIM_INSERT, {chord(Key::P, CTRL)}, "completion.open");
+    keymap.bind(VIM_COMPLETING, {chord(Key::N, CTRL)}, "completion.next");
+    keymap.bind(VIM_COMPLETING, {chord(Key::P, CTRL)}, "completion.previous");
     return keymap;
 }
 
