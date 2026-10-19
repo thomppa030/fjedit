@@ -33,7 +33,8 @@ Chord chord(Key key, bool ctrl = false, bool shift = false, bool alt = false) {
 
 } // namespace
 
-std::string chord_text(Chord chord) {
+std::string chord_text(const Chord& chord) {
+    if (!chord.text.empty()) return chord.text;
     std::string text;
     if (chord.modifiers.ctrl) text += "Ctrl ";
     if (chord.modifiers.shift) text += "Shift ";

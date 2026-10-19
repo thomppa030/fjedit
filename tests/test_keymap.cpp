@@ -87,6 +87,17 @@ TEST_CASE("Keys that begin a longer binding wait for the next", "[keymap]") {
     REQUIRE_FALSE(none.waiting);
 }
 
+TEST_CASE("A binding can be characters typed, which keys don't match", "[keymap]") {
+    Keymap keys;
+    keys.bind("vim", {Chord::typed("g"), Chord::typed("d")}, "definition.go");
+    REQUIRE(keys.find("vim", std::vector<Chord>{Chord::typed("g")}).waiting);
+    REQUIRE(keys.find("vim", std::vector<Chord>{Chord::typed("g"), Chord::typed("d")}).command == "definition.go");
+    // The G key itself is another chord than the g it types.
+    const Chord g_key{.key = Key::G};
+    REQUIRE_FALSE(keys.find("vim", std::vector<Chord>{g_key}).waiting);
+    REQUIRE(chord_text(Chord::typed("$")) == "$");
+}
+
 TEST_CASE("Modes keep their bindings apart", "[keymap]") {
     Keymap keys;
     const Chord d{.key = Key::D};

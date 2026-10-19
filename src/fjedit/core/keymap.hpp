@@ -21,18 +21,25 @@
 
 namespace fjedit {
 
-/// A key, with the modifiers held as it is pressed.
+/// A key, with the modifiers held as it is pressed; or, for a layer that
+/// reads keys by what they type (Vim's `$`, `{`, `/`, wherever a keyboard
+/// puts them), the character typed.
 struct Chord {
     ftk::ui::Key key{};
     ftk::ui::Modifiers modifiers{};
+    /// The character typed, as UTF-8; empty for a key.
+    std::string text{};
+
+    /// The chord that is `text` typed.
+    [[nodiscard]] static Chord typed(std::string_view text) { return {.text = std::string(text)}; }
 
     bool operator==(const Chord&) const = default;
 };
 
 /// A chord as menus show it and keymap files write it: the modifiers in the
 /// order Ctrl, Shift, Alt, Super, then the key, apart by spaces ("Ctrl Shift
-/// K", "Alt Up", "Ctrl ]").
-[[nodiscard]] std::string chord_text(Chord chord);
+/// K", "Alt Up", "Ctrl ]"); a character typed as itself.
+[[nodiscard]] std::string chord_text(const Chord& chord);
 
 /// The chord written as chord_text() writes it, or nothing when it names no
 /// key or a modifier twice. Modifiers may come in any order.
