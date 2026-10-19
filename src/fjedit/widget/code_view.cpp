@@ -2,12 +2,14 @@
 
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/find.hpp"
+#include "fjedit/core/motion.hpp"
 #include "fjedit/core/structure.hpp"
 #include "fjedit/widget/code_colours.hpp"
 #include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/minimap.hpp"
 #include "fjedit/widget/text_layout.hpp"
 
+#include "ftk/base/utf8.hpp"
 #include "ftk/ui/core/context.hpp"
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/layout.hpp"
@@ -425,6 +427,81 @@ void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& 
             run(command);
         } else if (!match.waiting) {
             view.pending.clear();
+        }
+    }
+}
+
+// Whether `key` types a character: a letter, a digit, Space or punctuation.
+bool types_character(ftk::ui::Key key) {
+    using ftk::ui::Key;
+    return (key >= Key::A && key <= Key::Digit9) || key == Key::Space || key >= Key::Minus;
+}
+
+// Text typed with Ctrl alone is a shortcut's; with Ctrl and Alt it is
+// AltGr's, as Windows reports it.
+bool shortcut_text(const core::Keystroke& stroke) {
+    return stroke.kind == core::Keystroke::Kind::Text && (stroke.modifiers.ctrl || stroke.modifiers.super) &&
+           !stroke.modifiers.alt;
+}
+
+// The frame's keystrokes as Vim reads them (decision 2 of the Vim plan):
+// text as the characters it types, one at a time; a key as itself when it
+// types nothing or is held with Ctrl, Alt or Super, unless text came of it,
+// which stands for it. So `$`, `{` and `/` are whatever keys the layout puts
+// them on.
+std::vector<Chord> vim_keys(std::span<const core::Keystroke> strokes) {
+    std::vector<Chord> keys;
+    for (std::size_t i = 0; i < strokes.size(); ++i) {
+        const core::Keystroke& stroke = strokes[i];
+        if (stroke.kind == core::Keystroke::Kind::Text) {
+            if (shortcut_text(stroke)) continue;
+            const std::string_view text = stroke.text;
+            for (std::size_t at = 0; at < text.size();) {
+                std::size_t end = at;
+                (void)ftk::utf8::next(text, end);
+                keys.push_back(Chord::typed(text.substr(at, end - at)));
+                at = end;
+            }
+            continue;
+        }
+        const ftk::ui::Modifiers held = stroke.modifiers;
+        if (types_character(stroke.key)) {
+            const bool texted = i + 1 < strokes.size() && strokes[i + 1].kind == core::Keystroke::Kind::Text &&
+                                !shortcut_text(strokes[i + 1]);
+            if (texted || !(held.ctrl || held.alt || held.super)) continue;
+        }
+        keys.push_back({.key = stroke.key, .modifiers = held});
+    }
+    return keys;
+}
+
+// The frame's keys with Vim on: those the keymap binds in Vim's mode (the
+// completion list's first while it is open) run their commands, the start
+// of a longer binding waits for the next key, and the rest go to `take`,
+// for Vim, in the order they came, with any that waited. A character a
+// command waits for (an `f`'s) is never a binding's.
+template <typename Run, typename Take>
+void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& run, Take&& take) {
+    for (const Chord& key : vim_keys(ui.keystrokes())) {
+        if (view.pending.empty() && view.vim->wants_character()) {
+            take(key);
+            continue;
+        }
+        view.pending.push_back(key);
+        const bool inserting = view.vim->mode() == vim::Mode::Insert;
+        KeyMatch match = keymap.find(inserting ? Keymap::VIM_INSERT : Keymap::VIM_NORMAL, view.pending);
+        if (view.completing.open) {
+            const KeyMatch completing = keymap.find(Keymap::VIM_COMPLETING, view.pending);
+            if (completing.command) match = completing;
+            match.waiting = match.waiting || completing.waiting;
+        }
+        if (match.command) {
+            const std::string command(*match.command);
+            view.pending.clear();
+            view.vim->cancel();
+            run(command);
+        } else if (!match.waiting) {
+            for (const Chord& waited : std::exchange(view.pending, {})) take(waited);
         }
     }
 }
@@ -1024,21 +1101,52 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
         ui.text().draw(dl, {x + icon_width + MESSAGE_ICON_GAP, rows.y(index)}, look.text, first_line, faces.message);
     }
 
-    // The carets, while the view has the keyboard, blinking together; the
-    // primary one where the input method's cursor is in what it composes.
-    if (focused && std::fmod(ui.time() - view.moved, BLINK) <= BLINK_ON) {
+    // The carets, while the view has the keyboard, in the shape Vim's mode
+    // gives them (sheet 47, C1): without Vim and in insert mode a bar, the
+    // bars blinking together, the primary one where the input method's
+    // cursor is in what it composes; in normal mode a still block over the
+    // character, the character cut out of it in the code's ground; in
+    // replace mode an underline; with an operator waiting, the lower half of
+    // a block.
+    const vim::CaretShape shape = view.vim ? view.vim->caret_shape() : vim::CaretShape::Bar;
+    const bool bar = shape == vim::CaretShape::Bar;
+    if (focused && (!bar || std::fmod(ui.time() - view.moved, BLINK) <= BLINK_ON)) {
         const auto composed_cursor = static_cast<std::size_t>(
             std::clamp(ui.composition_cursor(), 0, static_cast<int>(composing.size())));
         for (const Selection& selection : view.selections.all()) {
             const std::optional<std::size_t> index = rows.index_of(folds, selection.caret.line);
             if (!index) continue;
-            float along = layout.x_of(buffer, selection.caret);
-            if (!composing.empty() && &selection == &view.selections.primary()) {
-                along = layout.advance(composing, 0, composed_cursor, along);
+            const Position at = selection.caret;
+            const float top = rows.y(*index) + 1.0f;
+            const float bottom = rows.y(*index) + frame.line - 1.0f;
+            float along = layout.x_of(buffer, at);
+            if (bar) {
+                if (!composing.empty() && &selection == &view.selections.primary()) {
+                    along = layout.advance(composing, 0, composed_cursor, along);
+                }
+                const float x = std::round(frame.origin_x + along);
+                dl.rect_filled({x - CARET_WIDTH * 0.5f, top}, {x + CARET_WIDTH * 0.5f, bottom}, theme::text());
+                continue;
             }
-            const float x = std::round(frame.origin_x + along);
-            dl.rect_filled({x - CARET_WIDTH * 0.5f, rows.y(*index) + 1.0f},
-                           {x + CARET_WIDTH * 0.5f, rows.y(*index) + frame.line - 1.0f}, theme::text());
+            // The character's cell; at a line's end, or on an empty line, a
+            // space's.
+            const std::string_view text = buffer.line(at.line);
+            const Position next = char_right(buffer, at);
+            const std::size_t end = next.line == at.line ? next.byte : at.byte;
+            const float right = end > at.byte ? layout.x_of(buffer, next) : along + layout.space_width();
+            const float left_x = std::round(frame.origin_x + along);
+            const float right_x = std::round(frame.origin_x + right);
+            if (shape == vim::CaretShape::Block) {
+                dl.rect_filled({left_x, top}, {right_x, bottom}, theme::text());
+                if (end > at.byte) {
+                    (void)draw_run(ui, layout, text, at.byte, end, along, frame.origin_x, rows.y(*index),
+                                   theme::surface_base());
+                }
+            } else if (shape == vim::CaretShape::Underline) {
+                dl.rect_filled({left_x, bottom - CARET_WIDTH}, {right_x, bottom}, theme::text());
+            } else {
+                dl.rect_filled({left_x, std::round((top + bottom) * 0.5f)}, {right_x, bottom}, theme::text());
+            }
         }
     }
 
@@ -1175,23 +1283,47 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         view.going.reset();
     }
 
+    // A word begun, or what the service names, just typed asks what
+    // completes it. A word goes on narrowing a list already open; what the
+    // service names asks anew.
+    const auto ask_completion = [&] {
+        const Position caret = view.selections.primary().caret;
+        if (view.service != nullptr && view.selections.all().size() == 1) {
+            const auto asked = asks_completion(document.language(), view.service->completion_triggers(view.path),
+                                               buffer.line(caret.line), caret.byte);
+            if (asked && (asked->kind == CompletionTrigger::Kind::Character || !view.completing.open)) {
+                open_completion(view.completing, *view.service, view.path, document, caret, *asked);
+            }
+        }
+    };
+    // Vim's view of the document, for it to act through.
+    const auto vim_context = [&] {
+        view.folds.catch_up(document);
+        return CommandContext{.document = document, .selections = view.selections, .layout = layout,
+                              .clipboard = &clipboard, .folds = &view.folds, .text = {}};
+    };
+
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
-        take_keys(ui, keymap, view, run, [&](std::string_view text) {
-            run("edit.type", text);
-            // A word begun, or what the service names typed, asks what
-            // completes it. A word goes on narrowing a list already open;
-            // what the service names asks anew.
-            const Position caret = view.selections.primary().caret;
-            if (view.service != nullptr && view.selections.all().size() == 1) {
-                const auto asked = asks_completion(document.language(), view.service->completion_triggers(view.path),
-                                                   buffer.line(caret.line), caret.byte);
-                if (asked && (asked->kind == CompletionTrigger::Kind::Character || !view.completing.open)) {
-                    open_completion(view.completing, *view.service, view.path, document, caret, *asked);
+        if (view.vim) {
+            take_vim_keys(ui, keymap, view, run, [&](const Chord& key) {
+                const bool inserting = view.vim->mode() == vim::Mode::Insert;
+                CommandContext context = vim_context();
+                if (const std::optional<std::string> asked = view.vim->take(key, context)) run(*asked);
+                // The completion list is insert mode's, and goes with it.
+                if (view.vim->mode() != vim::Mode::Insert) {
+                    view.completing = {};
+                } else if (inserting && !key.text.empty()) {
+                    ask_completion();
                 }
-            }
-        });
+            });
+        } else {
+            take_keys(ui, keymap, view, run, [&](std::string_view text) {
+                run("edit.type", text);
+                ask_completion();
+            });
+        }
     }
 
     const Selections before_mouse = view.selections;
@@ -1199,6 +1331,12 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     // The rows kept around the caret are for the keys: a caret the mouse
     // placed never scrolls the text from under it.
     const bool placed = view.selections != before_mouse;
+    // A caret the mouse or another view's edit put past a line's end goes
+    // where Vim's mode keeps it.
+    if (view.vim) {
+        CommandContext context = vim_context();
+        view.vim->settle(context);
+    }
 
     const glm::vec2 scrolled = view.scroll;
     if (in.hovered) take_wheel(ui, view);

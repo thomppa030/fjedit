@@ -67,6 +67,13 @@ public:
     /// showcmd shows them (`2d`, `g`); empty while none waits.
     [[nodiscard]] std::string pending() const;
 
+    /// Whether the next key is the character a command waits for, as `f`
+    /// and `t` wait for theirs: a key no binding may take.
+    [[nodiscard]] bool wants_character() const;
+
+    /// Drops a command half typed, as a binding run instead of it does.
+    void cancel() { keys_.clear(); }
+
 private:
     void take_normal(const Chord& key, CommandContext& context);
     void take_insert(const Chord& key, CommandContext& context);

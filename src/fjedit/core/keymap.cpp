@@ -203,7 +203,22 @@ Keymap Keymap::standard() {
         {chord(Key::Enter), "completion.accept"},    {chord(Key::Tab), "completion.accept"},
         {chord(Key::Escape), "completion.close"},
     };
-    for (const Default& binding : completing) keymap.bind(COMPLETING, {binding.keys}, std::string(binding.command));
+    for (const Default& binding : completing) {
+        keymap.bind(COMPLETING, {binding.keys}, std::string(binding.command));
+        if (binding.command != "completion.close") keymap.bind(VIM_COMPLETING, {binding.keys}, std::string(binding.command));
+    }
+    // The keys Vim gives no meaning that stay with it on (decision 4 of the
+    // Vim plan).
+    const Default with_vim[] = {
+        {chord(Key::Space, CTRL), "completion.open"},
+        {chord(Key::F12), "definition.go"},
+        {chord(Key::F2), "symbol.rename"},
+        {chord(Key::I, CTRL, SHIFT), "format.document"},
+    };
+    for (const Default& binding : with_vim) {
+        keymap.bind(VIM_NORMAL, {binding.keys}, std::string(binding.command));
+        keymap.bind(VIM_INSERT, {binding.keys}, std::string(binding.command));
+    }
     return keymap;
 }
 

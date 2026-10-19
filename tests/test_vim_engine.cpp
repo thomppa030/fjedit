@@ -239,6 +239,20 @@ TEST_CASE("A command half typed waits and shows its keys; Esc drops it", "[vim][
     CHECK(dropped.shown() == "ab|c");
 }
 
+TEST_CASE("f waits for a character, and a command dropped counts for nothing", "[vim][engine]") {
+    Vim v("|abcb");
+    v.keys("2f");
+    CHECK(v.engine.wants_character());
+    v.keys("b");
+    CHECK_FALSE(v.engine.wants_character());
+    CHECK(v.shown() == "abc|b");
+    v.keys("3");
+    v.engine.cancel();
+    CHECK(v.engine.pending().empty());
+    v.keys("h");
+    CHECK(v.shown() == "ab|cb");
+}
+
 TEST_CASE("Settling puts a caret past a line's end back on its last character", "[vim][engine]") {
     Vim v("ab|");
     CommandContext context{.document = v.view.document, .selections = v.view.selections, .layout = v.view.layout,

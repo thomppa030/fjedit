@@ -248,6 +248,14 @@ std::string Engine::pending() const {
     return out;
 }
 
+bool Engine::wants_character() const {
+    if (mode_ != Mode::Normal || keys_.empty()) return false;
+    const std::string& last = keys_.back().text;
+    if (last != "f" && last != "t" && last != "F" && last != "T") return false;
+    Command command;
+    return parse(keys_, command) == Parsed::Waiting;
+}
+
 void Engine::take_normal(const Chord& key, CommandContext& c) {
     keys_.push_back(key);
     Command command;

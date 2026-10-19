@@ -62,6 +62,13 @@ public:
     static constexpr std::string_view FINDING = "finding";
     /// While a view's completion list is open, the same: before find's.
     static constexpr std::string_view COMPLETING = "completing";
+    /// A view with Vim on, in its normal or its insert mode: bindings
+    /// there are looked up before Vim reads the keys, and win over it.
+    static constexpr std::string_view VIM_NORMAL = "vim.normal";
+    static constexpr std::string_view VIM_INSERT = "vim.insert";
+    /// Completing with Vim on: as COMPLETING, but Escape is Vim's, which
+    /// leaves insert mode and the list with it.
+    static constexpr std::string_view VIM_COMPLETING = "vim.completing";
 
     /// fjedit's own keys, the ones VS Code has.
     [[nodiscard]] static Keymap standard();

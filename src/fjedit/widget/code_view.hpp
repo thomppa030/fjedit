@@ -15,6 +15,7 @@
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/language_service.hpp"
 #include "fjedit/core/selections.hpp"
+#include "fjedit/core/vim/engine.hpp"
 #include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/find.hpp"
 #include "fjedit/widget/go_to_line.hpp"
@@ -78,6 +79,9 @@ struct EditorView {
     /// keys are looked up in.
     std::vector<Chord> pending;
     std::string mode{Keymap::EDITING};
+    /// Vim on this view: its modes, and the keys read in them (sheet 47).
+    /// None for the standard keys.
+    std::optional<vim::Engine> vim;
     /// The document's version the selections have caught up with.
     uint64_t seen{0};
     /// When the carets last moved, which they blink from.
@@ -176,7 +180,9 @@ struct CodeViewResult {
 /// Draws `view` of `document` filling `rect`: the code, then the minimap
 /// and a scrollbar down its right side. It takes the mouse there and the
 /// keyboard while it has it, running commands through `keymap`; with its
-/// find open, the keymap's finding bindings come first. `label` names it to
+/// find open, the keymap's finding bindings come first. With Vim on, the
+/// keymap's bindings for Vim's mode come first and Vim reads the rest of
+/// the keys, by the characters they type. `label` names it to
 /// tests and screen readers and is never drawn, and holds the ids of the
 /// kit's pieces it draws. Kit items placed after it over `rect` take the
 /// pointer there before it does.

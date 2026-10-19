@@ -1320,3 +1320,103 @@ TEST_CASE("F2 hands out where a rename was asked for", "[code_view][rename]") {
     REQUIRE(a.e.renamed == Position{1, 8});
 }
 
+namespace {
+
+// An editor with Vim on, the caret on the first line.
+struct WithVim {
+    Editor e;
+
+    explicit WithVim(std::string_view text) : e(text) {
+        e.view.vim.emplace();
+        e.h.click_at({PAST_END, row_y(0)});
+        e.h.step();
+    }
+};
+
+// The carets the last frame drew: shapes in the text colour nearly a row
+// tall, which glyphs never are.
+std::vector<ftk::ui::core::Rect> carets_drawn(const ftk::test::UiHarness& h) {
+    std::vector<ftk::ui::core::Rect> out = drawn_in_code(h, ftk::theme::text());
+    std::erase_if(out, [](const ftk::ui::core::Rect& r) { return r.max.y - r.min.y < CODE_LINE - 3.0f; });
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("With Vim on, the keys are Vim's, and a caret past a line's end goes onto its last character", "[code_view][vim]") {
+    WithVim v("foo bar");
+    REQUIRE(v.e.caret() == Position{0, 6});
+    v.e.h.type("0w");
+    REQUIRE(v.e.caret() == Position{0, 4});
+    v.e.h.type("iZ");
+    v.e.h.press(Key::Escape);
+    REQUIRE(v.e.text() == "foo Zbar");
+    REQUIRE(v.e.caret() == Position{0, 4});
+}
+
+TEST_CASE("With Vim on, a key is read through the text it types, a chord as itself", "[code_view][vim]") {
+    using ftk::ui::core::KeyEvent;
+    WithVim v("a\n\nb");
+    v.e.h.type("0");
+    // } as a German keyboard types it, AltGr 0 (Ctrl and Alt, as Windows
+    // reports AltGr): the text stands for the key.
+    v.e.h.send(KeyEvent{.kind = KeyEvent::Kind::Down, .key = Key::Digit0, .modifiers = {.ctrl = true, .alt = true}});
+    v.e.h.ui().add_text("}");
+    v.e.h.send(KeyEvent{.kind = KeyEvent::Kind::Up, .key = Key::Digit0, .modifiers = {.ctrl = true, .alt = true}});
+    v.e.h.step();
+    REQUIRE(v.e.caret() == Position{1, 0});
+    // Ctrl R types nothing: it reaches Vim as itself, and redoes.
+    v.e.h.type("ix");
+    v.e.h.press(Key::Escape);
+    v.e.h.type("u");
+    REQUIRE(v.e.text() == "a\n\nb");
+    v.e.h.press(Key::R, CTRL);
+    REQUIRE(v.e.text() == "a\nx\nb");
+}
+
+TEST_CASE("With Vim on, the keymap's bindings for its mode come first", "[code_view][vim]") {
+    WithVim v("a\nb\nc");
+    v.e.keys.bind(Keymap::VIM_NORMAL, {Chord::typed("g"), Chord::typed("x")}, "edit.delete_lines");
+    v.e.h.type("j");
+    v.e.h.type("gx");
+    REQUIRE(v.e.text() == "a\nc");
+    // A binding begun and gone no further gives its keys to Vim.
+    v.e.h.type("gg");
+    REQUIRE(v.e.caret() == Position{0, 0});
+}
+
+TEST_CASE("With Vim on, the character an f waits for is never a binding's", "[code_view][vim]") {
+    WithVim v("axb");
+    v.e.keys.bind(Keymap::VIM_NORMAL, {Chord::typed("x")}, "edit.delete_lines");
+    v.e.h.type("0fx");
+    REQUIRE(v.e.text() == "axb");
+    REQUIRE(v.e.caret() == Position{0, 1});
+    v.e.h.type("x");
+    REQUIRE(v.e.text().empty());
+}
+
+TEST_CASE("With Vim on, the caret is a block in normal mode, a bar in insert mode", "[code_view][vim]") {
+    WithVim v("abc");
+    const std::vector<ftk::ui::core::Rect> block = carets_drawn(v.e.h);
+    REQUIRE(block.size() == 1);
+    CHECK(block.front().max.x - block.front().min.x > 4.0f);
+    // The block covers the last character, the caret's.
+    v.e.h.type("ix");
+    const std::vector<ftk::ui::core::Rect> bar = carets_drawn(v.e.h);
+    REQUIRE(bar.size() == 1);
+    CHECK(bar.front().max.x - bar.front().min.x < 3.0f);
+}
+
+TEST_CASE("With Vim on, leaving insert mode takes the completion list with it", "[code_view][vim][completion]") {
+    Completing c;
+    c.e.view.vim.emplace();
+    c.e.h.type("ar");
+    c.e.h.step();
+    c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2")});
+    REQUIRE(listed(c.e) == std::vector<std::string>{"rotate", "roll"});
+    c.e.h.press(Key::Escape);
+    c.e.h.step();
+    REQUIRE(listed(c.e).empty());
+    REQUIRE(c.e.view.vim->mode() == vim::Mode::Normal);
+}
+
