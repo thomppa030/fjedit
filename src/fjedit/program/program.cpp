@@ -71,6 +71,14 @@ std::string tab_label(const std::filesystem::path& path) {
     return path.filename().string() + "##" + path.generic_string();
 }
 
+// A view showing its code as `preferences` have it.
+void show_as_preferred(EditorView& view, const Preferences& preferences) {
+    view.minimap = preferences.minimap;
+    view.text_size = static_cast<float>(preferences.text_size);
+    view.line_numbers = preferences.line_numbers;
+    view.around_caret = static_cast<std::size_t>(preferences.around_caret);
+}
+
 // The keys that run `command`, as a menu shows them: the program's, else a
 // view's.
 std::string shortcut(const Keymap& keys, std::string_view command) {
@@ -220,8 +228,7 @@ LanguageServerShown Program::fjls_shown() const {
 
 std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
     auto view = std::make_unique<EditorView>(document);
-    view->minimap = preferences_.minimap;
-    view->text_size = static_cast<float>(preferences_.text_size);
+    show_as_preferred(*view, preferences_);
     if (services_.serves(path)) {
         view->service = &services_;
         view->path = path;
@@ -640,8 +647,7 @@ void Program::draw_group(Group& group, std::size_t index) {
                 }
             }
         }
-        tab.view->minimap = preferences_.minimap;
-        tab.view->text_size = static_cast<float>(preferences_.text_size);
+        show_as_preferred(*tab.view, preferences_);
         Document* document = workspace_.find(tab.path);
         const glm::vec2 at = ui::cursor();
         const glm::vec2 room = ui::space_left();

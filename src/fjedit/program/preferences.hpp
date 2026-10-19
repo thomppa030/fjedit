@@ -21,6 +21,9 @@ namespace fjedit {
 /// The code's text size steps between these, in pixels.
 inline constexpr int TEXT_SIZE_MIN = 10;
 inline constexpr int TEXT_SIZE_MAX = 24;
+/// The rows kept around the caret step between none and this; more than
+/// half a view's keep the caret in its middle.
+inline constexpr int AROUND_CARET_MAX = 100;
 
 struct Preferences {
     /// The code's text size, in pixels; its lines and line numbers scale
@@ -28,6 +31,11 @@ struct Preferences {
     int text_size{static_cast<int>(CODE_TEXT)};
     /// The views show the minimap.
     bool minimap{true};
+    /// How the views number their lines.
+    LineNumbers line_numbers{LineNumbers::Absolute};
+    /// How many rows the views keep in sight above and below the caret as
+    /// the keys move it.
+    int around_caret{0};
     /// clangd, which answers for C and C++: a path, or a name looked for
     /// along the PATH.
     std::string clangd{"clangd"};

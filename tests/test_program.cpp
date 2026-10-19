@@ -491,8 +491,34 @@ TEST_CASE("Every view shows its code at the text size preferred", "[program][pre
     REQUIRE(run.document("a.txt").buffer().text() == "a\nbx\nc\nd\n");
 }
 
+TEST_CASE("Every view keeps the rows preferred in sight around the caret", "[program][preferences]") {
+    std::string text;
+    for (int i = 0; i < 100; ++i) text += "line\n";
+    Running run({{"a.txt", text.c_str()}});
+    run.press_row("a.txt");
+    run.program->preferences().around_caret = 5;
+    run.h.step();
+    // The caret down to the last row wholly in sight: five more rows come
+    // into sight under it, so the view's top row is the fifth or the sixth
+    // line, as the view's height falls between rows.
+    const ftk::ui::core::Rect code = code_rect(run);
+    const float line = code_line(CODE_TEXT);
+    const auto rows = static_cast<int>(code.height() / line);
+    for (int i = 0; i < rows - 1; ++i) run.h.press(Key::Down);
+    run.h.click_at({code.min.x + 300.0f, code.min.y + 0.5f * line});
+    run.h.step();
+    run.h.type("x");
+    const Buffer& buffer = run.document("a.txt").buffer();
+    std::size_t typed_on = 0;
+    for (std::size_t l = 0; l < buffer.line_count(); ++l) {
+        if (buffer.line(l) == "linex") typed_on = l;
+    }
+    CHECK(typed_on >= 4);
+    CHECK(typed_on <= 5);
+}
+
 TEST_CASE("The preferences are kept in the settings file and read back held to their range", "[program][preferences]") {
-    Preferences kept{.text_size = 17, .minimap = false};
+    Preferences kept{.text_size = 17, .minimap = false, .line_numbers = LineNumbers::Relative, .around_caret = 20};
     const ftk::ui::SettingsSection section = preferences_section(kept);
     const std::vector<ftk::ui::SettingsEntry> written = section.write();
     REQUIRE(written.size() == 1);
@@ -502,9 +528,16 @@ TEST_CASE("The preferences are kept in the settings file and read back held to t
     for (const std::string& line : written.front().lines) reading.read(written.front().name, line);
     REQUIRE(read.text_size == 17);
     REQUIRE_FALSE(read.minimap);
+    REQUIRE(read.line_numbers == LineNumbers::Relative);
+    REQUIRE(read.around_caret == 20);
 
     reading.read(written.front().name, "TextSize=400");
     REQUIRE(read.text_size == TEXT_SIZE_MAX);
+    reading.read(written.front().name, "AroundCaret=500");
+    REQUIRE(read.around_caret == AROUND_CARET_MAX);
+    // A way of numbering it doesn't know leaves the one it has.
+    reading.read(written.front().name, "LineNumbers=Sideways");
+    REQUIRE(read.line_numbers == LineNumbers::Relative);
     // Another entry's lines are not its.
     reading.read("Other", "TextSize=12");
     REQUIRE(read.text_size == TEXT_SIZE_MAX);
