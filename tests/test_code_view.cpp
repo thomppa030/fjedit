@@ -1432,3 +1432,19 @@ TEST_CASE("With Vim on, leaving insert mode takes the completion list with it", 
     REQUIRE(c.e.view.vim->mode() == vim::Mode::Normal);
 }
 
+TEST_CASE("With Vim on, a dot makes an insert again with the completion taken in it", "[code_view][vim][completion]") {
+    Completing c;
+    c.e.view.vim.emplace();
+    c.e.h.type("ar");
+    c.e.h.step();
+    c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2")});
+    c.e.h.press(Key::Enter);
+    c.e.h.step();
+    c.e.h.press(Key::Escape);
+    c.e.h.step();
+    REQUIRE(c.e.document.buffer().line(1) == "    rotate");
+    c.e.h.type(".");
+    c.e.h.step();
+    REQUIRE(c.e.document.buffer().line(1) == "    rotaterotate");
+}
+

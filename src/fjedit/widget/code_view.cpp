@@ -1247,7 +1247,9 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         view.folds.catch_up(document);
         CommandContext context{.document = document, .selections = view.selections, .layout = layout,
                                .clipboard = &clipboard, .folds = &view.folds, .text = {}};
-        accept_completion(view.completing, context, index);
+        const std::optional<Completed> completed = accept_completion(view.completing, context, index);
+        // Vim makes it again with the rest of the insert, for `.`.
+        if (completed && view.vim) view.vim->completed(completed->replaced, completed->text);
     };
     std::optional<Position> rename;
     auto run = [&](std::string_view command, std::string_view text = {}) {

@@ -65,10 +65,20 @@ void follow_completion(CompletionState& state, LanguageService& service, const s
 /// Moves the selection `by` entries, held to the list's ends.
 void move_completion(CompletionState& state, std::ptrdiff_t by);
 
+/// What taking an entry did to the word at the caret.
+struct Completed {
+    /// The word's text before the caret that the entry's text replaced.
+    std::string replaced;
+    /// The entry's text.
+    std::string text;
+};
+
 /// Takes the selected entry, or entry `index` of those shown: its text for
 /// what is typed of the word, with what it brings along, as one step of
-/// the history, the caret after its text. Closes.
-void accept_completion(CompletionState& state, CommandContext& context, std::optional<std::size_t> index = std::nullopt);
+/// the history, the caret after its text. Closes. Returns what it did to the
+/// word; nothing when no entry was there to take.
+std::optional<Completed> accept_completion(CompletionState& state, CommandContext& context,
+                                           std::optional<std::size_t> index = std::nullopt);
 
 /// How many entries the list shows at once.
 inline constexpr std::size_t COMPLETION_ROWS = 10;

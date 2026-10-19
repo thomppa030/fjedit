@@ -406,11 +406,60 @@ bool run_operator(const Command& command, CommandContext& c, Registers& register
     return op == Operator::Change;
 }
 
+// Whether the keys type text in `mode`.
+constexpr bool typing(Mode mode) {
+    return mode == Mode::Insert || mode == Mode::Replace;
+}
+
+// Whether `command` is a change `.` makes again: an operator but y, a small
+// change, or a command that inserts.
+bool changes(const Command& command) {
+    if (!command.op.empty()) return command.op != "y";
+    static constexpr std::string_view CHANGES[] = {
+        "x", "<Del>", "X", "s", "S", "C", "D", "p", "P", "J", "r", "~", "<C-a>", "<C-x>",
+        "i", "<Insert>", "a", "I", "A", "o", "O", "R",
+    };
+    return std::ranges::contains(CHANGES, std::string_view(command.name));
+}
+
+// The keys that spell `command` after its register and counts.
+std::vector<Chord> keys_of(const Command& command) {
+    std::vector<Chord> keys;
+    for (const char ch : command.op) keys.push_back(Chord::typed(std::string_view(&ch, 1)));
+    if (command.name == "line") {
+        keys.push_back(Chord::typed(std::string_view(command.op).substr(command.op.size() - 1)));
+    } else if (const std::optional<std::vector<Chord>> named = parse_notation(command.name)) {
+        keys.insert(keys.end(), named->begin(), named->end());
+    }
+    if (!command.argument.empty()) keys.push_back(Chord::typed(command.argument));
+    return keys;
+}
+
+// The counts before an operator and after it, as one (2d3w deletes six).
+std::optional<std::size_t> count_of(const Command& command) {
+    if (!command.count && !command.op_count) return std::nullopt;
+    return std::min(command.count.value_or(1) * command.op_count.value_or(1), COUNT_MAX);
+}
+
 } // namespace
 
 std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
     // A key of Ctrl-O's one command, which may go through visual mode.
     const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_));
+    dispatch(key, context);
+    // A change is whole once no insert goes on with it.
+    if (making_ && !typing(mode_)) last_change_ = std::exchange(making_, std::nullopt);
+    if (for_one_command && typing(mode_)) {
+        // The command went into insert mode itself.
+        one_command_ = false;
+    } else if (for_one_command && mode_ == Mode::Normal && keys_.empty()) {
+        end_one_command(context);
+    }
+    return std::nullopt;
+}
+
+void Engine::dispatch(const Chord& key, CommandContext& context) {
+    const bool was_typing = typing(mode_);
     if (mode_ == Mode::Insert) {
         take_insert(key, context);
     } else if (mode_ == Mode::Replace) {
@@ -420,19 +469,110 @@ std::optional<std::string> Engine::take(const Chord& key, CommandContext& contex
     } else {
         take_normal(key, context);
     }
-    if (for_one_command && (mode_ == Mode::Insert || mode_ == Mode::Replace)) {
-        // The command went into insert mode itself.
-        one_command_ = false;
-    } else if (for_one_command && mode_ == Mode::Normal && keys_.empty()) {
-        end_one_command(context);
-    }
-    return std::nullopt;
+    // An insert begun, nothing typed in it yet.
+    if (!was_typing && typing(mode_)) inserted_.clear();
 }
 
 void Engine::cancel(CommandContext& context) {
     keys_.clear();
     operator_waits_ = false;
     if (one_command_ && mode_ == Mode::Normal) end_one_command(context);
+}
+
+void Engine::completed(std::string_view replaced, std::string_view text) {
+    if (mode_ != Mode::Insert) return;
+    // Made again as the word's typed part taken back and the entry typed.
+    for (std::size_t at = 0; at < replaced.size();) {
+        (void)ftk::utf8::next(replaced, at);
+        note_typed(Chord{.key = Key::Backspace, .modifiers = {}, .text = {}});
+    }
+    note_typed(Chord::typed(text));
+}
+
+void Engine::note_typed(Chord key) {
+    if (repeating_insert_) return;
+    if (!replaying_ && !making_) {
+        making_ = Repeat{.reg = '"', .count = {}, .keys = {Chord::typed(mode_ == Mode::Replace ? "R" : "i")},
+                         .typed = {}, .visual = {}};
+    }
+    inserted_.push_back(std::move(key));
+}
+
+void Engine::end_change_here() {
+    if (making_) {
+        making_->typed = inserted_;
+        last_change_ = std::exchange(making_, std::nullopt);
+    }
+    inserted_.clear();
+}
+
+void Engine::repeat(std::optional<std::size_t> count, CommandContext& c) {
+    if (!last_change_) return;
+    Repeat change = *last_change_;
+    if (count) change.count = count;
+    // "1p made again puts "2, then "3, as Vim steps back through deletes.
+    if (change.reg >= '1' && change.reg < '9') ++change.reg;
+    std::vector<Chord> keys;
+    if (change.reg != '"') {
+        keys.push_back(Chord::typed("\""));
+        keys.push_back(Chord::typed(std::string_view(&change.reg, 1)));
+    }
+    if (change.count) {
+        const std::string digits = std::to_string(*change.count);
+        for (const char digit : digits) keys.push_back(Chord::typed(std::string_view(&digit, 1)));
+    }
+    keys.insert(keys.end(), change.keys.begin(), change.keys.end());
+    keys.insert(keys.end(), change.typed.begin(), change.typed.end());
+
+    replaying_ = true;
+    if (change.visual) select_again(*change.visual, c);
+    for (const Chord& key : keys) dispatch(key, c);
+    if (typing(mode_)) dispatch(Chord{.key = Key::Escape, .modifiers = {}, .text = {}}, c);
+    replaying_ = false;
+    last_change_ = std::move(change);
+}
+
+void Engine::select_again(const VisualExtent& extent, CommandContext& c) {
+    const Buffer& buffer = c.document.buffer();
+    visual_.clear();
+    for (const Selection& selection : c.selections.all()) {
+        const Position from = selection.caret;
+        const std::size_t last = std::min(from.line + extent.lines - 1, buffer.line_count() - 1);
+        VisualEnds ends{.anchor = from, .caret = from, .goal = {}};
+        if (extent.mode == Mode::VisualLine) {
+            ends.caret = on_character(buffer, buffer.clamp({.line = last, .byte = from.byte}));
+        } else if (extent.mode == Mode::Visual && extent.lines > 1) {
+            ends.caret = on_character(buffer, c.layout.position_at(buffer, last, extent.end));
+        } else {
+            const float to = c.layout.x_of(buffer, from) + extent.width;
+            ends.caret = on_character(buffer, c.layout.position_at(buffer, last, to));
+            if (extent.to_line_ends) ends.goal = LINE_END_GOAL;
+        }
+        visual_.push_back(ends);
+    }
+    // A block is one, from the primary caret.
+    if (extent.mode == Mode::VisualBlock && visual_.size() > 1) {
+        visual_ = {visual_[std::min(c.selections.primary_index(), visual_.size() - 1)]};
+    }
+    mode_ = extent.mode;
+    c.document.history().close();
+    show_visual(c);
+}
+
+Engine::VisualExtent Engine::extent(const CommandContext& context) const {
+    if (visual_.empty()) return {.mode = mode_, .lines = 1, .width = 0.0f, .end = 0.0f, .to_line_ends = false};
+    const Buffer& buffer = context.document.buffer();
+    const VisualEnds& ends = visual_[std::min(context.selections.primary_index(), visual_.size() - 1)];
+    const Position first = std::min(ends.anchor, ends.caret);
+    const Position last = std::max(ends.anchor, ends.caret);
+    const float anchor_x = context.layout.x_of(buffer, ends.anchor);
+    const float caret_x = context.layout.x_of(buffer, ends.caret);
+    const bool block = mode_ == Mode::VisualBlock;
+    return {.mode = mode_,
+            .lines = last.line - first.line + 1,
+            .width = block ? std::abs(caret_x - anchor_x) : context.layout.x_of(buffer, last) - context.layout.x_of(buffer, first),
+            .end = context.layout.x_of(buffer, last),
+            .to_line_ends = block && ends.goal && std::isinf(*ends.goal)};
 }
 
 void Engine::end_one_command(CommandContext& context) {
@@ -459,7 +599,10 @@ void Engine::end_one_command(CommandContext& context) {
 }
 
 void Engine::settle(CommandContext& context, bool by_mouse) {
-    if (mode_ == Mode::Insert || mode_ == Mode::Replace) return;
+    if (typing(mode_)) {
+        if (by_mouse) end_change_here();
+        return;
+    }
     const Buffer& buffer = context.document.buffer();
     const std::span<const Selection> all = context.selections.all();
     const bool selecting = std::ranges::any_of(all, [](const Selection& s) { return !s.empty(); });
@@ -534,15 +677,25 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     if (parsed == Parsed::Waiting) return;
     keys_.clear();
     if (parsed == Parsed::Invalid) return;
-
-    if (!command.op.empty()) {
-        if (run_operator(command, c, *registers_, search_)) {
-            mode_ = Mode::Insert;
-        } else {
-            settle(c);
-        }
-        return;
+    // A change noted for `.`, as its keys spell it.
+    if (!replaying_ && changes(command)) {
+        making_ = Repeat{.reg = command.reg, .count = count_of(command), .keys = keys_of(command), .typed = {},
+                         .visual = {}};
     }
+
+    // An operator over what `acting` names, into insert mode after a change
+    // that began it. One that changed nothing (its motion couldn't go)
+    // leaves the last change as the one `.` makes.
+    const auto operate_on = [&](const Command& acting) {
+        const auto version = c.document.version();
+        if (run_operator(acting, c, *registers_, search_)) {
+            mode_ = Mode::Insert;
+            return;
+        }
+        if (c.document.version() == version) making_.reset();
+        settle(c);
+    };
+    if (!command.op.empty()) return operate_on(command);
 
     const Buffer& buffer = c.document.buffer();
     const std::string_view name = command.name;
@@ -564,12 +717,7 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         Command expanded = command;
         expanded.op = shorthand.op;
         expanded.name = shorthand.motion;
-        if (run_operator(expanded, c, *registers_, search_)) {
-            mode_ = Mode::Insert;
-        } else {
-            settle(c);
-        }
-        return;
+        return operate_on(expanded);
     }
     // The other small changes, each a step of its own.
     const auto change = [&](auto&& make) {
@@ -592,13 +740,16 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     }
 
     // Into insert mode with each caret where `place` puts it; what is typed
-    // there is one step of the history with what began it.
+    // there is one step of the history with what began it, and a count
+    // types it that many times.
     const auto insert = [&](auto place) {
         std::vector<Selection> placed;
         for (const Selection& selection : c.selections.all()) placed.push_back(Selection::at(place(selection.caret)));
         c.selections.set(std::move(placed), c.selections.primary_index());
         c.document.history().hold();
         mode_ = Mode::Insert;
+        insert_repeats_ = n - 1;
+        insert_opens_lines_ = false;
     };
 
     if (escape(key)) {
@@ -629,12 +780,16 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         c.document.history().hold();
         (void)run_command(name == "o" ? "edit.insert_line_below" : "edit.insert_line_above", c);
         mode_ = Mode::Insert;
+        insert_repeats_ = n - 1;
+        insert_opens_lines_ = true;
         return;
     }
     if (name == "R") {
         c.document.history().hold();
         overwritten_.clear();
         mode_ = Mode::Replace;
+        insert_repeats_ = n - 1;
+        insert_opens_lines_ = false;
         return;
     }
     if (name == "u" || name == "<C-r>") {
@@ -642,6 +797,7 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         settle(c);
         return;
     }
+    if (name == ".") return repeat(command.count, c);
 
     std::vector<Selection> moved;
     bool any = false;
@@ -659,7 +815,21 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     settle(c);
 }
 
+void Engine::repeat_insert(CommandContext& c) {
+    const std::size_t repeats = std::exchange(insert_repeats_, 0);
+    if (repeats == 0 || inserted_.empty()) return;
+    const std::vector<Chord> typed = inserted_;
+    repeating_insert_ = true;
+    for (std::size_t i = 0; i < repeats; ++i) {
+        if (insert_opens_lines_) (void)run_command("edit.insert_line_below", c);
+        for (const Chord& key : typed) dispatch(key, c);
+    }
+    repeating_insert_ = false;
+}
+
 void Engine::leave_insert(CommandContext& c) {
+    repeat_insert(c);
+    if (making_) making_->typed = inserted_;
     c.document.history().close();
     std::vector<Selection> back;
     for (const Selection& selection : c.selections.all()) {
@@ -703,8 +873,14 @@ void Engine::take_replace(const Chord& key, CommandContext& c) {
     // A register's name after Ctrl-R, which take_insert reads.
     if (register_next_) return take_insert(key, c);
     if (escape(key)) return leave_insert(c);
-    if (!key.text.empty()) return type_text(key.text, c);
-    if (pressed(key, Key::Backspace)) return take_back_overtyped(c, overwritten_);
+    if (!key.text.empty()) {
+        note_typed(key);
+        return type_text(key.text, c);
+    }
+    if (pressed(key, Key::Backspace)) {
+        note_typed(key);
+        return take_back_overtyped(c, overwritten_);
+    }
     // Enter breaks the line, and the other keys edit or move as in insert
     // mode; after them Backspace has nothing of before to put back.
     overwritten_.clear();
@@ -717,20 +893,30 @@ void Engine::take_insert(const Chord& key, CommandContext& c) {
         register_next_ = false;
         if (key.text.size() == 1) {
             if (const std::optional<Yanked> yanked = registers_->get(key.text[0], c.clipboard)) {
-                type_text(yanked->text(), c);
+                // `.` types the text itself again, whatever the register
+                // holds by then.
+                const std::string text = yanked->text();
+                note_typed(Chord::typed(text));
+                type_text(text, c);
             }
         }
         return;
     }
     if (escape(key)) return leave_insert(c);
-    if (!key.text.empty()) return type_text(key.text, c);
+    if (!key.text.empty()) {
+        note_typed(key);
+        return type_text(key.text, c);
+    }
     const std::string named = notation(key);
     if (named == "<C-r>") {
         register_next_ = true;
         return;
     }
     if (named == "<C-o>") {
-        // One command in normal mode, the insert so far a step of its own.
+        // One command in normal mode, the insert so far a step of its own
+        // and a change of its own, its count done.
+        repeat_insert(c);
+        end_change_here();
         left_line_ends_.clear();
         for (const Selection& selection : c.selections.all()) {
             const std::size_t line = selection.caret.line;
@@ -747,24 +933,39 @@ void Engine::take_insert(const Chord& key, CommandContext& c) {
         settle(c);
         return;
     }
-    if (named == "<C-u>") return delete_before_on_line(c);
-    if (named == "<C-t>" || named == "<C-d>") return shift_caret_lines(named == "<C-t>", c);
+    if (named == "<C-u>") {
+        note_typed(key);
+        return delete_before_on_line(c);
+    }
+    if (named == "<C-t>" || named == "<C-d>") {
+        note_typed(key);
+        return shift_caret_lines(named == "<C-t>", c);
+    }
+    // The keys that edit, and those that move the caret, which ends the
+    // change being made there.
     struct InsertKey {
         std::string_view key;
         std::string_view command;
+        bool moves;
     };
     static constexpr InsertKey EDITS[] = {
-        {"<CR>", "edit.newline"},      {"<BS>", "edit.backspace"},     {"<Del>", "edit.delete"},
-        {"<Tab>", "edit.tab"},         {"<S-Tab>", "edit.outdent"},    {"<Left>", "caret.left"},
-        {"<Right>", "caret.right"},    {"<Up>", "caret.up"},           {"<Down>", "caret.down"},
-        {"<Home>", "caret.line_start"}, {"<End>", "caret.line_end"},   {"<C-Left>", "caret.word_left"},
-        {"<C-Right>", "caret.word_right"}, {"<C-w>", "edit.delete_word_left"},
+        {"<CR>", "edit.newline", false},          {"<BS>", "edit.backspace", false},
+        {"<Del>", "edit.delete", false},          {"<Tab>", "edit.tab", false},
+        {"<S-Tab>", "edit.outdent", false},       {"<C-w>", "edit.delete_word_left", false},
+        {"<Left>", "caret.left", true},           {"<Right>", "caret.right", true},
+        {"<Up>", "caret.up", true},               {"<Down>", "caret.down", true},
+        {"<Home>", "caret.line_start", true},     {"<End>", "caret.line_end", true},
+        {"<C-Left>", "caret.word_left", true},    {"<C-Right>", "caret.word_right", true},
     };
     for (const InsertKey& edit : EDITS) {
-        if (edit.key == named) {
-            (void)run_command(edit.command, c);
-            return;
+        if (edit.key != named) continue;
+        if (edit.moves) {
+            end_change_here();
+        } else {
+            note_typed(key);
         }
+        (void)run_command(edit.command, c);
+        return;
     }
 }
 
@@ -893,7 +1094,16 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
         }
         return show_visual(c);
     }
-    if (act_on_visual(name, command.argument, n, command.reg, c)) return;
+    // A change is noted for `.` with how much the selection takes.
+    std::optional<Repeat> change;
+    if (!replaying_ && name != "y" && name != "Y") {
+        change = Repeat{.reg = command.reg, .count = command.count, .keys = keys_of(command), .typed = {},
+                        .visual = extent(c)};
+    }
+    if (act_on_visual(name, command.argument, n, command.reg, c)) {
+        making_ = std::move(change);
+        return;
+    }
 
     // A motion moves each selection's caret end.
     bool any = false;

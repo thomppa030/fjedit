@@ -211,11 +211,12 @@ void move_completion(CompletionState& state, std::ptrdiff_t by) {
     state.reveal = true;
 }
 
-void accept_completion(CompletionState& state, CommandContext& context, std::optional<std::size_t> index) {
+std::optional<Completed> accept_completion(CompletionState& state, CommandContext& context,
+                                           std::optional<std::size_t> index) {
     const std::size_t chosen = index.value_or(state.selected);
     if (!state.open || !state.asked || !state.asked->answered || chosen >= state.shown.size()) {
         state = {};
-        return;
+        return std::nullopt;
     }
     const Completions& answer = state.asked->answer;
     const Completion& item = answer.items[state.shown[chosen]];
@@ -244,8 +245,10 @@ void accept_completion(CompletionState& state, CommandContext& context, std::opt
     std::ranges::stable_sort(edit.changes, {}, [](const Change& change) { return change.span.from; });
     const auto own = std::ranges::find(edit.changes, word, &Change::span);
     const Position after = spans_after(edit)[static_cast<std::size_t>(own - edit.changes.begin())].to;
+    Completed completed{.replaced = document.buffer().text(word), .text = item.change.text};
     (void)apply_edit(context, std::move(edit), after);
     state = {};
+    return completed;
 }
 
 std::optional<std::size_t> completion_card(CompletionState& state, glm::vec2 view_min, glm::vec2 view_max,

@@ -83,7 +83,8 @@ public:
     /// rather than past a line's last; a selection begins visual mode when
     /// `by_mouse` made it (a drag, a double click), and otherwise becomes a
     /// caret at its start (a definition gone to). In visual mode, carets
-    /// alone end it, and selections the mouse made become its own.
+    /// alone end it, and selections the mouse made become its own. In insert
+    /// mode a caret the mouse moved ends the change `.` makes again there.
     void settle(CommandContext& context, bool by_mouse = false);
 
     [[nodiscard]] Mode mode() const { return mode_; }
@@ -108,6 +109,11 @@ public:
     /// back to the one Ctrl-O left.
     void cancel(CommandContext& context);
 
+    /// In insert mode, an entry of the completion list taken: `text` put in
+    /// place of `replaced`, the word's text before the caret. `.` and the
+    /// insert's count make the same change again.
+    void completed(std::string_view replaced, std::string_view text);
+
     /// What is yanked and deleted.
     [[nodiscard]] Registers& registers() { return *registers_; }
 
@@ -119,6 +125,51 @@ private:
         Position caret;
         std::optional<float> goal;
     };
+
+    // How much text a change made in visual mode took, which `.` takes again
+    // from the caret: as many lines; on one line as many characters, over
+    // several on to the same place along the last; a block as wide.
+    struct VisualExtent {
+        Mode mode{Mode::Visual};
+        std::size_t lines{1};
+        // Along the line from the first character to the last, on one line
+        // or across a block.
+        float width{0.0f};
+        // Over several lines, where the last character is along its line.
+        float end{0.0f};
+        // A block on to each line's end, after $.
+        bool to_line_ends{false};
+    };
+
+    // A change as `.` makes it again: the keys of the command that made it,
+    // after its register and count, and what was typed in the insert it
+    // began.
+    struct Repeat {
+        char reg{'"'};
+        std::optional<std::size_t> count;
+        std::vector<Chord> keys;
+        std::vector<Chord> typed;
+        std::optional<VisualExtent> visual;
+    };
+
+    // `key` taken in the mode the engine is in.
+    void dispatch(const Chord& key, CommandContext& context);
+    // `.`: the last change made again at every caret, `count` for its own
+    // when given.
+    void repeat(std::optional<std::size_t> count, CommandContext& context);
+    // Visual mode selecting from each caret as much as `extent` says.
+    void select_again(const VisualExtent& extent, CommandContext& context);
+    // How much the visual selection takes, by the primary's ends.
+    [[nodiscard]] VisualExtent extent(const CommandContext& context) const;
+    // `key` typed in insert or replace mode, noted for `.` and the insert's
+    // count; it begins a change of its own (an `i`) when none is being made.
+    void note_typed(Chord key);
+    // The caret moved in insert or replace mode: the change being made ends
+    // there.
+    void end_change_here();
+    // An insert ending: what was typed in it typed again as many more times
+    // as its count asks.
+    void repeat_insert(CommandContext& context);
 
     void take_normal(const Chord& key, CommandContext& context);
     void take_insert(const Chord& key, CommandContext& context);
@@ -174,6 +225,20 @@ private:
     bool one_command_{false};
     Mode resume_{Mode::Insert};
     std::vector<std::optional<std::size_t>> left_line_ends_;
+    // The last change, which `.` makes again; the one being made, until the
+    // insert it began ends; and what that insert typed since it began or
+    // the caret last moved.
+    std::optional<Repeat> last_change_;
+    std::optional<Repeat> making_;
+    std::vector<Chord> inserted_;
+    // While `.` makes a change again, no change is noted; while an insert's
+    // count types it again, nothing typed is.
+    bool replaying_{false};
+    bool repeating_insert_{false};
+    // How many more times the insert types what was typed in it when it
+    // ends (3i), each time on a line it opens (3o).
+    std::size_t insert_repeats_{0};
+    bool insert_opens_lines_{false};
 };
 
 } // namespace fjedit::vim

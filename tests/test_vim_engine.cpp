@@ -700,3 +700,115 @@ TEST_CASE("Settling puts a caret past a line's end back on its last character", 
     v.engine.settle(context);
     CHECK(v.shown() == "a|b");
 }
+
+TEST_CASE("A dot makes the last change again, a count given it for its own", "[vim][repeat]") {
+    Vim x("|abcdefgh");
+    x.keys("x");
+    CHECK(x.shown() == "|bcdefgh");
+    x.keys("3.");
+    CHECK(x.shown() == "|efgh");
+    // The count given stays the change's.
+    x.keys(".");
+    CHECK(x.shown() == "|h");
+    // The counts before and after an operator are one.
+    Vim words("|a b c d e f g h i");
+    words.keys("2d2w");
+    CHECK(words.shown() == "|e f g h i");
+    words.keys(".");
+    CHECK(words.shown() == "|i");
+    // A yank is no change, nor an operator whose motion can't go.
+    Vim yank("|ab cd");
+    yank.keys("xywd.");
+    CHECK(yank.shown() == "|b cd");
+    yank.keys(".");
+    CHECK(yank.shown() == "| cd");
+}
+
+TEST_CASE("A dot makes an insert again with what was typed in it", "[vim][repeat]") {
+    Vim i("|ab");
+    i.keys("ix<Esc>.");
+    CHECK(i.shown() == "|xxab");
+    Vim append("|a\nb");
+    append.keys("A;<Esc>j.");
+    CHECK(append.shown() == "a;\nb|;");
+    Vim change("|foo bar");
+    change.keys("cwx<Esc>w.");
+    CHECK(change.shown() == "x |x");
+    // A count types it that many times.
+    Vim counted("|ab");
+    counted.keys("ix<Esc>3.");
+    CHECK(counted.shown() == "xx|xxab");
+    // One step of the history.
+    Vim undone("|ab");
+    undone.keys("ix<Esc>.u");
+    CHECK(undone.view.buffer().text() == "xab");
+}
+
+TEST_CASE("A count before an insert types it that many times, after o on lines of its own", "[vim][repeat]") {
+    Vim i("|ab");
+    i.keys("3ix<Esc>");
+    CHECK(i.shown() == "xx|xab");
+    i.keys("u");
+    CHECK(i.view.buffer().text() == "ab");
+    Vim o("|a");
+    o.keys("3ox<Esc>");
+    CHECK(o.shown() == "a\nx\nx\n|x");
+    Vim replace("|abcdefg");
+    replace.keys("3Rxy<Esc>");
+    CHECK(replace.shown() == "xyxyx|yg");
+}
+
+TEST_CASE("A dot types Ctrl-R's text and a completion's again", "[vim][repeat]") {
+    // The text as it was put, whatever the register holds by then.
+    Vim v("|ab\ncd");
+    v.keys("ylA<C-r>\"<Esc>jyl.");
+    CHECK(v.view.buffer().text() == "aba\ncda");
+    // A completion taken in place of the word typed: the view's edit, then
+    // what it tells the engine.
+    Vim completed("|x\ny");
+    completed.keys("Apr");
+    CommandContext acting = completed.context();
+    acting.text = "intf";
+    (void)run_command("edit.type", acting);
+    completed.engine.completed("pr", "printf");
+    completed.keys("<Esc>j.");
+    CHECK(completed.view.buffer().text() == "xprintf\nyprintf");
+}
+
+TEST_CASE("A move in insert mode ends the change there; what is typed after it is one of its own", "[vim][repeat]") {
+    Vim v("|ab");
+    v.keys("ix<Right>y<Esc>.");
+    CHECK(v.shown() == "xa|yyb");
+    // The mouse moving the caret ends it as well.
+    Vim mouse("|ab");
+    mouse.keys("ix");
+    mouse.select(Selection::at({0, 2}), true);
+    mouse.keys("y<Esc>0.");
+    CHECK(mouse.shown() == "|yxayb");
+}
+
+TEST_CASE("A dot makes a visual change again over as much text from the caret", "[vim][repeat]") {
+    Vim lines("|a\nb\nc\nd");
+    lines.keys("Vj>jj.");
+    CHECK(lines.view.buffer().text() == "    a\n    b\n    c\n    d");
+    Vim chars("|abcdef");
+    chars.keys("vld.");
+    CHECK(chars.shown() == "|ef");
+    // Over lines, on to the same place along the last.
+    Vim across("|abc\ndef\nghi\njkl");
+    across.keys("vjdj.");
+    CHECK(across.view.buffer().text() == "ef\nkl");
+    Vim block("|abc\ndef\nghi\njkl");
+    block.keys("<C-v>jldjj.");
+    CHECK(block.view.buffer().text() == "c\nf\ni\nl");
+    // With what was typed after it.
+    Vim typed("|ab ab");
+    typed.keys("vlcx<Esc>w.");
+    CHECK(typed.shown() == "x |x");
+}
+
+TEST_CASE("A dot after a put from a numbered register puts from the next", "[vim][repeat]") {
+    Vim v("|a\nb\nc\nd");
+    v.keys("dddddd\"1p..");
+    CHECK(v.shown() == "d\nc\nb\n|a");
+}
