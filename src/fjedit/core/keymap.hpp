@@ -56,6 +56,9 @@ struct KeyMatch {
     std::optional<std::string_view> command;
     /// They begin a longer binding: wait for the next key.
     bool waiting{false};
+    /// They make a whole binding and begin a longer one too, which a wait
+    /// for the next key may still make (Vim's timeoutlen).
+    bool longer{false};
 };
 
 class Keymap {

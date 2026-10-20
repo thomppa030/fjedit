@@ -50,6 +50,15 @@ constexpr double DISK_CHECK = 2.0;
 // The buttons at the end of a tab row, in from its right edge.
 constexpr float TAB_END_PAD = 4.0f;
 
+// What a keys.vim made by Preferences' Open begins with.
+constexpr std::string_view KEYS_FILE_START = R"(" Your maps for Vim's keys, in Vim's map syntax. Saved here in fjedit,
+" they apply at once; a line that can't be read shows on the status bar.
+"
+"   nnoremap <leader>w <Cmd>w<CR>
+"   xnoremap < <gv
+"   bind normal <leader>fg files.find
+)";
+
 // The standard keys, with the program's own in its modes.
 Keymap program_keys() {
     Keymap keys = Keymap::standard();
@@ -85,7 +94,7 @@ std::string tab_label(const std::filesystem::path& path) {
 // with the other views, which are told what the views show.
 void show_as_preferred(EditorView& view, const Preferences& preferences,
                        const std::shared_ptr<vim::Registers>& registers, const std::shared_ptr<vim::Settings>& settings,
-                       const vim::PathLister& paths) {
+                       const vim::PathLister& paths, const std::shared_ptr<const std::vector<vim::Mapping>>& maps) {
     view.minimap = preferences.minimap;
     view.text_size = static_cast<float>(preferences.text_size);
     view.line_numbers = settings->relative_numbers
@@ -100,6 +109,7 @@ void show_as_preferred(EditorView& view, const Preferences& preferences,
         view.vim.emplace(registers, settings);
         view.vim->list_paths_with(paths);
     }
+    view.maps.use(maps);
     if (!preferences.vim) view.vim.reset();
 }
 
@@ -159,8 +169,10 @@ Program::Program(std::filesystem::path root, ProgramOptions options)
       wake_(std::move(options.wake)),
       services_(noting_paths(options.services ? std::move(*options.services)
                                               : std::vector<ServiceMaker>{clangd(), fjls()}),
-                workspace_.root()) {
+                workspace_.root()),
+      keys_path_(std::move(options.keys)) {
     if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
+    read_keys();
 }
 
 ServiceMaker Program::clangd() {
@@ -258,7 +270,7 @@ LanguageServerShown Program::fjls_shown() const {
 
 std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
     auto view = std::make_unique<EditorView>(document);
-    show_as_preferred(*view, preferences_, registers_, vim_settings_, path_lister_);
+    show_as_preferred(*view, preferences_, registers_, vim_settings_, path_lister_, maps_);
     if (services_.serves(path)) {
         view->service = &services_;
         view->path = path;
@@ -280,6 +292,70 @@ void Program::go_to(const std::filesystem::path& path, Span span) {
     const Buffer& buffer = document->buffer();
     tab->view->selections = Selections({.anchor = buffer.clamp(span.from), .caret = buffer.clamp(span.to)});
     tab->view->reveal = true;
+}
+
+std::filesystem::path Program::keys_file() {
+    return ftk::platform::config_dir() / "fjedit" / "keys.vim";
+}
+
+std::span<const std::string_view> Program::commands() {
+    static constexpr std::string_view NAMES[] = {"file.save",        "file.save_all", "file.close",  "file.quit",
+                                                 "view.split",       "files.find",    "tab.next",    "tab.previous",
+                                                 "edit.preferences"};
+    return NAMES;
+}
+
+bool Program::has_command(std::string_view name) const {
+    return std::ranges::contains(commands(), name) || find_command(name) != nullptr || is_view_command(name);
+}
+
+void Program::read_keys() {
+    keymap_ = program_keys();
+    maps_ = std::make_shared<const std::vector<vim::Mapping>>();
+    keys_errors_.clear();
+    std::error_code error;
+    if (keys_path_.empty() || !std::filesystem::exists(keys_path_, error)) return;
+    const ftk::Result<std::string> text = read_text_file(keys_path_);
+    if (!text) {
+        keys_errors_.push_back({.line = 0, .message = text.error()});
+        return;
+    }
+    vim::KeysFile file = vim::read_keys_file(*text);
+    keys_errors_ = std::move(file.errors);
+    // Each bind into the keymap mode it names, over the program's own.
+    for (const vim::Bind& bind : file.binds) {
+        if (!has_command(bind.command)) {
+            keys_errors_.push_back({.line = bind.line, .message = std::format("No command called {}", bind.command)});
+            continue;
+        }
+        const std::string_view mode = bind.mode == "normal"       ? Keymap::VIM_NORMAL
+                                      : bind.mode == "visual"     ? Keymap::VIM_VISUAL
+                                      : bind.mode == "insert"     ? Keymap::VIM_INSERT
+                                      : bind.mode == "command"    ? Keymap::VIM_COMMAND
+                                      : bind.mode == "completing" ? Keymap::VIM_COMPLETING
+                                      : bind.mode == "finding"    ? Keymap::FINDING
+                                                                  : VIM_PROGRAM;
+        keymap_.bind(mode, bind.keys, bind.command);
+    }
+    for (vim::KeysError& said : vim::apply_settings(file.settings, *vim_settings_, *registers_)) {
+        keys_errors_.push_back(std::move(said));
+    }
+    std::ranges::stable_sort(keys_errors_, {}, &vim::KeysError::line);
+    maps_ = std::make_shared<const std::vector<vim::Mapping>>(std::move(file.maps));
+}
+
+void Program::open_keys() {
+    if (keys_path_.empty()) return;
+    std::error_code error;
+    if (!std::filesystem::exists(keys_path_, error)) {
+        std::filesystem::create_directories(keys_path_.parent_path(), error);
+        const ftk::Result<> made = write_text_file(keys_path_, KEYS_FILE_START);
+        if (!made) {
+            note_ = made.error();
+            return;
+        }
+    }
+    open(keys_path_);
 }
 
 std::filesystem::path Program::recovery_folder(const std::filesystem::path& root) {
@@ -363,6 +439,8 @@ void Program::save(const std::filesystem::path& path) {
     forget_kept(workspace_.name(path));
     services_.saved(workspace_.name(path));
     note_.clear();
+    // keys.vim saved here applies at once.
+    if (!keys_path_.empty() && workspace_.name(path) == workspace_.name(keys_path_)) read_keys();
 }
 
 void Program::keep_unsaved() {
@@ -650,19 +728,22 @@ void Program::draw() {
     for (const vim::ExCommand& command : std::exchange(vim_commands_, {})) run_ex(command);
     ui::end_host_window();
     draw_status();
-    preferences_window_.draw(preferences_, clangd_shown(), fjls_shown());
+    if (preferences_window_.draw(preferences_, clangd_shown(), fjls_shown(), keys_path_).open_keys) open_keys();
     draw_prompts();
 }
 
 std::string Program::shortcut(std::string_view command) const {
-    std::optional<std::vector<Chord>> chords = keymap_.keys_for(preferences_.vim ? VIM_PROGRAM : PROGRAM, command);
+    std::optional<std::vector<Chord>> chords;
     if (!preferences_.vim) {
+        chords = keymap_.keys_for(PROGRAM, command);
         if (!chords) chords = keymap_.keys_for(Keymap::EDITING, command);
     } else {
-        // A view's Vim starts in normal mode, so with none open, normal's.
+        // A view's Vim starts in normal mode, so with none open, normal's;
+        // its mode's keys first, one's own binds among them.
         const Tab* tab = front_tab();
         const vim::Mode mode = tab != nullptr && tab->view->vim ? tab->view->vim->mode() : vim::Mode::Normal;
-        if (!chords) chords = keymap_.keys_for(vim::keymap_mode(mode), command);
+        chords = keymap_.keys_for(vim::keymap_mode(mode), command);
+        if (!chords) chords = keymap_.keys_for(VIM_PROGRAM, command);
         if (!chords) chords = vim::keys_for(command, mode);
     }
     return chords ? chords_text(*chords) : std::string();
@@ -785,7 +866,7 @@ void Program::draw_group(Group& group, std::size_t index) {
                 }
             }
         }
-        show_as_preferred(*tab.view, preferences_, registers_, vim_settings_, path_lister_);
+        show_as_preferred(*tab.view, preferences_, registers_, vim_settings_, path_lister_, maps_);
         const std::optional<std::filesystem::path> unsaved = first_unsaved();
         tab.view->file_facts = {.file = tab.path.filename().string(),
                                 .closing_loses = workspace_.unsaved(tab.path) && tabs_showing(tab.path) == 1,
@@ -840,6 +921,12 @@ void Program::draw_status() {
             // What the last key had to say, where Vim says it.
             if (const vim::Message& said = engine.message(); !said.text.empty()) {
                 ui::status_message(said.error ? ui::StatusTone::Error : ui::StatusTone::Plain, said.text);
+            }
+            // The first line of keys.vim that couldn't be used.
+            if (!keys_errors_.empty()) {
+                const vim::KeysError& first = keys_errors_.front();
+                ui::status_note(ui::StatusTone::Warning, first.message,
+                                first.line == 0 ? std::string("keys.vim") : std::format("keys.vim:{}", first.line));
             }
             ui::status_rule();
         }

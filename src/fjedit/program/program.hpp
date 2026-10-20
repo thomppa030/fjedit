@@ -29,6 +29,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -48,6 +49,9 @@ struct ProgramOptions {
     /// Wakes the frame loop from another thread, when a language service's
     /// answer comes: ftk::Window::wake() for a window.
     std::function<void()> wake{};
+    /// keys.vim, one's own maps for Vim's keys (decision 7 of the Vim plan),
+    /// read at the start and again when saved here; none reads none.
+    std::filesystem::path keys{};
 };
 
 class Program {
@@ -58,6 +62,13 @@ public:
     /// Where a program on the folder `root` keeps its unsaved work on this
     /// machine: a folder of its own under the user's state folder.
     [[nodiscard]] static std::filesystem::path recovery_folder(const std::filesystem::path& root);
+
+    /// Where this machine keeps one's own maps for Vim's keys: keys.vim in
+    /// fjedit's settings folder, beside settings.ini.
+    [[nodiscard]] static std::filesystem::path keys_file();
+
+    /// The names of the program's own commands, which run() runs.
+    [[nodiscard]] static std::span<const std::string_view> commands();
 
     /// Draws a frame of the program, filling the window's work area.
     void draw();
@@ -73,8 +84,13 @@ public:
 
     /// The keys a menu shows for `command` ("Ctrl S"): the program's, else
     /// those of the view's keys; with Vim on, those of the mode the view in
-    /// front is in ("u", "\"+yy"). Empty when no keys run it.
+    /// front is in first ("u", "\"+yy", one's own binds), then the
+    /// program's. Empty when no keys run it.
     [[nodiscard]] std::string shortcut(std::string_view command) const;
+
+    /// What keys.vim says that couldn't be used, by line; the status bar
+    /// says the first with Vim on.
+    [[nodiscard]] const std::vector<vim::KeysError>& keys_errors() const { return keys_errors_; }
 
     /// Asked to quit, by the window or the menu: true when nothing unsaved
     /// stands in the way. Otherwise it asks what to do with the unsaved
@@ -189,6 +205,16 @@ private:
     [[nodiscard]] std::unique_ptr<EditorView> make_view(const std::filesystem::path& path, Document& document);
     // Lets the file at `path` go: its services first, then the workspace.
     void let_go(const std::filesystem::path& path);
+    // keys.vim read: its maps for every view, its binds into the keymap on
+    // the program's own keys, its settings applied, and what it says that
+    // couldn't be used kept for the status bar.
+    void read_keys();
+    // keys.vim opened in a tab, made first with a few lines of comment when
+    // there is none.
+    void open_keys();
+    // Whether one of the commands is called `name`: the program's, the
+    // view's or the editor's.
+    [[nodiscard]] bool has_command(std::string_view name) const;
     // Opens the file at `path` with `span` selected, the keyboard in it.
     void go_to(const std::filesystem::path& path, Span span);
     // clangd for C and C++, and fjls for a game's script headers and
@@ -270,6 +296,11 @@ private:
         Asked<ftk::Result<WorkspaceEdit>> asked;
     };
     std::optional<Renaming> renaming_;
+    // keys.vim: where it is, its maps, which every view plays, and what it
+    // says that couldn't be used.
+    std::filesystem::path keys_path_;
+    std::shared_ptr<const std::vector<vim::Mapping>> maps_{std::make_shared<const std::vector<vim::Mapping>>()};
+    std::vector<vim::KeysError> keys_errors_;
     // What went wrong last, for the status bar.
     std::string note_;
     // What was just done (a rename), for the status bar until the next key.

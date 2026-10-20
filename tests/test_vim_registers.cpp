@@ -109,3 +109,27 @@ TEST_CASE("A register's pieces, one for each caret, make one text", "[vim][regis
     CHECK_FALSE(Registers::valid('!'));
     CHECK_FALSE(Registers::valid(' '));
 }
+
+TEST_CASE("With the clipboard for the unnamed register, yanks and deletes go there too, and a put takes it",
+          "[vim][registers]") {
+    TestClipboard board;
+    Registers registers;
+    registers.use_clipboard(true);
+    // Each caret's piece kept while the clipboard holds what was yanked.
+    const Yanked carets{.pieces = {"a", "b"}, .linewise = false};
+    registers.yank('"', carets, &board.clipboard);
+    CHECK(board.text == "a\nb");
+    CHECK(registers.get('"', &board.clipboard) == carets);
+    // What another program put there.
+    board.text = "from elsewhere";
+    CHECK(registers.get('"', &board.clipboard)->text() == "from elsewhere");
+    registers.deleted('"', SPIN, &board.clipboard);
+    CHECK(board.text == "spin");
+    // A register named keeps to itself.
+    registers.yank('a', LINES, &board.clipboard);
+    CHECK(board.text == "spin");
+    registers.use_clipboard(false);
+    registers.yank('"', SPIN, &board.clipboard);
+    board.text = "elsewhere";
+    CHECK(registers.get('"', &board.clipboard) == SPIN);
+}

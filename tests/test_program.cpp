@@ -1,5 +1,7 @@
 #include "fjedit/program/program.hpp"
 
+#include "fjedit/core/vim/notation.hpp"
+
 #include "fake_language.hpp"
 #include "print.hpp"
 #include "temp_folder.hpp"
@@ -78,7 +80,8 @@ struct Running {
             folder.path,
             ProgramOptions{.recovery = recovery_folder(),
                            .services = languages == Languages::Clangd ? std::nullopt : std::optional(std::move(services)),
-                           .wake = {}});
+                           .wake = {},
+                           .keys = keys_file()});
         h.set_ui([this] { program->draw(); });
         h.step(3);
     }
@@ -99,6 +102,10 @@ struct Running {
         h.click_at(row->rect.centre());
         h.step(2);
     }
+
+    // keys.vim, read when a test writes it: in the test's own folder, where
+    // the tree doesn't show it.
+    [[nodiscard]] std::filesystem::path keys_file() const { return folder.path / ".config" / "keys.vim"; }
 
     // Where the program keeps unsaved work: in the test's own folder, where
     // the tree doesn't show it.
@@ -1137,4 +1144,62 @@ TEST_CASE("With Vim on, the : line says :q will be refused before Enter, as the 
     run.h.type(":q");
     run.h.step();
     CHECK_FALSE(drew(ftk::theme::warning()));
+}
+
+TEST_CASE("With Vim on, keys.vim's maps, binds and settings apply from the start; what it can't use shows",
+          "[program][vim][keys]") {
+    Running run({{"a.txt", "one\ntwo\n"}}, [](const TempFolder& folder) {
+        folder.write(".config/keys.vim",
+                     "nnoremap Q dd\nbind normal <leader>fg files.find\nset ignorecase\nset relativenumber\nfrob\n"
+                     "bind normal <leader>x files.nothing\n");
+    });
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type("Q");
+    run.h.step();
+    CHECK(run.document("a.txt").buffer().text() == "two\n");
+    // A bind shows in the menus, over the program's own keys.
+    CHECK(run.program->shortcut("files.find") == chords_text(*vim::parse_notation("<Space>fg")));
+    CHECK(run.program->vim_settings().pattern.ignore_case);
+    CHECK(run.program->keys_errors() == std::vector<vim::KeysError>{
+                                            {.line = 4, .message = "relativenumber: set in Preferences"},
+                                            {.line = 5, .message = "Not supported here: frob"},
+                                            {.line = 6, .message = "No command called files.nothing"},
+                                        });
+    CHECK(on_status_bar(run, ftk::theme::warning()));
+}
+
+TEST_CASE("With Vim on, keys.vim saved in fjedit applies at once", "[program][vim][keys]") {
+    Running run({{"a.txt", "one\ntwo\n"}}, [](const TempFolder& folder) {
+        folder.write(".config/keys.vim", "\" mine\n");
+    });
+    run.program->preferences().vim = true;
+    run.program->open(run.keys_file());
+    run.h.step();
+    run.h.type("ggonnoremap Q dd");
+    run.h.press(Key::Escape);
+    ex(run, "w");
+    CHECK(run.folder.read(".config/keys.vim") == "\" mine\nnnoremap Q dd\n");
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type("Q");
+    run.h.step();
+    CHECK(run.document("a.txt").buffer().text() == "two\n");
+}
+
+TEST_CASE("Preferences' Open makes keys.vim with a few lines of comment, and opens it", "[program][keys]") {
+    Running run({{"a.txt", ""}});
+    REQUIRE(run.program->run("edit.preferences"));
+    run.h.step(2);
+    run.h.type("maps");
+    run.press("Open");
+    CHECK(std::filesystem::exists(run.keys_file()));
+    CHECK(run.folder.read(".config/keys.vim").starts_with("\" Your maps for Vim's keys"));
+    CHECK(run.program->front() == run.program->workspace().name(run.keys_file()));
+}
+
+TEST_CASE("Every command the program names it runs", "[program]") {
+    Running run({{"a.txt", ""}});
+    for (const std::string_view name : Program::commands()) CHECK(run.program->run(name));
 }

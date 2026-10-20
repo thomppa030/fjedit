@@ -794,6 +794,8 @@ std::string_view setting_words(SetOption option) {
         case SetOption::TabStop: return "the indent width";
         case SetOption::ScrollOff: return "the lines kept around the caret";
         case SetOption::TimeoutLen: return "the wait for a longer map";
+        case SetOption::IncSearch: return "showing matches as a search is typed";
+        case SetOption::Clipboard: return "the clipboard setting";
     }
     return {};
 }
@@ -1022,6 +1024,7 @@ void Engine::preview(CommandContext& c) {
     if (line.line.kind == ':') return;
     c.selections.set(std::vector<Selection>(line.selections), line.primary);
     preview_.reset();
+    if (!settings_->incsearch) return;
     const std::string_view pattern = split_pattern(line.line.text, line.line.kind).pattern;
     if (pattern.empty()) return;
     ftk::Result<Pattern> read = read_pattern(pattern, remembered_.settings);
@@ -1430,7 +1433,11 @@ Outcome Engine::read_line(std::string_view text, const CommandContext& c, const 
             if (!set) return fails(set.error());
             const std::string_view words = setting_words(set->option);
             if (set->action == SetItem::Action::Ask) {
-                parts.push_back(set->on_off ? std::format("show whether {} is on", words) : std::format("show {}", words));
+                parts.push_back(set->kind == SetItem::Kind::OnOff ? std::format("show whether {} is on", words)
+                                                                  : std::format("show {}", words));
+            } else if (set->option == SetOption::Clipboard) {
+                parts.push_back(set->text.empty() ? "keep the unnamed register off the system clipboard"
+                                                  : "use the system clipboard for the unnamed register");
             } else if (set->action == SetItem::Action::Value) {
                 parts.push_back(std::format("set {} to {}{}", words, set->value,
                                             set->option == SetOption::TimeoutLen ? " ms" : ""));
@@ -1705,6 +1712,46 @@ void Engine::run_normal(const ExCommand& command, std::size_t first, std::size_t
     c.document.history().join(steps);
 }
 
+std::vector<KeysError> apply_settings(std::span<const SetLine> lines, Settings& settings, Registers& registers) {
+    std::vector<KeysError> said;
+    for (const SetLine& line : lines) {
+        std::string_view rest = line.argument;
+        while (!rest.empty()) {
+            const std::size_t blank = rest.find(' ');
+            const std::string_view item = rest.substr(0, blank);
+            rest = blank == std::string_view::npos ? std::string_view{} : rest.substr(blank + 1);
+            if (item.empty()) continue;
+            const ftk::Result<SetItem> read = read_set_item(item);
+            if (!read) {
+                said.push_back({.line = line.line, .message = read.error()});
+                break;
+            }
+            if (read->action == SetItem::Action::Ask) continue;
+            const auto turned = [&](bool now) { return read->action == SetItem::Action::Toggle ? !now : read->action == SetItem::Action::On; };
+            switch (read->option) {
+                case SetOption::Number:
+                case SetOption::RelativeNumber:
+                case SetOption::ScrollOff:
+                    said.push_back({.line = line.line, .message = std::format("{}: set in Preferences", read->name)});
+                    break;
+                case SetOption::ExpandTab:
+                case SetOption::ShiftWidth:
+                case SetOption::TabStop:
+                    said.push_back(
+                        {.line = line.line, .message = std::format("{}: each file keeps its own; :set it there", read->name)});
+                    break;
+                case SetOption::IgnoreCase: settings.pattern.ignore_case = turned(settings.pattern.ignore_case); break;
+                case SetOption::SmartCase: settings.pattern.smart_case = turned(settings.pattern.smart_case); break;
+                case SetOption::HlSearch: settings.hlsearch = turned(settings.hlsearch); break;
+                case SetOption::IncSearch: settings.incsearch = turned(settings.incsearch); break;
+                case SetOption::TimeoutLen: settings.timeout_ms = read->value; break;
+                case SetOption::Clipboard: registers.use_clipboard(!read->text.empty()); break;
+            }
+        }
+    }
+    return said;
+}
+
 bool Engine::setting_on(SetOption option, const CommandContext& c) const {
     const Settings& settings = *settings_;
     switch (option) {
@@ -1713,6 +1760,7 @@ bool Engine::setting_on(SetOption option, const CommandContext& c) const {
         case SetOption::IgnoreCase: return settings.pattern.ignore_case;
         case SetOption::SmartCase: return settings.pattern.smart_case;
         case SetOption::HlSearch: return settings.hlsearch;
+        case SetOption::IncSearch: return settings.incsearch;
         case SetOption::ExpandTab: return !c.document.indent().tabs;
         default: return false;
     }
@@ -1739,7 +1787,7 @@ void Engine::run_set(const ExCommand& command, CommandContext& c) {
         const ftk::Result<SetItem> read = read_set_item(item);
         if (!read) return refuse(read.error());
         const Option option = read->option;
-        if (read->on_off) {
+        if (read->kind == SetItem::Kind::OnOff) {
             if (read->action == SetItem::Action::Ask) {
                 said.push_back(std::format("{}{}", on(option) ? "  " : "no", read->name));
                 continue;
@@ -1759,8 +1807,18 @@ void Engine::run_set(const ExCommand& command, CommandContext& c) {
                     settings.hlsearch = to;
                     if (to) remembered_.shown = true;
                     break;
+                case Option::IncSearch: settings.incsearch = to; break;
                 case Option::ExpandTab: c.document.set_indent({.tabs = !to, .width = c.document.indent().width}); break;
                 default: break;
+            }
+            continue;
+        }
+        // The clipboard's: shown when asked for, set after =.
+        if (read->kind == SetItem::Kind::Text) {
+            if (read->action == SetItem::Action::Ask) {
+                said.push_back(std::format("  clipboard={}", registers_->uses_clipboard() ? "unnamedplus" : ""));
+            } else {
+                registers_->use_clipboard(!read->text.empty());
             }
             continue;
         }

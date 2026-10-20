@@ -44,7 +44,8 @@ int run(const std::filesystem::path& folder) {
     // window to draw it.
     fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder),
                                      .services = std::nullopt,
-                                     .wake = [] { ftk::Window::wake(); }});
+                                     .wake = [] { ftk::Window::wake(); },
+                                     .keys = fjedit::Program::keys_file()});
 
     // fjedit's settings file, this machine's: where its windows were left
     // and its preferences. The window's UI is the current one from here on,

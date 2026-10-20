@@ -185,19 +185,24 @@ enum class SetOption : uint8_t {
     TabStop,
     ScrollOff,
     TimeoutLen,
+    IncSearch,
+    Clipboard,
 };
 
-/// One item of :set's argument ("rnu", "noic", "hls!", "so?", "sw=2"): the
-/// setting by its whole name, whether it is on or off rather than a number,
-/// and what to do with it.
+/// One item of :set's argument ("rnu", "noic", "hls!", "so?", "sw=2",
+/// "clipboard=unnamedplus"): the setting by its whole name, the kind of
+/// value it takes, and what to do with it.
 struct SetItem {
     SetOption option{SetOption::Number};
     std::string_view name;
-    bool on_off{true};
+    enum class Kind : uint8_t { OnOff, Number, Text };
+    Kind kind{Kind::OnOff};
     enum class Action : uint8_t { On, Off, Toggle, Ask, Value };
     Action action{Action::On};
-    /// Action::Value: the number after =.
+    /// Action::Value: the number after =, or its text for a setting that
+    /// takes text.
     std::size_t value{0};
+    std::string_view text;
 };
 /// An error worded as Vim's for a setting it has none of ("E518: Unknown
 /// option: foo") or what the setting can't take ("E521: Number required

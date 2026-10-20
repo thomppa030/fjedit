@@ -505,8 +505,9 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ac
             const KeyMatch completing = keymap.find(Keymap::VIM_COMPLETING, view.pending);
             if (completing.command) match = completing;
             match.waiting = match.waiting || completing.waiting;
+            match.longer = completing.command ? completing.longer : match.longer;
         }
-        if (match.waiting && !timed_out) return;
+        if ((match.waiting || match.longer) && !timed_out) return;
         if (match.command) {
             const std::string name(*match.command);
             view.pending.clear();

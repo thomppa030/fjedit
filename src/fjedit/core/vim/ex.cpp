@@ -332,18 +332,26 @@ ftk::Result<GlobalArgument> read_global(std::string_view argument) {
 }
 
 ftk::Result<SetItem> read_set_item(std::string_view item) {
+    using Kind = SetItem::Kind;
     struct Named {
         std::string_view whole;
         std::string_view short_name;
         SetOption option;
-        bool on_off;
+        Kind kind;
     };
     static constexpr Named OPTIONS[] = {
-        {"number", "nu", SetOption::Number, true},          {"relativenumber", "rnu", SetOption::RelativeNumber, true},
-        {"ignorecase", "ic", SetOption::IgnoreCase, true},  {"smartcase", "scs", SetOption::SmartCase, true},
-        {"hlsearch", "hls", SetOption::HlSearch, true},     {"expandtab", "et", SetOption::ExpandTab, true},
-        {"shiftwidth", "sw", SetOption::ShiftWidth, false}, {"tabstop", "ts", SetOption::TabStop, false},
-        {"scrolloff", "so", SetOption::ScrollOff, false},  {"timeoutlen", "tm", SetOption::TimeoutLen, false},
+        {"number", "nu", SetOption::Number, Kind::OnOff},
+        {"relativenumber", "rnu", SetOption::RelativeNumber, Kind::OnOff},
+        {"ignorecase", "ic", SetOption::IgnoreCase, Kind::OnOff},
+        {"smartcase", "scs", SetOption::SmartCase, Kind::OnOff},
+        {"hlsearch", "hls", SetOption::HlSearch, Kind::OnOff},
+        {"incsearch", "is", SetOption::IncSearch, Kind::OnOff},
+        {"expandtab", "et", SetOption::ExpandTab, Kind::OnOff},
+        {"shiftwidth", "sw", SetOption::ShiftWidth, Kind::Number},
+        {"tabstop", "ts", SetOption::TabStop, Kind::Number},
+        {"scrolloff", "so", SetOption::ScrollOff, Kind::Number},
+        {"timeoutlen", "tm", SetOption::TimeoutLen, Kind::Number},
+        {"clipboard", "cb", SetOption::Clipboard, Kind::Text},
     };
     std::string_view name = item;
     std::optional<SetItem::Action> action;
@@ -372,19 +380,30 @@ ftk::Result<SetItem> read_set_item(std::string_view item) {
         }
     }
     if (found == std::end(OPTIONS)) return ftk::make_error(std::format("E518: Unknown option: {}", item));
-    SetItem out{.option = found->option, .name = found->whole, .on_off = found->on_off, .action = SetItem::Action::On,
-                .value = 0};
-    if (found->on_off) {
+    SetItem out{.option = found->option, .name = found->whole, .kind = found->kind, .action = SetItem::Action::On,
+                .value = 0, .text = {}};
+    if (found->kind == Kind::OnOff) {
         if (value) return ftk::make_error(std::format("E474: Invalid argument: {}", item));
         out.action = action.value_or(SetItem::Action::On);
         return out;
     }
-    // A number: shown when asked for or named alone, set after =.
+    // A number or text: shown when asked for or named alone, set after =.
     if (action == SetItem::Action::Off || action == SetItem::Action::Toggle) {
         return ftk::make_error(std::format("E474: Invalid argument: {}", item));
     }
     if (!value) {
         out.action = SetItem::Action::Ask;
+        return out;
+    }
+    if (found->kind == Kind::Text) {
+        // The clipboard's: the system's for the unnamed register, or not.
+        constexpr std::string_view CLIPBOARDS[] = {"", "unnamed", "unnamedplus", "unnamed,unnamedplus",
+                                                   "unnamedplus,unnamed"};
+        if (!std::ranges::contains(CLIPBOARDS, *value)) {
+            return ftk::make_error(std::format("E474: Invalid argument: {}", item));
+        }
+        out.action = SetItem::Action::Value;
+        out.text = *value;
         return out;
     }
     if (value->empty() || !std::ranges::all_of(*value, digit) ||

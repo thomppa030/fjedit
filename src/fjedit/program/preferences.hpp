@@ -13,6 +13,7 @@
 
 #include "ftk/ui/kit/settings_file.hpp"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -59,6 +60,12 @@ struct LanguageServerShown {
     std::string reads{};
 };
 
+/// What the Preferences window asked of the program as it was drawn.
+struct PreferencesAsk {
+    /// Open keys.vim in a tab, made first when there is none.
+    bool open_keys{false};
+};
+
 class PreferencesWindow {
 public:
     void open() { open_ = true; }
@@ -67,8 +74,11 @@ public:
     /// Draws it while open: the pages down the left with a search over
     /// their settings, the page on the right, and a foot saying where the
     /// settings are kept. Each edit changes `preferences` and tells the
-    /// settings file. `clangd` and `fjls` are how the language servers are.
-    void draw(Preferences& preferences, const LanguageServerShown& clangd, const LanguageServerShown& fjls);
+    /// settings file. `clangd` and `fjls` are how the language servers are;
+    /// `keys` is keys.vim, one's own maps, which Keys shows with Open (none
+    /// shows no row).
+    [[nodiscard]] PreferencesAsk draw(Preferences& preferences, const LanguageServerShown& clangd,
+                                      const LanguageServerShown& fjls, const std::filesystem::path& keys = {});
 
 private:
     bool open_{false};

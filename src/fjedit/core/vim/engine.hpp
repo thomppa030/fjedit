@@ -28,6 +28,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -73,6 +74,9 @@ struct Settings {
     PatternSettings pattern;
     /// hlsearch: the last search's matches stay shown.
     bool hlsearch{true};
+    /// incsearch: a search's matches show, and the first is gone to, as
+    /// its pattern is typed.
+    bool incsearch{true};
     /// relativenumber and scrolloff as `:set` made them; nothing where it
     /// didn't.
     std::optional<bool> relative_numbers;
@@ -84,6 +88,13 @@ struct Settings {
     /// binding of the keymap's, wait for the rest, in milliseconds.
     std::size_t timeout_ms{1000};
 };
+
+/// keys.vim's set lines applied (decision 8 of the Vim plan): Vim's own
+/// settings, which the keys file owns, go into `settings` and `registers`;
+/// a view's, which Preferences own, and a file's indenting are skipped, each
+/// said with its line, as is what a line can't set.
+[[nodiscard]] std::vector<KeysError> apply_settings(std::span<const SetLine> lines, Settings& settings,
+                                                   Registers& registers);
 
 /// The last search: what it looks for as Vim and as the find read it, and
 /// which way `n` goes.

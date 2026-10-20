@@ -2,6 +2,7 @@
 
 #include "fjedit/program/icons.hpp"
 
+#include "ftk/ui/kit/button.hpp"
 #include "ftk/ui/kit/choice.hpp"
 #include "ftk/ui/kit/feedback.hpp"
 #include "ftk/ui/kit/field.hpp"
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdlib>
 #include <format>
 #include <iterator>
 #include <string_view>
@@ -107,8 +109,21 @@ void server_row(const char* name, std::string& path, const LanguageServerShown& 
     }
 }
 
-// The Code editor page's settings, as rows a search can filter.
-void draw_code_editor(Preferences& preferences, const LanguageServerShown& clangd, const LanguageServerShown& fjls) {
+// `path` as the user reads it: their home folder as ~.
+std::string shown_path(const std::filesystem::path& path) {
+    const std::string whole = path.generic_string();
+    const char* home = std::getenv("HOME");
+    if (home == nullptr || *home == '\0') return whole;
+    const std::string start = std::filesystem::path(home).generic_string();
+    if (!whole.starts_with(start + "/")) return whole;
+    return "~" + whole.substr(start.size());
+}
+
+// The Code editor page's settings, as rows a search can filter. Returns
+// whether keys.vim's Open was pressed.
+bool draw_code_editor(Preferences& preferences, const LanguageServerShown& clangd, const LanguageServerShown& fjls,
+                      const std::filesystem::path& keys) {
+    bool open_keys = false;
     ui::subheading("Language servers");
     if (auto table = ui::PropertyTable("##server")) {
         server_row("clangd", preferences.clangd, clangd, "Starts with the first C or C++ file opened",
@@ -145,7 +160,20 @@ void draw_code_editor(Preferences& preferences, const LanguageServerShown& clang
         ui::row("Vim keys", [&] {
             if (ui::checkbox("##vim", preferences.vim).changed) ui::settings_changed();
         });
+        if (!keys.empty()) {
+            ui::row("Your maps", [&] {
+                {
+                    const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
+                    ui::align_text_to_frame();
+                    ui::text(shown_path(keys), theme::text_secondary());
+                }
+                ui::same_line();
+                open_keys = ui::button("Open");
+            });
+            ui::hint("keys.vim, in Vim's map syntax. Saved here, it applies at once.");
+        }
     }
+    return open_keys;
 }
 
 } // namespace
@@ -168,11 +196,12 @@ ui::SettingsSection preferences_section(Preferences& preferences) {
             }};
 }
 
-void PreferencesWindow::draw(Preferences& preferences, const LanguageServerShown& clangd,
-                             const LanguageServerShown& fjls) {
-    if (!open_) return;
+PreferencesAsk PreferencesWindow::draw(Preferences& preferences, const LanguageServerShown& clangd,
+                                      const LanguageServerShown& fjls, const std::filesystem::path& keys) {
+    PreferencesAsk ask;
+    if (!open_) return ask;
     auto window = ui::PagedWindow("Preferences###preferences", &open_, SIZE);
-    if (!window) return;
+    if (!window) return ask;
 
     const float footer = ui::save_bar_height();
     const bool searching = !search_.empty();
@@ -188,12 +217,13 @@ void PreferencesWindow::draw(Preferences& preferences, const LanguageServerShown
         // only count as they are drawn.
         if (!searching || found_ > 0) ui::page_title(icon::code_editor, "Code editor");
         const ui::RowFilter filter(search_);
-        draw_code_editor(preferences, clangd, fjls);
+        ask.open_keys = draw_code_editor(preferences, clangd, fjls, keys);
         found_ = filter.matches();
         if (searching && found_ == 0) ui::empty_state(ui::icon::search, "No settings match", "Try another word");
     }
 
     ui::note_bar(icon::this_machine, "Kept on this machine, never in a project. Changes apply at once.");
+    return ask;
 }
 
 } // namespace fjedit

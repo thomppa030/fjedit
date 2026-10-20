@@ -1590,6 +1590,36 @@ TEST_CASE("The engine says the mode a map's keys are typed in, and runs a map's 
     CHECK(reading(v, "set tm=500") == "Set the wait for a longer map to 500 ms");
 }
 
+TEST_CASE(":set incsearch and clipboard, and keys.vim's set lines applied by their owners", "[vim][ex][keys]") {
+    Vim v("|spin\nroll");
+    // Without incsearch, a pattern typed goes nowhere until Enter.
+    v.keys(":set nois<CR>/roll");
+    CHECK(v.shown() == "|spin\nroll");
+    CHECK(v.engine.shown_search() == nullptr);
+    v.keys("<CR>");
+    CHECK(v.shown() == "spin\n|roll");
+    v.keys(":set cb=unnamedplus<CR>");
+    CHECK(v.engine.registers().uses_clipboard());
+    v.keys(":set cb?<CR>");
+    CHECK(v.engine.message().text == "  clipboard=unnamedplus");
+    CHECK(reading(v, "set cb=") == "Keep the unnamed register off the system clipboard");
+
+    // keys.vim's: Vim's own apply; a view's and a file's are said and skipped.
+    vim::Settings settings;
+    vim::Registers registers;
+    const vim::KeysFile file = vim::read_keys_file(
+        "set ignorecase smartcase nohlsearch tm=400\nset clipboard=unnamedplus\nset rnu ic\nset sw=2\nset foo\n");
+    const std::vector<vim::KeysError> said = vim::apply_settings(file.settings, settings, registers);
+    CHECK(settings.pattern.ignore_case);
+    CHECK(settings.pattern.smart_case);
+    CHECK_FALSE(settings.hlsearch);
+    CHECK(settings.timeout_ms == 400);
+    CHECK(registers.uses_clipboard());
+    CHECK(said == std::vector<vim::KeysError>{{.line = 3, .message = "relativenumber: set in Preferences"},
+                                              {.line = 4, .message = "shiftwidth: each file keeps its own; :set it there"},
+                                              {.line = 5, .message = "E518: Unknown option: foo"}});
+}
+
 TEST_CASE("Ctrl-J and Ctrl-K step the : line's rows as Tab does; with none, Ctrl-J is Enter", "[vim][ex]") {
     Vim v("|a\nb");
     const auto line = [&] { return v.engine.command_line()->text; };

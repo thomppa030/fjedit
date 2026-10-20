@@ -107,6 +107,7 @@ KeyMatch Keymap::find(std::string_view mode, std::span<const Chord> pressed) con
             match.waiting = true;
         }
     }
+    match.longer = match.command && match.waiting;
     if (match.command) match.waiting = false;
     return match;
 }

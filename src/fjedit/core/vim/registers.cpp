@@ -62,6 +62,12 @@ bool Registers::valid(char name) {
 
 std::optional<Yanked> Registers::get(char name, const Clipboard* clipboard) const {
     if (upper(name)) name = static_cast<char>(name - 'A' + 'a');
+    // With the clipboard for it, what the clipboard holds: what was yanked
+    // here, each caret's piece kept, while it still holds that.
+    if (name == '"' && clipboard_ && clipboard != nullptr && clipboard->get) {
+        if (unnamed_ && clipboard->get() == unnamed_->text()) return unnamed_;
+        return get('+', clipboard);
+    }
     if (name == '"') return unnamed_;
     if (digit(name)) return numbered_[static_cast<std::size_t>(name - '0')];
     if (lower(name)) return named_[static_cast<std::size_t>(name - 'a')];
@@ -93,6 +99,7 @@ void Registers::yank(char name, Yanked yanked, Clipboard* clipboard) {
     if (name == '_') return;
     if (name == '"') {
         numbered_[0] = yanked;
+        if (clipboard_) put_in('+', yanked, clipboard);
     } else {
         put_in(name, yanked, clipboard);
     }
@@ -105,6 +112,7 @@ void Registers::deleted(char name, Yanked yanked, Clipboard* clipboard, bool num
     bool reaches_over_lines = yanked.linewise;
     for (const std::string& piece : yanked.pieces) reaches_over_lines = reaches_over_lines || piece.find('\n') != std::string::npos;
     if (name != '"') put_in(name, yanked, clipboard);
+    if (name == '"' && clipboard_) put_in('+', yanked, clipboard);
     // Whole lines and more go to 1, even with a register named; a little
     // with none named goes to -.
     if (reaches_over_lines || numbered) {

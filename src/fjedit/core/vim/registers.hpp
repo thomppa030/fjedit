@@ -56,11 +56,18 @@ public:
     /// `}`).
     void deleted(char name, Yanked yanked, Clipboard* clipboard, bool numbered = false);
 
+    /// clipboard=unnamedplus: the unnamed register is the system's
+    /// clipboard as well, what a yank or a delete with none named puts going
+    /// there too, and a put with none named taking what the clipboard holds.
+    void use_clipboard(bool unnamed) { clipboard_ = unnamed; }
+    [[nodiscard]] bool uses_clipboard() const { return clipboard_; }
+
 private:
     // `yanked` into the one register `name` names, besides the unnamed.
     void put_in(char name, const Yanked& yanked, Clipboard* clipboard);
 
     std::optional<Yanked> unnamed_;
+    bool clipboard_{false};
     std::array<std::optional<Yanked>, 10> numbered_{};
     std::optional<Yanked> small_;
     std::array<std::optional<Yanked>, 26> named_{};
