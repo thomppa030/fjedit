@@ -49,4 +49,12 @@ struct GoToLinePlate {
 GoToLinePlate go_to_line_plate(GoToLineState& state, const Document& document, Position caret,
                                ftk::ui::core::Rect over);
 
+/// Draws Vim's command line on go to line's plate over the top centre of
+/// `over`: `kind` (`/`, `?`) before `text`, the caret after it, and `note`
+/// (a search's match count) inside the field's right end, in the mono face
+/// at the code's `text_size`, the plate as much wider. It takes no keys:
+/// the view reads them for Vim.
+void command_line_plate(char kind, std::string_view text, std::string_view note, float text_size,
+                        ftk::ui::core::Rect over);
+
 } // namespace fjedit

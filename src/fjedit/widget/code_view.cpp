@@ -555,8 +555,35 @@ void run_view_command(std::string_view name, const Document& document, EditorVie
 
 // Does what was done on the find's plate this frame: goes to a match,
 // replaces, or closes it.
+// Vim's search shown through the view's find, `pattern` its matches or
+// none; the find's own plate, while open, keeps what it looks for.
+void show_search(FindState& find, const vim::Pattern* pattern) {
+    if (find.open) return;
+    find.shown = pattern != nullptr;
+    if (pattern == nullptr) return;
+    const ftk::ui::FindToggles toggles{.match_case = pattern->options.match_case,
+                                       .whole_word = pattern->options.whole_word,
+                                       .regex = pattern->options.regex};
+    if (find.query == pattern->regex && find.toggles == toggles && find.group == pattern->options.group) return;
+    find.query = pattern->regex;
+    find.toggles = toggles;
+    find.group = pattern->options.group;
+    find.stale = true;
+}
+
 void take_find_plate(const FindPlate& plate, Document& document, EditorView& view, const TextLayout& layout) {
     FindState& find = view.find;
+    // A search on the plate takes all a match is, and is the one Vim's n
+    // and N go on with.
+    if (plate.searched) {
+        find.group = 0;
+        find.stale = true;
+        if (view.vim) {
+            view.vim->search_for({.text = find.query,
+                                  .pattern = {.regex = find.query, .options = find_options(find.toggles), .groups = {0}},
+                                  .forward = true});
+        }
+    }
     refresh_matches(find, document);
     const FindOptions options = find_options(find.toggles);
     CommandContext context{.document = document, .selections = view.selections, .layout = layout,
@@ -673,7 +700,7 @@ void draw_side(core::Context& ui, const Document& document, EditorView& view, co
             mark(folds.row_of(problem.span.from.line), look->wave);
         }
     }
-    if (view.find.open) {
+    if (view.find.open || view.find.shown) {
         for (const Span& match : view.find.matches) mark(folds.row_of(match.from.line), theme::accent());
     }
     mark(folds.row_of(view.selections.primary().caret.line), theme::text());
@@ -1010,7 +1037,7 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
 
     dl.push_clip(frame.text.min, frame.text.max);
 
-    const bool finding = view.find.open && !rows.lines.empty();
+    const bool finding = (view.find.open || view.find.shown) && !rows.lines.empty();
     if (!rows.lines.empty()) {
         draw_guides(dl, document, view, frame, layout, rows);
         draw_marks(dl, document, view, frame, layout, rows);
@@ -1396,7 +1423,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     }
     view.seen = document.version();
     reveal(view, frame, buffer, layout, placed ? 0 : view.around_caret);
-    if (view.find.open) refresh_matches(view.find, document);
+    if (view.vim) show_search(view.find, view.vim->shown_search());
+    if (view.find.open || view.find.shown) refresh_matches(view.find, document);
     const Frame drawn = place(code, view, buffer, faces.digit_width, sizes.line);
     static const std::vector<Diagnostic> NO_PROBLEMS;
     const std::vector<Diagnostic>& problems =
@@ -1452,6 +1480,13 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             view.go_to_line.open = false;
             if (plate.go || ui.focused() == 0) ui.set_focus(id);
         }
+    }
+    // Vim's command line, on go to line's plate, the matches' count in it
+    // while a pattern typed reads.
+    if (view.vim && view.vim->command_line() != nullptr) {
+        const vim::CommandLine& line = *view.vim->command_line();
+        const std::string count = view.vim->shown_search() != nullptr ? match_count(view.find, view.selections) : "";
+        command_line_plate(line.kind, line.text, count, view.text_size, code);
     }
 
     // The completion list under the word being typed; an entry clicked is

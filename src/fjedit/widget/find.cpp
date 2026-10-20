@@ -38,9 +38,9 @@ std::string escaped(std::string_view text) {
     return out;
 }
 
-// What the plate's count says: the primary selection's place among the
-// matches, or how many there are when it is none of them.
-std::string count_text(const FindState& find, const Selections& selections) {
+} // namespace
+
+std::string match_count(const FindState& find, const Selections& selections) {
     if (find.query.empty()) return {};
     if (find.matches.empty()) return "No results";
     if (const std::optional<std::size_t> current = current_match(find, selections)) {
@@ -48,8 +48,6 @@ std::string count_text(const FindState& find, const Selections& selections) {
     }
     return std::format("{} found", find.matches.size());
 }
-
-} // namespace
 
 FindOptions find_options(const ui::FindToggles& toggles) {
     return {.match_case = toggles.match_case, .whole_word = toggles.whole_word, .regex = toggles.regex};
@@ -72,7 +70,9 @@ void open_find(FindState& find, const Buffer& buffer, const Selections& selectio
 
 void refresh_matches(FindState& find, const Document& document) {
     if (!find.stale && find.version == document.version()) return;
-    find.matches = find_all(document.buffer(), find.query, find_options(find.toggles));
+    FindOptions options = find_options(find.toggles);
+    options.group = find.group;
+    find.matches = find_all(document.buffer(), find.query, options);
     find.version = document.version();
     find.stale = false;
 }
@@ -108,7 +108,7 @@ FindPlate find_plate(FindState& find, const Selections& selections, ui::core::Re
         const float button = ui::frame_height();
 
         // The query, the count, then previous, next and close.
-        const std::string count = count_text(find, selections);
+        const std::string count = match_count(find, selections);
         const float count_width = std::max(COUNT_WIDTH, ui::text_size(count).x);
         ui::next_width(plate.inner_width() - count_width - 3.0f * (button + gap) - gap);
         const ui::FindField field = ui::find_field("##query", find.query, find.toggles,

@@ -1475,6 +1475,32 @@ TEST_CASE("With Vim on, leaving insert mode takes the completion list with it", 
     REQUIRE(c.e.view.vim->mode() == vim::Mode::Normal);
 }
 
+TEST_CASE("With Vim on, / shows its line on a plate and its matches through the find", "[code_view][vim]") {
+    WithVim v("one foo two foo");
+    v.e.h.type("0/fo");
+    v.e.h.step();
+    const auto* field = v.e.h.find("Command line", ftk::ui::core::Role::TextField);
+    REQUIRE(field != nullptr);
+    CHECK(field->value == "fo");
+    CHECK(v.e.view.find.shown);
+    CHECK(v.e.view.find.matches.size() == 2);
+    // The line reads at the code's size.
+    const float small = field->rect.height();
+    v.e.view.text_size = 21.0f;
+    v.e.h.step();
+    CHECK(v.e.h.find("Command line", ftk::ui::core::Role::TextField)->rect.height() >= small + 8.0f);
+    v.e.view.text_size = CODE_TEXT;
+    v.e.h.step();
+    v.e.h.press(Key::Enter);
+    v.e.h.step();
+    CHECK(v.e.h.find("Command line", ftk::ui::core::Role::TextField) == nullptr);
+    CHECK(v.e.caret() == Position{0, 4});
+    CHECK(v.e.view.find.shown);
+    v.e.h.press(Key::L, CTRL);
+    v.e.h.step();
+    CHECK_FALSE(v.e.view.find.shown);
+}
+
 TEST_CASE("With Vim on, Ctrl-D scrolls the view with the caret, and zt puts the caret's line at the top", "[code_view][vim]") {
     std::string text;
     for (int i = 0; i < 100; ++i) text += "line\n";

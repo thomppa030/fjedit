@@ -1,6 +1,7 @@
 #include "fjedit/widget/go_to_line.hpp"
 
 #include "fjedit/core/structure.hpp"
+#include "fjedit/widget/code_view.hpp"
 
 #include "ftk/base/utf8.hpp"
 #include "ftk/ui/kit/item.hpp"
@@ -95,6 +96,17 @@ GoToLinePlate go_to_line_plate(GoToLineState& state, const Document& document, P
     }
     state.focus = false;
     return out;
+}
+
+void command_line_plate(char kind, std::string_view text, std::string_view note, float text_size,
+                        ftk::ui::core::Rect over) {
+    const float width = std::min(PLATE_WIDTH * text_size / CODE_TEXT, over.width() - 2.0f * ui::PLATE_INSET);
+    if (auto plate = ui::Plate("##command_line", over.min, over.max, ui::PlatePlace::TopCenter, width)) {
+        const ui::FontScope mono(theme::mono_font(), text_size);
+        ui::next_width(plate.inner_width());
+        const char prompt[] = {kind, '\0'};
+        ui::shown_entry("Command line##vim", text, {.prompt = prompt, .caret = text.size(), .note = note});
+    }
 }
 
 } // namespace fjedit

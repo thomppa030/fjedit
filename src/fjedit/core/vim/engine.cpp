@@ -9,9 +9,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <limits>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace fjedit::vim {
 
@@ -378,11 +381,50 @@ std::optional<std::vector<Selection>> scroll_view(CommandContext& c, std::string
     return out;
 }
 
+// The match `count` matches on from `at` that `pattern` finds, the way
+// `forward` says, going round the text's ends: the first that begins after
+// `at`, or the last before it. Nothing when it finds none, `told` then
+// saying so for the pattern Vim reads as `text`; a note in it when the
+// search went round.
+std::optional<Span> search_from(const Buffer& buffer, const Pattern& pattern, std::string_view text, Position at,
+                                bool forward, std::size_t count, Message& told) {
+    const std::vector<Span> all = find_all(buffer, pattern.regex, pattern.options);
+    if (all.empty()) {
+        told = {.text = std::format("E486: Pattern not found: {}", text), .error = true};
+        return std::nullopt;
+    }
+    bool round = false;
+    auto found = all.begin();
+    for (std::size_t i = 0; i < count; ++i) {
+        if (forward) {
+            found = std::ranges::upper_bound(all, at, {}, &Span::from);
+            if (found == all.end()) {
+                found = all.begin();
+                round = true;
+            }
+        } else {
+            found = std::ranges::lower_bound(all, at, {}, &Span::from);
+            if (found == all.begin()) {
+                found = all.end();
+                round = true;
+            }
+            --found;
+        }
+        at = found->from;
+    }
+    if (round) {
+        told = {.text = forward ? "search hit BOTTOM, continuing at TOP" : "search hit TOP, continuing at BOTTOM",
+                .error = false};
+    }
+    return *found;
+}
+
 // Where the motion `command` takes `selection`'s caret; nothing for a
 // command that isn't a motion, or a motion that can't go. f, t, F and T
-// keep what they look for in `search`, which ; and , look for again.
+// keep what they look for in `remembered`, which ; and , look for again;
+// n, N, * and # go on with its search, * and # making it.
 std::optional<Went> motion(const CommandContext& c, const Command& command, const Selection& selection,
-                           std::optional<CharSearch>& search) {
+                           detail::Remembered& remembered) {
     const Buffer& buffer = c.document.buffer();
     const Position at = selection.caret;
     const std::size_t n = command.count.value_or(1);
@@ -442,13 +484,49 @@ std::optional<Went> motion(const CommandContext& c, const Command& command, cons
         return went(*paired, MotionKind::Inclusive);
     }
 
+    // The search: n and N go on with it; * and # look for the word at the
+    // caret, whole (g* and g# as it is), # from the word's start so that
+    // word isn't found again.
+    const bool word = name == "*" || name == "#" || name == "g*" || name == "g#";
+    if (word || name == "n" || name == "N") {
+        Position from = at;
+        if (word) {
+            const Span taken = word_at(buffer, at);
+            if (taken.empty()) {
+                remembered.message = {.text = "E348: No string under cursor", .error = true};
+                return std::nullopt;
+            }
+            const std::string text = buffer.text(taken);
+            const bool whole = name.size() == 1;
+            const std::string written = whole ? "\\<" + text + "\\>" : text;
+            // smartcase is for patterns typed.
+            ftk::Result<Pattern> read =
+                read_pattern(written, {.ignore_case = remembered.settings.ignore_case, .smart_case = false});
+            if (!read) return std::nullopt;
+            remembered.search = Search{.text = written, .pattern = std::move(*read), .forward = name.ends_with('*')};
+            if (!name.ends_with('*')) from = taken.from;
+        }
+        if (!remembered.search) {
+            remembered.message = {.text = "E35: No previous regular expression", .error = true};
+            return std::nullopt;
+        }
+        remembered.shown = true;
+        const Search& search = *remembered.search;
+        const bool forward = search.forward == (name != "N");
+        const std::optional<Span> found =
+            search_from(buffer, search.pattern, search.text, from, forward, n, remembered.message);
+        if (!found) return std::nullopt;
+        return went(found->from);
+    }
+
     const bool finding = name == "f" || name == "t" || name == "F" || name == "T";
     if (!finding && name != ";" && name != ",") return std::nullopt;
     if (finding) {
-        search = CharSearch{.target = command.argument, .forward = name == "f" || name == "t", .till = name == "t" || name == "T"};
+        remembered.chars =
+            CharSearch{.target = command.argument, .forward = name == "f" || name == "t", .till = name == "t" || name == "T"};
     }
-    if (!search) return std::nullopt;
-    CharSearch looking = *search;
+    if (!remembered.chars) return std::nullopt;
+    CharSearch looking = *remembered.chars;
     if (name == ",") looking.forward = !looking.forward;
     const std::optional<Position> found = find_in_line(buffer, at, looking, n, !finding);
     if (!found) return std::nullopt;
@@ -472,7 +550,7 @@ Operator operator_named(std::string_view op) {
 // takes around the caret; a motion what it passes over. The counts before
 // and after the operator multiply. True when a change has begun insert
 // mode.
-bool run_operator(const Command& command, CommandContext& c, Registers& registers, std::optional<CharSearch>& search) {
+bool run_operator(const Command& command, CommandContext& c, Registers& registers, detail::Remembered& remembered) {
     const Buffer& buffer = c.document.buffer();
     const bool counted = command.count || command.op_count;
     const std::size_t n = std::min(command.count.value_or(1) * command.op_count.value_or(1), COUNT_MAX);
@@ -495,7 +573,7 @@ bool run_operator(const Command& command, CommandContext& c, Registers& register
             if (const std::optional<Taken> taken = text_object(buffer, c.document.syntax(), selection.caret, command.name, n)) {
                 range = object_range(buffer, *taken);
             }
-        } else if (const std::optional<Went> went = motion(c, moving, selection, search)) {
+        } else if (const std::optional<Went> went = motion(c, moving, selection, remembered)) {
             range = motion_range(buffer, selection.caret, went->to, went->kind);
         }
         if (range && !range->linewise && range->span.empty()) {
@@ -552,11 +630,59 @@ std::optional<std::size_t> count_of(const Command& command) {
     return std::min(command.count.value_or(1) * command.op_count.value_or(1), COUNT_MAX);
 }
 
+// What a command line typed for a search holds: the pattern, up to the
+// first `kind` (/ or ?) neither escaped nor in a collection, and the offset
+// after that one.
+struct Typed {
+    std::string_view pattern;
+    std::string_view offset;
+    bool ended{false};
+};
+Typed split_search(std::string_view text, char kind) {
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const char c = text[at];
+        if (c == '\\') {
+            at += 2;
+        } else if (c == '[') {
+            // A collection, its ] first taken as itself; without one, the [
+            // is itself.
+            std::size_t end = at + 1;
+            if (end < text.size() && text[end] == '^') ++end;
+            if (end < text.size() && text[end] == ']') ++end;
+            while (end < text.size() && text[end] != ']') end += text[end] == '\\' ? 2 : 1;
+            at = end < text.size() ? end + 1 : at + 1;
+        } else if (c == kind) {
+            return {.pattern = text.substr(0, at), .offset = text.substr(at + 1), .ended = true};
+        } else {
+            ++at;
+        }
+    }
+    return {.pattern = text, .offset = {}, .ended = false};
+}
+
+// The keys of `command` before what it names: its register, its counts as
+// one, its operator.
+std::vector<Chord> keys_before(const Command& command) {
+    std::vector<Chord> keys;
+    if (command.reg != '"') {
+        keys.push_back(Chord::typed("\""));
+        keys.push_back(Chord::typed(std::string_view(&command.reg, 1)));
+    }
+    if (const std::optional<std::size_t> count = count_of(command)) {
+        const std::string digits = std::to_string(*count);
+        for (const char digit : digits) keys.push_back(Chord::typed(std::string_view(&digit, 1)));
+    }
+    for (const char ch : command.op) keys.push_back(Chord::typed(std::string_view(&ch, 1)));
+    return keys;
+}
+
 } // namespace
 
 std::string_view keymap_mode(Mode mode) {
     if (typing(mode)) return Keymap::VIM_INSERT;
     if (visual(mode)) return Keymap::VIM_VISUAL;
+    if (mode == Mode::Command) return Keymap::VIM_COMMAND;
     return Keymap::VIM_NORMAL;
 }
 
@@ -585,8 +711,10 @@ std::optional<std::vector<Chord>> keys_for(std::string_view name, Mode mode) {
 }
 
 std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
-    // A key of Ctrl-O's one command, which may go through visual mode.
-    const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_));
+    // A key of Ctrl-O's one command, which may go through visual mode and
+    // the command line.
+    const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_) || mode_ == Mode::Command);
+    remembered_.message = {};
     dispatch(key, context);
     // A change is whole once no insert goes on with it.
     if (making_ && !typing(mode_)) last_change_ = std::exchange(making_, std::nullopt);
@@ -607,11 +735,171 @@ void Engine::dispatch(const Chord& key, CommandContext& context) {
         take_replace(key, context);
     } else if (visual(mode_)) {
         take_visual(key, context);
+    } else if (mode_ == Mode::Command) {
+        take_command(key, context);
     } else {
         take_normal(key, context);
     }
     // An insert begun, nothing typed in it yet.
     if (!was_typing && typing(mode_)) inserted_.clear();
+}
+
+const Pattern* Engine::shown_search() const {
+    if (typing_) return preview_ ? &*preview_ : nullptr;
+    return remembered_.shown && remembered_.search ? &remembered_.search->pattern : nullptr;
+}
+
+void Engine::search_for(Search search) {
+    remembered_.search = std::move(search);
+    remembered_.shown = true;
+}
+
+void Engine::begin_command_line(char kind, std::vector<Chord> before, bool operating, CommandContext& c) {
+    typing_ = Typing{.line = {.kind = kind, .text = {}},
+                     .from = mode_,
+                     .selections = {c.selections.all().begin(), c.selections.all().end()},
+                     .primary = c.selections.primary_index(),
+                     .visual = visual_,
+                     .before = std::move(before),
+                     .operating = operating,
+                     .history_at = {},
+                     .history_prefix = {}};
+    preview_.reset();
+    mode_ = Mode::Command;
+}
+
+void Engine::take_command(const Chord& key, CommandContext& c) {
+    Typing& line = *typing_;
+    std::string& text = line.line.text;
+    if (register_next_) {
+        // Ctrl-R's register: its text typed, to its first line's end.
+        register_next_ = false;
+        if (key.text.size() == 1) {
+            if (const std::optional<Yanked> yanked = registers_->get(key.text[0], c.clipboard)) {
+                const std::string all = yanked->text();
+                text += all.substr(0, all.find('\n'));
+            }
+        }
+        return preview(c);
+    }
+    if (escape(key)) return leave_command_line(false, c);
+    if (pressed(key, Key::Enter)) return leave_command_line(true, c);
+    if (!key.text.empty()) {
+        text += key.text;
+        line.history_at.reset();
+        return preview(c);
+    }
+    const std::string named = notation(key);
+    const auto word = [](char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+    };
+    if (named == "<BS>") {
+        // On an empty line, Backspace leaves it.
+        if (text.empty()) return leave_command_line(false, c);
+        std::size_t end = text.size() - 1;
+        while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) --end;
+        text.erase(end);
+    } else if (named == "<C-w>") {
+        // The word before the end, with the blanks after it; or one
+        // character that is no word's.
+        std::size_t end = text.size();
+        while (end > 0 && text[end - 1] == ' ') --end;
+        if (end > 0 && word(text[end - 1])) {
+            while (end > 0 && word(text[end - 1])) --end;
+        } else if (end > 0) {
+            --end;
+        }
+        text.erase(end);
+    } else if (named == "<C-u>") {
+        text.clear();
+    } else if (named == "<C-r>") {
+        register_next_ = true;
+        return;
+    } else if (named == "<Up>" || named == "<Down>") {
+        // The searches typed before that begin with what is typed, older
+        // with Up; Down past the latest gives back what was typed.
+        if (!line.history_at) {
+            line.history_prefix = text;
+            line.history_at = history_.size();
+        }
+        std::size_t at = *line.history_at;
+        const bool up = named == "<Up>";
+        while (true) {
+            if (up ? at == 0 : at >= history_.size()) return;
+            at = up ? at - 1 : at + 1;
+            if (at == history_.size()) {
+                text = line.history_prefix;
+                break;
+            }
+            if (history_[at].starts_with(line.history_prefix)) {
+                text = history_[at];
+                break;
+            }
+        }
+        line.history_at = at;
+    } else {
+        return;
+    }
+    preview(c);
+}
+
+void Engine::preview(CommandContext& c) {
+    const Typing& line = *typing_;
+    c.selections.set(std::vector<Selection>(line.selections), line.primary);
+    preview_.reset();
+    const std::string_view pattern = split_search(line.line.text, line.line.kind).pattern;
+    if (pattern.empty()) return;
+    ftk::Result<Pattern> read = read_pattern(pattern, remembered_.settings);
+    if (!read) return;
+    preview_ = std::move(*read);
+    // From normal mode, the match the search goes to is selected, as a
+    // find selects the one it is on.
+    if (line.from != Mode::Normal || line.operating) return;
+    Message unsaid;
+    const std::optional<Span> found = search_from(c.document.buffer(), *preview_, pattern,
+                                                  c.selections.primary().caret, line.line.kind == '/', 1, unsaid);
+    if (found) c.selections = Selections({.anchor = found->from, .caret = found->to, .goal = {}});
+}
+
+void Engine::leave_command_line(bool run, CommandContext& c) {
+    Typing line = std::move(*typing_);
+    typing_.reset();
+    preview_.reset();
+    register_next_ = false;
+    c.selections.set(std::move(line.selections), line.primary);
+    mode_ = line.from;
+    if (visual(mode_)) {
+        visual_ = std::move(line.visual);
+        show_visual(c);
+    }
+    if (!run) return;
+    const Typed typed = split_search(line.line.text, line.line.kind);
+    if (!typed.offset.empty()) {
+        remembered_.message = {.text = std::format("Search offsets aren't supported: {}", typed.offset), .error = true};
+        return;
+    }
+    const std::string text(typed.pattern);
+    if (text.empty()) {
+        // Nothing typed: the last search again, the way this line goes.
+        if (!remembered_.search) {
+            remembered_.message = {.text = "E35: No previous regular expression", .error = true};
+            return;
+        }
+        remembered_.search->forward = line.line.kind == '/';
+    } else {
+        ftk::Result<Pattern> read = read_pattern(text, remembered_.settings);
+        if (!read) {
+            remembered_.message = {.text = read.error(), .error = true};
+            return;
+        }
+        remembered_.search = Search{.text = text, .pattern = std::move(*read), .forward = line.line.kind == '/'};
+        std::erase(history_, text);
+        history_.push_back(text);
+    }
+    remembered_.shown = true;
+    // As n goes, after the keys of the command it is the motion of.
+    for (const Chord& key : line.before) dispatch(key, c);
+    dispatch(Chord::typed("n"), c);
 }
 
 void Engine::cancel(CommandContext& context) {
@@ -744,6 +1032,14 @@ void Engine::settle(CommandContext& context, bool by_mouse) {
         if (by_mouse) end_change_here();
         return;
     }
+    if (mode_ == Mode::Command) {
+        // The mouse leaves the command line, keeping what it made.
+        if (!by_mouse) return;
+        typing_.reset();
+        preview_.reset();
+        register_next_ = false;
+        mode_ = Mode::Normal;
+    }
     const Buffer& buffer = context.document.buffer();
     const std::span<const Selection> all = context.selections.all();
     const bool selecting = std::ranges::any_of(all, [](const Selection& s) { return !s.empty(); });
@@ -779,7 +1075,7 @@ void Engine::settle(CommandContext& context, bool by_mouse) {
 }
 
 CaretShape Engine::caret_shape() const {
-    if (mode_ == Mode::Insert) return CaretShape::Bar;
+    if (mode_ == Mode::Insert || mode_ == Mode::Command) return CaretShape::Bar;
     if (mode_ == Mode::Replace) return CaretShape::Underline;
     return operator_waits_ ? CaretShape::HalfBlock : CaretShape::Block;
 }
@@ -818,6 +1114,11 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     if (parsed == Parsed::Waiting) return;
     keys_.clear();
     if (parsed == Parsed::Invalid) return;
+    // The command line, whose search is the motion: the keys before it (a
+    // register, a count, an operator) come again with the search.
+    if (command.name == "/" || command.name == "?") {
+        return begin_command_line(command.name[0], keys_before(command), !command.op.empty(), c);
+    }
     // A change noted for `.`, as its keys spell it.
     if (!replaying_ && changes(command)) {
         making_ = Repeat{.reg = command.reg, .count = count_of(command), .keys = keys_of(command), .typed = {},
@@ -829,7 +1130,7 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     // leaves the last change as the one `.` makes.
     const auto operate_on = [&](const Command& acting) {
         const auto version = c.document.version();
-        if (run_operator(acting, c, *registers_, search_)) {
+        if (run_operator(acting, c, *registers_, remembered_)) {
             mode_ = Mode::Insert;
             return;
         }
@@ -939,6 +1240,11 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         return;
     }
     if (name == ".") return repeat(command.count, c);
+    // Ctrl-L hides the search's matches until the next search.
+    if (name == "<C-l>") {
+        remembered_.shown = false;
+        return;
+    }
     // The view scrolled, the carets with it.
     if (std::optional<std::vector<Selection>> scrolled = scroll_view(c, name, command.count, c.selections.all(), half_page_)) {
         c.selections.set(std::move(*scrolled), c.selections.primary_index());
@@ -964,7 +1270,7 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     std::vector<Selection> moved;
     bool any = false;
     for (const Selection& selection : c.selections.all()) {
-        if (const std::optional<Went> went = motion(c, command, selection, search_)) {
+        if (const std::optional<Went> went = motion(c, command, selection, remembered_)) {
             moved.push_back({.anchor = went->to, .caret = went->to, .goal = went->goal});
             any = true;
         } else {
@@ -1228,6 +1534,13 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
     const std::size_t n = command.count.value_or(1);
 
     if (escape(key)) return leave_visual(c);
+    // The command line, whose search moves the caret end; Ctrl-L as in
+    // normal mode.
+    if (name == "/" || name == "?") return begin_command_line(name[0], keys_before(command), false, c);
+    if (name == "<C-l>") {
+        remembered_.shown = false;
+        return;
+    }
     // v, V and Ctrl-V: that visual mode, or out of it from itself.
     const std::optional<Mode> kind = name == "v"       ? std::optional(Mode::Visual)
                                      : name == "V"     ? std::optional(Mode::VisualLine)
@@ -1282,7 +1595,7 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
     bool any = false;
     for (VisualEnds& ends : visual_) {
         const Selection at{.anchor = ends.caret, .caret = ends.caret, .goal = ends.goal};
-        if (const std::optional<Went> went = motion(c, command, at, search_)) {
+        if (const std::optional<Went> went = motion(c, command, at, remembered_)) {
             ends.caret = on_character(buffer, went->to);
             ends.goal = went->goal;
             any = true;

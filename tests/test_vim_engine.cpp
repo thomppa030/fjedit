@@ -980,3 +980,129 @@ TEST_CASE("zc, zo, za, zM and zR close and open the folds at the caret", "[vim][
     CHECK(v.view.folds.hidden(1));
     CHECK(v.view.folds.hidden(4));
 }
+
+TEST_CASE("/ searches on from the caret; n and N go on with it round the text's ends", "[vim][search]") {
+    Vim v("|foo bar foo\nfoo");
+    const auto caret = [&] { return v.view.selections.primary().caret; };
+    v.keys("/foo<CR>");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    CHECK(caret() == Position{0, 8});
+    v.keys("n");
+    CHECK(caret() == Position{1, 0});
+    v.keys("n");
+    CHECK(caret() == Position{0, 0});
+    CHECK(v.engine.message().text == "search hit BOTTOM, continuing at TOP");
+    CHECK_FALSE(v.engine.message().error);
+    v.keys("N");
+    CHECK(caret() == Position{1, 0});
+    CHECK(v.engine.message().text == "search hit TOP, continuing at BOTTOM");
+    // A count goes that many matches on.
+    v.keys("gg2n");
+    CHECK(caret() == Position{1, 0});
+}
+
+TEST_CASE("? searches back, and n goes its way", "[vim][search]") {
+    Vim v("foo bar foo ba|z");
+    const auto caret = [&] { return v.view.selections.primary().caret; };
+    v.keys("?foo<CR>");
+    CHECK(caret() == Position{0, 8});
+    v.keys("n");
+    CHECK(caret() == Position{0, 0});
+    v.keys("N");
+    CHECK(caret() == Position{0, 8});
+}
+
+TEST_CASE("A search is a motion, for an operator and in visual mode", "[vim][search]") {
+    Vim d("|one two foo");
+    d.keys("d/foo<CR>");
+    CHECK(d.shown() == "|foo");
+    Vim visual("|abc foo");
+    visual.keys("v/foo<CR>d");
+    CHECK(visual.shown() == "|oo");
+}
+
+TEST_CASE("While a pattern is typed its match is selected; Esc goes back where it began", "[vim][search]") {
+    Vim v("|one foo");
+    v.keys("/fo");
+    CHECK(v.engine.mode() == vim::Mode::Command);
+    REQUIRE(v.engine.command_line() != nullptr);
+    CHECK(v.engine.command_line()->kind == '/');
+    CHECK(v.engine.command_line()->text == "fo");
+    CHECK(v.view.selections.primary().span() == Span{{0, 4}, {0, 6}});
+    CHECK(v.engine.shown_search() != nullptr);
+    v.keys("<Esc>");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    CHECK(v.engine.command_line() == nullptr);
+    CHECK(v.shown() == "|one foo");
+    CHECK(v.engine.shown_search() == nullptr);
+}
+
+TEST_CASE("The command line's keys: Backspace, Ctrl-W, Ctrl-U, Ctrl-R and the searches before", "[vim][search]") {
+    Vim v("|ab abc");
+    v.keys("/abc<CR>");
+    // Backspace on an empty line leaves it.
+    v.keys("/x<BS>");
+    CHECK(v.engine.mode() == vim::Mode::Command);
+    v.keys("<BS>");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    v.keys("/one two<C-w>");
+    CHECK(v.engine.command_line()->text == "one ");
+    v.keys("<C-u>");
+    CHECK(v.engine.command_line()->text.empty());
+    v.keys("<Up>");
+    CHECK(v.engine.command_line()->text == "abc");
+    v.keys("<Down>");
+    CHECK(v.engine.command_line()->text.empty());
+    v.keys("<Esc>yiw/<C-r>\"");
+    CHECK(v.engine.command_line()->text == "abc");
+}
+
+TEST_CASE("An empty pattern looks for the last again; one that finds nothing, or doesn't read, says so",
+          "[vim][search]") {
+    Vim v("|foo x foo y foo");
+    const auto caret = [&] { return v.view.selections.primary().caret; };
+    v.keys("/foo<CR>/<CR>");
+    CHECK(caret() == Position{0, 12});
+    v.keys("/zzz<CR>");
+    CHECK(v.engine.message().text == "E486: Pattern not found: zzz");
+    CHECK(v.engine.message().error);
+    CHECK(caret() == Position{0, 12});
+    v.keys("/\\(<CR>");
+    CHECK(v.engine.message().text.starts_with("E54"));
+    // A / not escaped nor in a collection ends the pattern; an offset after
+    // it is refused.
+    v.keys("gg/foo/<CR>");
+    CHECK(caret() == Position{0, 6});
+    v.keys("/[/]x\\/y/e<CR>");
+    CHECK(v.engine.message().text == "Search offsets aren't supported: e");
+    // The next key clears what was said.
+    v.keys("l");
+    CHECK(v.engine.message().text.empty());
+}
+
+TEST_CASE("* and # look for the word at the caret, whole; g* and g# as it is", "[vim][search]") {
+    Vim v("|spin spinner spin");
+    const auto caret = [&] { return v.view.selections.primary().caret; };
+    v.keys("*");
+    CHECK(caret() == Position{0, 13});
+    v.keys("#");
+    CHECK(caret() == Position{0, 0});
+    v.keys("g*");
+    CHECK(caret() == Position{0, 5});
+}
+
+TEST_CASE("Ctrl-L hides the matches until the next search; a find's search is the one n goes on with",
+          "[vim][search]") {
+    Vim v("|foo bar foo");
+    v.keys("/foo<CR>");
+    CHECK(v.engine.shown_search() != nullptr);
+    v.keys("<C-l>");
+    CHECK(v.engine.shown_search() == nullptr);
+    v.keys("n");
+    CHECK(v.engine.shown_search() != nullptr);
+    ftk::Result<vim::Pattern> bar = vim::read_pattern("bar");
+    REQUIRE(bar);
+    v.engine.search_for({.text = "bar", .pattern = *bar, .forward = true});
+    v.keys("0n");
+    CHECK(v.view.selections.primary().caret == Position{0, 4});
+}

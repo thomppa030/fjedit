@@ -19,6 +19,7 @@
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/vim/motions.hpp"
+#include "fjedit/core/vim/pattern.hpp"
 #include "fjedit/core/vim/registers.hpp"
 
 #include <cstdint>
@@ -45,6 +46,8 @@ enum class Mode : uint8_t {
     VisualLine,
     /// A block of columns, `Ctrl-V`: a selection on each of its lines.
     VisualBlock,
+    /// The command line, `/` and `?`: keys type a pattern into it.
+    Command,
 };
 
 /// Whether `mode` is one of the visual modes.
@@ -54,8 +57,45 @@ enum class Mode : uint8_t {
 
 /// The keymap mode whose bindings Vim in `mode` looks up before its own
 /// keys: insert's in insert and replace mode, visual's in the visual modes,
-/// normal's otherwise.
+/// the command line's while it is typed, normal's otherwise.
 [[nodiscard]] std::string_view keymap_mode(Mode mode);
+
+/// The last search: what it looks for as Vim and as the find read it, and
+/// which way `n` goes.
+struct Search {
+    std::string text;
+    Pattern pattern;
+    bool forward{true};
+};
+
+/// The command line while it is typed: `/` or `?`, then the pattern.
+struct CommandLine {
+    char kind{'/'};
+    std::string text;
+};
+
+/// What a key had to say, as Vim's command line says it: an error
+/// ("E486: Pattern not found: spin") or a note ("search hit BOTTOM,
+/// continuing at TOP"); empty text when nothing.
+struct Message {
+    std::string text;
+    bool error{false};
+};
+
+namespace detail {
+
+// What Vim remembers from one command to the next for its motions: what f,
+// t, F and T looked for, the last search, whether its matches show, the
+// settings patterns are read with, and what the last motion had to say.
+struct Remembered {
+    std::optional<CharSearch> chars;
+    std::optional<Search> search;
+    bool shown{false};
+    PatternSettings settings;
+    Message message;
+};
+
+} // namespace detail
 
 /// The keys that do in `mode` what the command `name` does, as Vim has them
 /// (`u` for edit.undo in normal mode, `"+y` for edit.copy in visual mode);
@@ -124,6 +164,21 @@ public:
     /// insert's count make the same change again.
     void completed(std::string_view replaced, std::string_view text);
 
+    /// The command line while one is typed; null otherwise.
+    [[nodiscard]] const CommandLine* command_line() const { return typing_ ? &typing_->line : nullptr; }
+
+    /// The search whose matches a view shows: the pattern typed on the
+    /// command line as it is typed, then the last search until Ctrl-L hides
+    /// it; null while none shows.
+    [[nodiscard]] const Pattern* shown_search() const;
+
+    /// A search made elsewhere (a view's find), which n and N go on with.
+    void search_for(Search search);
+
+    /// What the last key had to say; empty text when nothing. The next key
+    /// clears it.
+    [[nodiscard]] const Message& message() const { return remembered_.message; }
+
     /// What is yanked and deleted.
     [[nodiscard]] Registers& registers() { return *registers_; }
 
@@ -181,6 +236,18 @@ private:
     // as its count asks.
     void repeat_insert(CommandContext& context);
 
+    // Into the command line `kind`, from the mode the engine is in, the keys
+    // `before` (a register, a count, an operator) to come again before its
+    // search.
+    void begin_command_line(char kind, std::vector<Chord> before, bool operating, CommandContext& context);
+    void take_command(const Chord& key, CommandContext& context);
+    // The pattern typed searched for as it is typed: its matches shown and,
+    // from normal mode, the one it goes to selected.
+    void preview(CommandContext& context);
+    // Out of the command line, back where it began; with `run`, its search
+    // made, the caret going to the match as n goes.
+    void leave_command_line(bool run, CommandContext& context);
+
     void take_normal(const Chord& key, CommandContext& context);
     void take_insert(const Chord& key, CommandContext& context);
     void take_replace(const Chord& key, CommandContext& context);
@@ -215,8 +282,29 @@ private:
     // are an operator waiting for what it acts on.
     std::vector<Chord> keys_;
     bool operator_waits_{false};
-    // What f, t, F or T last looked for, which ; and , look for again.
-    std::optional<CharSearch> search_;
+    // What f, t, F or T last looked for, the last search, and what the
+    // last key had to say.
+    detail::Remembered remembered_;
+    // The command line being typed: the mode, the selections and visual
+    // ends it began from, which the pattern typed is searched from; the keys
+    // of the command it is the motion of (d/), which come again before the
+    // search when it runs; and the history walked with Up and Down.
+    struct Typing {
+        CommandLine line;
+        Mode from{Mode::Normal};
+        std::vector<Selection> selections;
+        std::size_t primary{0};
+        std::vector<VisualEnds> visual;
+        std::vector<Chord> before;
+        bool operating{false};
+        std::optional<std::size_t> history_at;
+        std::string history_prefix;
+    };
+    std::optional<Typing> typing_;
+    // The pattern typed as it is typed, when it reads.
+    std::optional<Pattern> preview_;
+    // The searches typed, the latest last.
+    std::vector<std::string> history_;
     // How many rows Ctrl-D and Ctrl-U move once a count has said; half the
     // view until then.
     std::size_t half_page_{0};

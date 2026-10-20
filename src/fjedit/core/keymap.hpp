@@ -74,6 +74,8 @@ public:
     static constexpr std::string_view VIM_INSERT = "vim.insert";
     /// In any of Vim's visual modes, the same.
     static constexpr std::string_view VIM_VISUAL = "vim.visual";
+    /// While Vim's command line is typed (`/`, `?`), the same.
+    static constexpr std::string_view VIM_COMMAND = "vim.command";
     /// Completing with Vim on: as COMPLETING, but Escape is Vim's, which
     /// leaves insert mode and the list with it.
     static constexpr std::string_view VIM_COMPLETING = "vim.completing";

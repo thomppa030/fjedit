@@ -25,9 +25,14 @@ namespace fjedit {
 struct FindState {
     /// Its plate is shown.
     bool open{false};
+    /// Its matches are drawn while the plate is closed: Vim's search.
+    bool shown{false};
     std::string query;
     std::string replacement;
     ftk::ui::FindToggles toggles;
+    /// For a regular expression, the group whose text a match is
+    /// (FindOptions::group): Vim's \zs. The plate's searches take all.
+    std::size_t group{0};
 
     /// Which of the plate's fields the keyboard goes to on its next draw.
     enum class Focus : uint8_t { None, Query, Replacement };
@@ -51,6 +56,11 @@ void open_find(FindState& find, const Buffer& buffer, const Selections& selectio
 /// Finds the matches again if the text, the query or the toggles changed
 /// since they were found.
 void refresh_matches(FindState& find, const Document& document);
+
+/// What a count of the matches says: the primary selection's place among
+/// them ("3 of 17"), how many there are when it is none of them, "No
+/// results" when there are none; empty while nothing is looked for.
+[[nodiscard]] std::string match_count(const FindState& find, const Selections& selections);
 
 /// Which match the primary selection is, when it is one.
 [[nodiscard]] std::optional<std::size_t> current_match(const FindState& find, const Selections& selections);

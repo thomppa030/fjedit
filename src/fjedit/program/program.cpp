@@ -108,6 +108,7 @@ ModeShown mode_shown(vim::Mode mode) {
         case vim::Mode::Visual: return {"Visual", ui::StatusTone::Selected};
         case vim::Mode::VisualLine: return {"Visual line", ui::StatusTone::Selected};
         case vim::Mode::VisualBlock: return {"Visual block", ui::StatusTone::Selected};
+        case vim::Mode::Command: return {"Command", ui::StatusTone::Plain};
         case vim::Mode::Normal: break;
     }
     return {"Normal", ui::StatusTone::Plain};
@@ -730,6 +731,10 @@ void Program::draw_status() {
             if (!keys.empty()) {
                 const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
                 ui::status_item(nullptr, keys);
+            }
+            // What the last key had to say, where Vim says it.
+            if (const vim::Message& said = engine.message(); !said.text.empty()) {
+                ui::status_message(said.error ? ui::StatusTone::Error : ui::StatusTone::Plain, said.text);
             }
             ui::status_rule();
         }
