@@ -18,6 +18,7 @@
 
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/keymap.hpp"
+#include "fjedit/core/vim/ex.hpp"
 #include "fjedit/core/vim/motions.hpp"
 #include "fjedit/core/vim/pattern.hpp"
 #include "fjedit/core/vim/registers.hpp"
@@ -46,7 +47,8 @@ enum class Mode : uint8_t {
     VisualLine,
     /// A block of columns, `Ctrl-V`: a selection on each of its lines.
     VisualBlock,
-    /// The command line, `/` and `?`: keys type a pattern into it.
+    /// The command line, `:`, `/` and `?`: keys type a command or a pattern
+    /// into it.
     Command,
 };
 
@@ -68,7 +70,7 @@ struct Search {
     bool forward{true};
 };
 
-/// The command line while it is typed: `/` or `?`, then the pattern.
+/// The command line while it is typed: `:`, `/` or `?`, then what is typed.
 struct CommandLine {
     char kind{'/'};
     std::string text;
@@ -167,9 +169,9 @@ public:
     /// The command line while one is typed; null otherwise.
     [[nodiscard]] const CommandLine* command_line() const { return typing_ ? &typing_->line : nullptr; }
 
-    /// The search whose matches a view shows: the pattern typed on the
-    /// command line as it is typed, then the last search until Ctrl-L hides
-    /// it; null while none shows.
+    /// The search whose matches a view shows: a pattern typed after `/` or
+    /// `?` as it is typed, otherwise the last search until Ctrl-L or `:noh`
+    /// hides it; null while none shows.
     [[nodiscard]] const Pattern* shown_search() const;
 
     /// A search made elsewhere (a view's find), which n and N go on with.
@@ -246,8 +248,17 @@ private:
 
     // Into the command line `kind`, from the mode the engine is in, the keys
     // `before` (a register, a count, an operator) to come again before its
-    // search.
-    void begin_command_line(char kind, std::vector<Chord> before, bool operating, CommandContext& context);
+    // search, `text` typed on it already (`.,.+2` for a count before `:`).
+    void begin_command_line(char kind, std::vector<Chord> before, bool operating, CommandContext& context,
+                            std::string text = {});
+    // A line typed after `:` run.
+    void run_ex(std::string_view line, CommandContext& context);
+    // The line `address` names, counted from 1 (0 for above the first), the
+    // caret's line `current` counted from 0; an error worded as Vim's.
+    ftk::Result<std::size_t> line_at(const ExAddress& address, std::size_t current, CommandContext& context);
+    // The first and last lines `range` names, counted from 0: the caret's
+    // line where it names none, or the whole text with `whole`.
+    ftk::Result<std::pair<std::size_t, std::size_t>> lines_of(const ExRange& range, bool whole, CommandContext& context);
     void take_command(const Chord& key, CommandContext& context);
     // The pattern typed searched for as it is typed: its matches shown and,
     // from normal mode, the one it goes to selected.
@@ -311,8 +322,9 @@ private:
     std::optional<Typing> typing_;
     // The pattern typed as it is typed, when it reads.
     std::optional<Pattern> preview_;
-    // The searches typed, the latest last.
+    // The searches typed and the lines typed after `:`, the latest last.
     std::vector<std::string> history_;
+    std::vector<std::string> commands_;
     // How many rows Ctrl-D and Ctrl-U move once a count has said; half the
     // view until then.
     std::size_t half_page_{0};

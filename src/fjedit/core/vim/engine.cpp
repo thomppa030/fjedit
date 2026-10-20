@@ -745,7 +745,7 @@ void Engine::dispatch(const Chord& key, CommandContext& context) {
 }
 
 const Pattern* Engine::shown_search() const {
-    if (typing_) return preview_ ? &*preview_ : nullptr;
+    if (typing_ && typing_->line.kind != ':') return preview_ ? &*preview_ : nullptr;
     return remembered_.shown && remembered_.search ? &remembered_.search->pattern : nullptr;
 }
 
@@ -754,8 +754,9 @@ void Engine::search_for(Search search) {
     remembered_.shown = true;
 }
 
-void Engine::begin_command_line(char kind, std::vector<Chord> before, bool operating, CommandContext& c) {
-    typing_ = Typing{.line = {.kind = kind, .text = {}},
+void Engine::begin_command_line(char kind, std::vector<Chord> before, bool operating, CommandContext& c,
+                                std::string text) {
+    typing_ = Typing{.line = {.kind = kind, .text = std::move(text)},
                      .from = mode_,
                      .selections = {c.selections.all().begin(), c.selections.all().end()},
                      .primary = c.selections.primary_index(),
@@ -816,23 +817,25 @@ void Engine::take_command(const Chord& key, CommandContext& c) {
         register_next_ = true;
         return;
     } else if (named == "<Up>" || named == "<Down>") {
-        // The searches typed before that begin with what is typed, older
-        // with Up; Down past the latest gives back what was typed.
+        // The lines typed before on a line of this kind that begin with
+        // what is typed, older with Up; Down past the latest gives back what
+        // was typed.
+        const std::vector<std::string>& history = line.line.kind == ':' ? commands_ : history_;
         if (!line.history_at) {
             line.history_prefix = text;
-            line.history_at = history_.size();
+            line.history_at = history.size();
         }
         std::size_t at = *line.history_at;
         const bool up = named == "<Up>";
         while (true) {
-            if (up ? at == 0 : at >= history_.size()) return;
+            if (up ? at == 0 : at >= history.size()) return;
             at = up ? at - 1 : at + 1;
-            if (at == history_.size()) {
+            if (at == history.size()) {
                 text = line.history_prefix;
                 break;
             }
-            if (history_[at].starts_with(line.history_prefix)) {
-                text = history_[at];
+            if (history[at].starts_with(line.history_prefix)) {
+                text = history[at];
                 break;
             }
         }
@@ -845,6 +848,7 @@ void Engine::take_command(const Chord& key, CommandContext& c) {
 
 void Engine::preview(CommandContext& c) {
     const Typing& line = *typing_;
+    if (line.line.kind == ':') return;
     c.selections.set(std::vector<Selection>(line.selections), line.primary);
     preview_.reset();
     const std::string_view pattern = split_search(line.line.text, line.line.kind).pattern;
@@ -873,6 +877,12 @@ void Engine::leave_command_line(bool run, CommandContext& c) {
         show_visual(c);
     }
     if (!run) return;
+    if (line.line.kind == ':') {
+        if (line.line.text.empty()) return;
+        std::erase(commands_, line.line.text);
+        commands_.push_back(line.line.text);
+        return run_ex(line.line.text, c);
+    }
     const Typed typed = split_search(line.line.text, line.line.kind);
     if (!typed.offset.empty()) {
         remembered_.message = {.text = std::format("Search offsets aren't supported: {}", typed.offset), .error = true};
@@ -900,6 +910,181 @@ void Engine::leave_command_line(bool run, CommandContext& c) {
     // As n goes, after the keys of the command it is the motion of.
     for (const Chord& key : line.before) dispatch(key, c);
     dispatch(Chord::typed("n"), c);
+}
+
+ftk::Result<std::size_t> Engine::line_at(const ExAddress& address, std::size_t current, CommandContext& c) {
+    const Buffer& buffer = c.document.buffer();
+    const auto count = static_cast<long>(buffer.line_count());
+    long line = 0;
+    switch (address.kind) {
+        case ExAddress::Kind::Number: line = static_cast<long>(address.number); break;
+        case ExAddress::Kind::Current: line = static_cast<long>(current) + 1; break;
+        case ExAddress::Kind::Last: line = count; break;
+        case ExAddress::Kind::Mark: {
+            // '< and '> are the last visual selection's first and last lines.
+            if ((address.mark != '<' && address.mark != '>') || last_visual_.empty()) {
+                return ftk::make_error("E20: Mark not set");
+            }
+            std::size_t first = buffer.line_count();
+            std::size_t last = 0;
+            for (const VisualEnds& ends : last_visual_) {
+                first = std::min({first, ends.anchor.line, ends.caret.line});
+                last = std::max({last, ends.anchor.line, ends.caret.line});
+            }
+            line = static_cast<long>(address.mark == '<' ? first : last) + 1;
+            break;
+        }
+        case ExAddress::Kind::Forward:
+        case ExAddress::Kind::Backward: {
+            // The first line after the caret's the pattern matches in, or
+            // before it, going round; it is the last search then.
+            const bool forward = address.kind == ExAddress::Kind::Forward;
+            Search search;
+            if (address.pattern.empty()) {
+                if (!remembered_.search) return ftk::make_error("E35: No previous regular expression");
+                search = *remembered_.search;
+            } else {
+                ftk::Result<Pattern> read = read_pattern(address.pattern, remembered_.settings);
+                if (!read) return ftk::make_error(read.error());
+                search = Search{.text = address.pattern, .pattern = std::move(*read), .forward = forward};
+            }
+            Message told;
+            const Position from = forward ? Position{current, buffer.line(current).size()} : Position{current, 0};
+            const std::optional<Span> found = search_from(buffer, search.pattern, search.text, from, forward, 1, told);
+            if (!found) return ftk::make_error(told.text);
+            search.forward = forward;
+            remembered_.search = std::move(search);
+            remembered_.shown = true;
+            line = static_cast<long>(found->from.line) + 1;
+            break;
+        }
+    }
+    line += address.offset;
+    if (line < 0 || line > count) return ftk::make_error("E16: Invalid range");
+    return static_cast<std::size_t>(line);
+}
+
+ftk::Result<std::pair<std::size_t, std::size_t>> Engine::lines_of(const ExRange& range, bool whole, CommandContext& c) {
+    const std::size_t count = c.document.buffer().line_count();
+    const std::size_t current = c.selections.primary().caret.line;
+    if (range.whole || (whole && !range.from)) return std::pair<std::size_t, std::size_t>{0, count - 1};
+    if (!range.from) return std::pair{current, current};
+    const ftk::Result<std::size_t> first = line_at(*range.from, current, c);
+    if (!first) return std::unexpected(first.error());
+    // Line 0 is the first, where a range names it.
+    const std::size_t from = *first == 0 ? 0 : *first - 1;
+    const ftk::Result<std::size_t> last = range.to ? line_at(*range.to, range.from_first ? from : current, c) : first;
+    if (!last) return std::unexpected(last.error());
+    const std::size_t to = *last == 0 ? 0 : *last - 1;
+    return std::pair{std::min(from, to), std::max(from, to)};
+}
+
+void Engine::run_ex(std::string_view text, CommandContext& c) {
+    const ftk::Result<ExCommand> read = parse_ex(text);
+    if (!read) {
+        remembered_.message = {.text = read.error(), .error = true};
+        return;
+    }
+    const ExCommand& command = *read;
+    const std::string& name = command.name;
+    const ftk::Result<std::pair<std::size_t, std::size_t>> lines = lines_of(command.range, false, c);
+    if (!lines) {
+        remembered_.message = {.text = lines.error(), .error = true};
+        return;
+    }
+    auto [first, last] = *lines;
+    const std::size_t count = c.document.buffer().line_count();
+    // Vim's notes for more than two lines.
+    const auto say = [&](std::size_t n, std::string_view what) {
+        if (n > 2) remembered_.message = {.text = std::format("{} {}", n, what), .error = false};
+    };
+    // What follows a name: a count, the lines from its range's last on.
+    const auto counted = [&](std::string_view argument) {
+        while (!argument.empty() && argument.front() == ' ') argument.remove_prefix(1);
+        if (argument.empty()) return true;
+        if (argument.find_first_not_of("0123456789") != std::string_view::npos) {
+            remembered_.message = {.text = std::format("E488: Trailing characters: {}", argument), .error = true};
+            return false;
+        }
+        std::size_t n = 0;
+        for (const char digit : argument) n = std::min<std::size_t>(n * 10 + static_cast<std::size_t>(digit - '0'), count);
+        if (n == 0) {
+            remembered_.message = {.text = "E939: Positive count required", .error = true};
+            return false;
+        }
+        first = last;
+        last = std::min(last + n - 1, count - 1);
+        return true;
+    };
+    // Vim's line acts at one caret, the primary's.
+    c.selections = Selections(Selection::at(c.selections.primary().caret));
+    c.document.history().close();
+
+    if (name.empty()) {
+        // A range alone goes to its last line.
+        c.selections = Selections(Selection::at(first_non_blank(c.document.buffer(), last)));
+        return settle(c);
+    }
+    if (name == "delete" || name == "yank") {
+        std::string_view argument = command.argument;
+        char reg = '"';
+        if (!argument.empty() && (argument[0] < '0' || argument[0] > '9') && Registers::valid(argument[0])) {
+            reg = argument[0];
+            argument.remove_prefix(1);
+        }
+        if (!counted(argument)) return;
+        const std::optional<Range> range = Range{.span = {{first, 0}, {last, 0}}, .linewise = true};
+        const Selections before = c.selections;
+        operate(name == "delete" ? Operator::Delete : Operator::Yank, std::span(&range, 1), reg, c, *registers_);
+        if (name == "yank") c.selections = before;
+        say(last - first + 1, name == "delete" ? "fewer lines" : "lines yanked");
+        return settle(c);
+    }
+    if (name == ">" || name == "<") {
+        // Each > or < after the first one more level.
+        std::string_view argument = command.argument;
+        std::size_t levels = 1;
+        while (!argument.empty() && argument.front() == name[0]) {
+            ++levels;
+            argument.remove_prefix(1);
+        }
+        if (!counted(argument)) return;
+        const std::optional<Range> range = Range{.span = {{first, 0}, {last, 0}}, .linewise = true};
+        operate(name == ">" ? Operator::ShiftRight : Operator::ShiftLeft, std::span(&range, 1), '"', c, *registers_, levels);
+        c.selections = Selections(Selection::at(first_non_blank(c.document.buffer(), last)));
+        say(last - first + 1, std::format("lines {}ed {} time{}", name, levels, levels == 1 ? "" : "s"));
+        return settle(c);
+    }
+    if (name == "move" || name == "copy" || name == "t") {
+        // The line they go below, as a range names one.
+        const ftk::Result<ExCommand> target = parse_ex(command.argument);
+        if (!target || !target->range.from || target->range.to || target->range.whole || !target->name.empty()) {
+            remembered_.message = {.text = "E14: Invalid address", .error = true};
+            return;
+        }
+        const ftk::Result<std::size_t> below = line_at(*target->range.from, c.selections.primary().caret.line, c);
+        if (!below) {
+            remembered_.message = {.text = below.error(), .error = true};
+            return;
+        }
+        if (name == "move") {
+            if (*below > first && *below <= last) {
+                remembered_.message = {.text = "E134: Cannot move a range of lines into itself", .error = true};
+                return;
+            }
+            move_lines(first, last, *below, c);
+            say(last - first + 1, "lines moved");
+        } else {
+            copy_lines(first, last, *below, c);
+            say(last - first + 1, "more lines");
+        }
+        return settle(c);
+    }
+    if (name == "nohlsearch") {
+        remembered_.shown = false;
+        return;
+    }
+    remembered_.message = {.text = std::format("Not supported yet: :{}", name), .error = true};
 }
 
 void Engine::cancel(CommandContext& context) {
@@ -1142,6 +1327,12 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     // register, a count, an operator) come again with the search.
     if (command.name == "/" || command.name == "?") {
         return begin_command_line(command.name[0], keys_before(command), !command.op.empty(), c);
+    }
+    // The `:` line, a count before it the lines from the caret's on.
+    if (command.name == ":" && command.op.empty()) {
+        std::string lines;
+        if (command.count) lines = *command.count == 1 ? "." : std::format(".,.+{}", *command.count - 1);
+        return begin_command_line(':', {}, false, c, std::move(lines));
     }
     // A change noted for `.`, as its keys spell it.
     if (!replaying_ && changes(command)) {
@@ -1561,6 +1752,11 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
     // The command line, whose search moves the caret end; Ctrl-L as in
     // normal mode.
     if (name == "/" || name == "?") return begin_command_line(name[0], keys_before(command), false, c);
+    // `:` from visual mode: the lines it selected, as '<,'>.
+    if (name == ":") {
+        leave_visual(c);
+        return begin_command_line(':', {}, false, c, "'<,'>");
+    }
     if (name == "<C-l>") {
         remembered_.shown = false;
         return;

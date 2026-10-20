@@ -1121,3 +1121,95 @@ TEST_CASE("Ctrl-L hides the matches until the next search; a find's search is th
     v.keys("0n");
     CHECK(v.view.selections.primary().caret == Position{0, 4});
 }
+
+TEST_CASE("The : line goes to a line and deletes the lines a range names", "[vim][ex]") {
+    Vim v("|a\nb\nc\nd\ne");
+    v.keys(":3<CR>");
+    CHECK(v.shown() == "a\nb\n|c\nd\ne");
+    v.keys(":2,3d<CR>");
+    CHECK(v.shown() == "a\n|d\ne");
+    v.keys(":$d<CR>");
+    CHECK(v.shown() == "a\n|d");
+    v.keys(":%d<CR>");
+    CHECK(v.view.buffer().text().empty());
+}
+
+TEST_CASE("The : line yanks into a register, and a count takes lines from a range's last", "[vim][ex]") {
+    Vim v("|a\nb\nc");
+    v.keys(":2y x<CR>");
+    CHECK(v.shown() == "|a\nb\nc");
+    v.keys("\"xp");
+    CHECK(v.view.buffer().text() == "a\nb\nb\nc");
+    v.keys(":1d 2<CR>");
+    CHECK(v.view.buffer().text() == "b\nc");
+    v.keys(":1d 0<CR>");
+    CHECK(v.engine.message().text == "E939: Positive count required");
+}
+
+TEST_CASE("The : line moves and copies lines below the line an address names", "[vim][ex]") {
+    Vim v("|a\nb\nc");
+    v.keys(":1m$<CR>");
+    CHECK(v.shown() == "b\nc\n|a");
+    v.keys(":m0<CR>");
+    CHECK(v.shown() == "|a\nb\nc");
+    v.keys(":t.<CR>");
+    CHECK(v.shown() == "a\n|a\nb\nc");
+    v.keys(":1,2m3<CR>");
+    CHECK(v.shown() == "b\na\n|a\nc");
+    v.keys(":1,3m2<CR>");
+    CHECK(v.engine.message().text == "E134: Cannot move a range of lines into itself");
+    CHECK(v.view.buffer().text() == "b\na\na\nc");
+}
+
+TEST_CASE("The : line shifts lines a level each > or <, and says so for more than two", "[vim][ex]") {
+    Vim v("|a\nb\nc\nd");
+    v.view.document.set_indent({.tabs = false, .width = 4});
+    v.keys(":2,3><CR>");
+    CHECK(v.shown() == "a\n    b\n    |c\nd");
+    v.keys(":%>><CR>");
+    CHECK(v.view.buffer().text() == "        a\n            b\n            c\n        d");
+    CHECK(v.engine.message().text == "4 lines >ed 2 times");
+    v.keys(":%<lt><lt><lt><CR>");
+    CHECK(v.view.buffer().text() == "a\nb\nc\nd");
+}
+
+TEST_CASE("A count before : and a visual selection give the line its range; a pattern finds a line", "[vim][ex]") {
+    Vim count("|a\nb\nc\nd");
+    count.keys("2:");
+    REQUIRE(count.engine.command_line() != nullptr);
+    CHECK(count.engine.command_line()->text == ".,.+1");
+    count.keys("d<CR>");
+    CHECK(count.view.buffer().text() == "c\nd");
+    Vim visual("|a\nb\nc\nd");
+    visual.keys("jVj:");
+    REQUIRE(visual.engine.command_line() != nullptr);
+    CHECK(visual.engine.command_line()->text == "'<,'>");
+    visual.keys("d<CR>");
+    CHECK(visual.view.buffer().text() == "a\nd");
+    // The pattern is the last search then.
+    Vim found("|a\nfoo\nb\nfoo");
+    found.keys(":/foo/d<CR>");
+    CHECK(found.view.buffer().text() == "a\nb\nfoo");
+    found.keys("n");
+    CHECK(found.view.selections.primary().caret == Position{2, 0});
+}
+
+TEST_CASE("The : line says what is wrong as Vim does, keeps what was typed, and :noh hides the matches",
+          "[vim][ex]") {
+    Vim v("|a\nb");
+    v.keys(":frob<CR>");
+    CHECK(v.engine.message().text == "E492: Not an editor command: frob");
+    CHECK(v.engine.message().error);
+    v.keys(":9d<CR>");
+    CHECK(v.engine.message().text == "E16: Invalid range");
+    v.keys(":'ad<CR>");
+    CHECK(v.engine.message().text == "E20: Mark not set");
+    v.keys(":2<CR>:<Up>");
+    CHECK(v.engine.command_line()->text == "2");
+    v.keys("<Esc>/b<CR>");
+    CHECK(v.engine.shown_search() != nullptr);
+    v.keys(":");
+    CHECK(v.engine.shown_search() != nullptr);
+    v.keys("noh<CR>");
+    CHECK(v.engine.shown_search() == nullptr);
+}

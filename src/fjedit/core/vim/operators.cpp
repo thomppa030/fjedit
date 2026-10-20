@@ -607,6 +607,58 @@ void shift_caret_lines(bool right, CommandContext& context) {
     });
 }
 
+void move_lines(std::size_t first, std::size_t last, std::size_t below, CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
+    // Where they go is before line `below` as it is now.
+    if (below >= first && below <= last + 1) return;
+    // The lines from the first touched to the last, written again in their
+    // new order.
+    const std::size_t low = std::min(first, below);
+    const std::size_t high = std::max(last + 1, below) - 1;
+    std::vector<std::string_view> lines;
+    const auto take = [&](std::size_t from, std::size_t to) {
+        for (std::size_t line = from; line < to; ++line) lines.push_back(buffer.line(line));
+    };
+    if (below < first) {
+        take(first, last + 1);
+        take(below, first);
+    } else {
+        take(last + 1, below);
+        take(first, last + 1);
+    }
+    std::string text;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (i > 0) text += '\n';
+        text += lines[i];
+    }
+    const std::size_t caret_line = below < first ? below + (last - first) : below - 1;
+    Edit edit;
+    edit.changes.push_back({.span = {{low, 0}, {high, buffer.line(high).size()}}, .text = std::move(text)});
+    commit(context, std::move(edit), [&](const Edit&) {
+        return std::vector<Selection>{Selection::at(first_non_blank(context.document.buffer(), caret_line))};
+    });
+}
+
+void copy_lines(std::size_t first, std::size_t last, std::size_t below, CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
+    std::string block;
+    for (std::size_t line = first; line <= last; ++line) {
+        if (line > first) block += '\n';
+        block += buffer.line(line);
+    }
+    Edit edit;
+    if (below == 0) {
+        edit.changes.push_back({.span = {{0, 0}, {0, 0}}, .text = block + "\n"});
+    } else {
+        const Position end{below - 1, buffer.line(below - 1).size()};
+        edit.changes.push_back({.span = {end, end}, .text = "\n" + block});
+    }
+    const std::size_t caret_line = below + (last - first);
+    commit(context, std::move(edit), [&](const Edit&) {
+        return std::vector<Selection>{Selection::at(first_non_blank(context.document.buffer(), caret_line))};
+    });
+}
+
 void replace_in(std::span<const std::optional<Range>> ranges, std::string_view with, CommandContext& context) {
     const Buffer& buffer = context.document.buffer();
     const std::vector<Selection> was = selections_of(context);

@@ -117,6 +117,16 @@ void delete_before_on_line(CommandContext& context);
 /// next whole level further in, or out, the caret moving with the text.
 void shift_caret_lines(bool right, CommandContext& context);
 
+/// `:m`: lines `first` to `last` (counted from 0) moved to below line
+/// `below` (counted from 1, 0 for above the first), as one step; the caret
+/// on the last line moved, at its first non-blank. Nothing where they are
+/// already.
+void move_lines(std::size_t first, std::size_t last, std::size_t below, CommandContext& context);
+
+/// `:t` and `:co`: the same lines copied there, the caret on the last line
+/// copied.
+void copy_lines(std::size_t first, std::size_t last, std::size_t below, CommandContext& context);
+
 /// `r` in visual mode: every character `ranges` take, but line breaks,
 /// replaced by `with`, as one step; each caret at its range's start.
 void replace_in(std::span<const std::optional<Range>> ranges, std::string_view with, CommandContext& context);
