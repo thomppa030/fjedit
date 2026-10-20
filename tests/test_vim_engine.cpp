@@ -1350,6 +1350,17 @@ TEST_CASE(":set shiftwidth, tabstop and expandtab indent as they say; what it ca
     CHECK(v.engine.message().text == "Line numbers always show here");
 }
 
+TEST_CASE(":set and :noh leave every caret where it is; a command on lines acts at the primary's", "[vim][ex]") {
+    Vim v("|ab\n|cd\nef");
+    v.keys(":set ic<CR>");
+    CHECK(v.shown() == "|ab\n|cd\nef");
+    v.keys(":noh<CR>");
+    CHECK(v.shown() == "|ab\n|cd\nef");
+    Vim lines("|ab\n|cd\nef");
+    lines.keys(":d<CR>");
+    CHECK(lines.shown() == "ab\n|ef");
+}
+
 TEST_CASE("The : line says what is wrong as Vim does, keeps what was typed, and :noh hides the matches",
           "[vim][ex]") {
     Vim v("|a\nb");

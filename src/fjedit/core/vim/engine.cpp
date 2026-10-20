@@ -702,6 +702,15 @@ void carry_marks(std::vector<bool>& marks, const Edit& edit) {
     }
 }
 
+// The `:` commands that act on lines, and so at the primary caret alone, as
+// at Vim's one cursor; the empty name is a range alone, which goes to its
+// last line.
+bool acts_on_lines(std::string_view name) {
+    static constexpr std::string_view NAMES[] = {"",  "delete", "yank", ">",      "<",       "move",   "copy",
+                                                 "t", "substitute",     "global", "vglobal", "normal", "sort"};
+    return std::ranges::contains(NAMES, name);
+}
+
 // A delimiter for :s and :g: anything but a letter, a digit, a blank, a
 // backslash, ", | and &.
 bool delimiter(char c) {
@@ -1051,11 +1060,20 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
     const auto counted = [&](std::string_view argument) {
         return take_count(argument, first, last, count, remembered_.message);
     };
+    // What acts on no lines leaves the carets as they are.
+    if (name == "set") return run_set(command, c);
+    if (name == "nohlsearch") {
+        remembered_.shown = false;
+        return;
+    }
+    if (!acts_on_lines(name)) {
+        remembered_.message = {.text = std::format("Not supported yet: :{}", name), .error = true};
+        return;
+    }
     // Vim's line acts at one caret, the primary's.
     c.selections = Selections(Selection::at(c.selections.primary().caret));
     c.document.history().close();
 
-    if (name == "set") return run_set(command, c);
     if (name == "substitute") return run_substitute(command, first, last, c);
     if (name == "global" || name == "vglobal") return run_global(command, first, last, c);
     if (name == "normal") return run_normal(command, first, last, c);
@@ -1120,11 +1138,6 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
         }
         return settle(c);
     }
-    if (name == "nohlsearch") {
-        remembered_.shown = false;
-        return;
-    }
-    remembered_.message = {.text = std::format("Not supported yet: :{}", name), .error = true};
 }
 
 void Engine::run_substitute(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {
