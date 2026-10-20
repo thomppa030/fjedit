@@ -557,6 +557,8 @@ TEST_CASE("The menus show the keys of the mode the view in front is in", "[progr
     // has no keys for yet.
     CHECK(run.program->shortcut("file.save") == "Ctrl S");
     CHECK(run.program->shortcut("format.document") == "Ctrl Shift I");
+    CHECK(run.program->shortcut("definition.go") == "gd");
+    CHECK(run.program->shortcut("symbol.rename") == "grn");
     CHECK(run.program->shortcut("file.close").empty());
     CHECK(run.program->shortcut("find.open").empty());
     run.h.type("v");

@@ -858,6 +858,7 @@ constexpr std::array VIEW_COMMANDS = {
     ViewCommand{"completion.accept", "Accept completion"},
     ViewCommand{"completion.close", "Close completions"},
     ViewCommand{"definition.go", "Go to definition"},
+    ViewCommand{"hover.show", "Show what is at the caret"},
     ViewCommand{"symbol.rename", "Rename"},
     ViewCommand{"format.document", "Format"},
 };

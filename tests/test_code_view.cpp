@@ -1022,6 +1022,30 @@ TEST_CASE("Resting on a word asks what it is, and the answer hangs under it", "[
     REQUIRE(cards(e.h).empty());
 }
 
+TEST_CASE("With Vim on, K shows what is at the caret until the caret moves", "[code_view][vim][hover]") {
+    FakeLanguage language;
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    e.view.path = "x.cpp";
+    e.view.vim.emplace();
+    e.h.click_at({PAST_END, row_y(1)});
+    e.h.step();
+    e.h.type("K");
+    e.h.step();
+    REQUIRE(language.hovers.size() == 1);
+    CHECK(language.hovers.front().at.line == 1);
+    FakeLanguage::answer(language.hovers.front(), std::optional<Hover>(Hover{.markdown = "`x`", .span = {}}));
+    e.h.step(2);
+    CHECK(cards(e.h).size() == 1);
+    // The mouse going elsewhere leaves it; the caret moving takes it away.
+    e.h.move_to({PAST_END, row_y(3)});
+    e.h.step(2);
+    CHECK(cards(e.h).size() == 1);
+    e.h.type("j");
+    e.h.step(2);
+    CHECK(cards(e.h).empty());
+}
+
 TEST_CASE("Typing takes the hover card away, and resting on space asks nothing", "[code_view][hover]") {
     FakeLanguage language;
     Editor e(FUNCTION);

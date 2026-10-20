@@ -359,6 +359,12 @@ void take_hover(core::Context& ui, const core::Interaction& in, const Frame& fra
         hovering = {};
         return;
     }
+    if (hovering.by_keys) {
+        if (hovering.asked && hovering.asked->answered && hovering.card.empty() && hovering.asked->answer) {
+            hovering.card = read_markdown(hovering.asked->answer->markdown);
+        }
+        return;
+    }
     const core::Pointer* mouse = ui.find_pointer(core::PointerType::Mouse, 0);
     const bool resting = mouse != nullptr && mouse->present && mouse->buttons == 0;
     const glm::vec2 point = resting ? mouse->now.position : glm::vec2{0.0f};
@@ -525,6 +531,18 @@ void run_view_command(std::string_view name, const Document& document, EditorVie
         view.completing = {};
     } else if (name == "definition.go") {
         if (view.service != nullptr) view.going = view.service->definition(view.path, view.selections.primary().caret);
+    } else if (name == "hover.show") {
+        // What the service says the word at the caret is, at once.
+        if (view.service != nullptr) {
+            const Position caret = view.selections.primary().caret;
+            view.hovering = {.word = word_or_place(document.buffer(), caret),
+                             .at = caret,
+                             .since = 0.0,
+                             .asked = view.service->hover(view.path, caret),
+                             .card = {},
+                             .card_rect = {},
+                             .by_keys = true};
+        }
     } else if (name == "format.document") {
         if (view.service != nullptr) view.formatting = view.service->format(view.path);
     } else if (name == "completion.next" || name == "completion.previous") {

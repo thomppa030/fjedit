@@ -219,6 +219,17 @@ Keymap Keymap::standard() {
         keymap.bind(COMPLETING, {binding.keys}, std::string(binding.command));
         if (binding.command != "completion.close") keymap.bind(VIM_COMPLETING, {binding.keys}, std::string(binding.command));
     }
+    // Neovim's own keys for what a language server answers, in normal mode,
+    // bound first so the menus show them.
+    const auto typed = [](std::string_view text) {
+        std::vector<Chord> keys;
+        for (const char c : text) keys.push_back(Chord::typed(std::string_view(&c, 1)));
+        return keys;
+    };
+    keymap.bind(VIM_NORMAL, typed("gd"), "definition.go");
+    keymap.bind(VIM_NORMAL, {chord(Key::RightBracket, CTRL)}, "definition.go");
+    keymap.bind(VIM_NORMAL, typed("grn"), "symbol.rename");
+    keymap.bind(VIM_NORMAL, typed("K"), "hover.show");
     // The keys Vim gives no meaning that stay with it on (decision 4 of the
     // Vim plan).
     const Default with_vim[] = {

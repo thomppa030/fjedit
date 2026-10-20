@@ -119,6 +119,26 @@ TEST_CASE("Vim's Ctrl-N and Ctrl-P open the completion list in insert mode, then
     CHECK_FALSE(keys.find(Keymap::VIM_NORMAL, std::vector<Chord>{ctrl(Key::N)}).command);
 }
 
+TEST_CASE("Vim's normal mode has Neovim's keys for what a language server answers", "[keymap]") {
+    const Keymap keys = Keymap::standard();
+    const auto typed = [](std::string_view text) {
+        std::vector<Chord> out;
+        for (const char c : text) out.push_back(Chord::typed(std::string_view(&c, 1)));
+        return out;
+    };
+    CHECK(keys.find(Keymap::VIM_NORMAL, typed("gd")).command == "definition.go");
+    CHECK(keys.find(Keymap::VIM_NORMAL, std::vector<Chord>{ctrl(Key::RightBracket)}).command == "definition.go");
+    CHECK(keys.find(Keymap::VIM_NORMAL, typed("gr")).waiting);
+    CHECK(keys.find(Keymap::VIM_NORMAL, typed("grn")).command == "symbol.rename");
+    CHECK(keys.find(Keymap::VIM_NORMAL, typed("K")).command == "hover.show");
+    // Vim's g keys go on to Vim.
+    CHECK_FALSE(keys.find(Keymap::VIM_NORMAL, typed("gg")).command);
+    CHECK_FALSE(keys.find(Keymap::VIM_NORMAL, typed("gg")).waiting);
+    // A menu shows these before F12 and F2.
+    CHECK(keys.keys_for(Keymap::VIM_NORMAL, "definition.go") == typed("gd"));
+    CHECK(keys.keys_for(Keymap::VIM_NORMAL, "symbol.rename") == typed("grn"));
+}
+
 TEST_CASE("Modes keep their bindings apart", "[keymap]") {
     Keymap keys;
     const Chord d{.key = Key::D};

@@ -132,6 +132,10 @@ struct EditorView {
         /// Where the card was drawn: the mouse may move onto it from the
         /// word without it going.
         std::optional<ftk::ui::core::Rect> card_rect{};
+        /// Asked for by the keys (Vim's K) for the word at the caret: it
+        /// stays, whatever the mouse does, until the caret, the text or the
+        /// scroll moves.
+        bool by_keys{false};
     };
     Hovering hovering{};
     /// Its completion list, while one is open (sheet 39, P1).
