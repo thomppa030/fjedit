@@ -19,6 +19,8 @@ namespace {
 struct Vim {
     TestView view;
     vim::Engine engine;
+    // The rows a view ten rows high has in sight.
+    InView sight{.top = 0, .rows = 10, .around = 0};
 
     explicit Vim(std::string_view marked) : view(marked) {}
 
@@ -26,7 +28,7 @@ struct Vim {
     CommandContext context() {
         view.folds.catch_up(view.document);
         return {.document = view.document, .selections = view.selections, .layout = view.layout,
-                .clipboard = &view.clipboard, .folds = &view.folds, .text = {}};
+                .clipboard = &view.clipboard, .folds = &view.folds, .text = {}, .in_view = &sight};
     }
 
     void keys(std::string_view typed) {
@@ -832,4 +834,149 @@ TEST_CASE("A dot after a put from a numbered register puts from the next", "[vim
     Vim v("|a\nb\nc\nd");
     v.keys("dddddd\"1p..");
     CHECK(v.shown() == "d\nc\nb\n|a");
+}
+
+namespace {
+
+// `count` lines of `line`, the caret at the first's start.
+std::string lines_of(std::size_t count, std::string_view line = "text") {
+    std::string out = "|";
+    for (std::size_t i = 0; i < count; ++i) {
+        if (i > 0) out += '\n';
+        out += line;
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("H, M and L go to the rows in sight at the top, the middle and the bottom", "[vim][view]") {
+    Vim v(lines_of(50));
+    const auto line = [&] { return v.view.selections.primary().caret.line; };
+    v.sight.top = 10;
+    v.keys("H");
+    CHECK(line() == 10);
+    v.keys("M");
+    CHECK(line() == 14);
+    v.keys("L");
+    CHECK(line() == 19);
+    v.keys("3H");
+    CHECK(line() == 12);
+    v.keys("3L");
+    CHECK(line() == 17);
+    // Kept from an edge by the rows kept around the caret, but where the
+    // text begins.
+    v.sight.around = 2;
+    v.keys("H");
+    CHECK(line() == 12);
+    v.keys("L");
+    CHECK(line() == 17);
+    v.sight.top = 0;
+    v.keys("H");
+    CHECK(line() == 0);
+    // An operator takes the rows to the edge itself.
+    v.sight.top = 10;
+    v.keys("HdL");
+    CHECK(v.view.buffer().line_count() == 42);
+}
+
+TEST_CASE("Ctrl-D and Ctrl-U scroll half the view, the caret with the text; a count is kept", "[vim][view]") {
+    Vim v(lines_of(50));
+    const auto line = [&] { return v.view.selections.primary().caret.line; };
+    v.keys("<C-d>");
+    CHECK(v.sight.top == 5);
+    CHECK(line() == 5);
+    v.keys("<C-d>");
+    CHECK(v.sight.top == 10);
+    CHECK(line() == 10);
+    v.keys("<C-u>");
+    CHECK(v.sight.top == 5);
+    CHECK(line() == 5);
+    v.keys("3<C-d>");
+    CHECK(v.sight.top == 8);
+    v.keys("<C-d>");
+    CHECK(v.sight.top == 11);
+    CHECK(line() == 11);
+    // Near the end the view stops with the last line at its bottom, and the
+    // caret goes on.
+    Vim end(lines_of(50));
+    end.sight.top = 38;
+    end.keys("45G<C-d>");
+    CHECK(end.sight.top == 40);
+    CHECK(end.view.selections.primary().caret.line == 49);
+    // The caret keeps its place along the line.
+    Vim along(lines_of(20, "abcdef"));
+    along.keys("3l<C-d>");
+    CHECK(along.view.selections.primary().caret == Position{5, 3});
+}
+
+TEST_CASE("Ctrl-F and Ctrl-B scroll a view less two rows, the caret into sight", "[vim][view]") {
+    Vim v(lines_of(50));
+    const auto line = [&] { return v.view.selections.primary().caret.line; };
+    v.keys("<C-f>");
+    CHECK(v.sight.top == 8);
+    CHECK(line() == 8);
+    v.sight.around = 2;
+    v.keys("<C-f>");
+    CHECK(v.sight.top == 16);
+    CHECK(line() == 18);
+    v.keys("<C-b>");
+    CHECK(v.sight.top == 8);
+    CHECK(line() == 15);
+}
+
+TEST_CASE("Ctrl-E and Ctrl-Y scroll a row, the caret moving only to stay in sight", "[vim][view]") {
+    Vim v(lines_of(50));
+    const auto line = [&] { return v.view.selections.primary().caret.line; };
+    v.keys("5G<C-e>");
+    CHECK(v.sight.top == 1);
+    CHECK(line() == 4);
+    v.keys("<C-e><C-e><C-e><C-e>");
+    CHECK(v.sight.top == 5);
+    CHECK(line() == 5);
+    v.keys("15G<C-y>");
+    CHECK(v.sight.top == 4);
+    CHECK(line() == 13);
+}
+
+TEST_CASE("zz, zt and zb put the caret's row in the middle, at the top or at the bottom", "[vim][view]") {
+    Vim v(lines_of(50, "  text"));
+    v.keys("21Gzz");
+    CHECK(v.sight.top == 16);
+    v.keys("zt");
+    CHECK(v.sight.top == 20);
+    v.keys("zb");
+    CHECK(v.sight.top == 11);
+    v.sight.around = 2;
+    v.keys("zt");
+    CHECK(v.sight.top == 18);
+    v.keys("zb");
+    CHECK(v.sight.top == 13);
+    // A count goes to that line first; z<CR> to its first non-blank.
+    v.keys("5zt");
+    CHECK(v.view.selections.primary().caret == Position{4, 2});
+    CHECK(v.sight.top == 2);
+    v.keys("$z<CR>");
+    CHECK(v.view.selections.primary().caret == Position{4, 2});
+}
+
+TEST_CASE("Scrolling in visual mode moves the selection's caret end", "[vim][view]") {
+    Vim v(lines_of(50));
+    v.keys("V<C-d>d");
+    CHECK(v.view.buffer().line_count() == 44);
+}
+
+TEST_CASE("zc, zo, za, zM and zR close and open the folds at the caret", "[vim][view]") {
+    Vim v("|void f() {\n    a;\n}\nvoid g() {\n    b;\n}");
+    v.keys("zc");
+    CHECK(v.view.folds.hidden(1));
+    v.keys("zo");
+    CHECK_FALSE(v.view.folds.hidden(1));
+    v.keys("za");
+    CHECK(v.view.folds.hidden(1));
+    v.keys("zR");
+    CHECK_FALSE(v.view.folds.hidden(1));
+    v.keys("zM");
+    CHECK(v.view.folds.hidden(1));
+    CHECK(v.view.folds.hidden(4));
 }

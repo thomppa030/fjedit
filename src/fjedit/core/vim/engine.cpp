@@ -122,7 +122,7 @@ std::string argument_of(const Chord& key) {
 // A motion or a command from `keys[i]` on.
 Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) {
     const Chord& key = keys[i];
-    const bool prefix = key.text == "g";
+    const bool prefix = key.text == "g" || key.text == "z";
     const bool takes_character = key.text == "f" || key.text == "t" || key.text == "F" || key.text == "T" ||
                                  (key.text == "r" && command.op.empty());
     if (!prefix && !takes_character) {
@@ -132,6 +132,11 @@ Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) 
     if (i + 1 == keys.size()) return Parsed::Waiting;
     const Chord& next = keys[i + 1];
     if (prefix) {
+        // z<CR> is the one that ends on a key typing nothing.
+        if (key.text == "z" && pressed(next, Key::Enter)) {
+            command.name = "z<CR>";
+            return ends_at(keys, i + 2);
+        }
         if (next.text.empty()) return Parsed::Invalid;
         command.name = key.text + next.text;
     } else {
@@ -268,6 +273,111 @@ Went to_line(const Buffer& buffer, std::size_t line) {
     return {.to = first_non_blank(buffer, std::min(line, buffer.line_count() - 1)), .goal = {}, .kind = MotionKind::Linewise};
 }
 
+// The row `line` is drawn on, and the line a row begins with, through the
+// view's closed folds; the text's last row.
+std::size_t row_of(const CommandContext& c, std::size_t line) {
+    return c.folds != nullptr ? c.folds->row_of(line) : line;
+}
+std::size_t line_of(const CommandContext& c, std::size_t row) {
+    return c.folds != nullptr ? c.folds->line_of(row) : row;
+}
+std::size_t last_row(const CommandContext& c) {
+    return row_of(c, c.document.buffer().line_count() - 1);
+}
+
+// H, M and L: the row `count` from the view's top or bottom, or its middle,
+// of the rows the text fills. Kept from an edge by the rows kept around the
+// caret, unless the text's end is in sight there or an operator waits.
+std::optional<Went> in_sight(const CommandContext& c, const Command& command) {
+    if (c.in_view == nullptr) return std::nullopt;
+    const InView& view = *c.in_view;
+    const std::size_t last = last_row(c);
+    const std::size_t top = std::min(view.top, last);
+    const std::size_t bottom = std::min(top + std::max<std::size_t>(view.rows, 1) - 1, last);
+    const bool moving = command.op.empty();
+    const std::size_t n = command.count.value_or(1) - 1;
+    std::size_t row = top + (bottom - top) / 2;
+    if (command.name == "H") {
+        row = std::min(top + std::max(n, top > 0 && moving ? view.around : 0), bottom);
+    } else if (command.name == "L") {
+        row = bottom - std::min(std::max(n, bottom < last && moving ? view.around : 0), bottom - top);
+    }
+    return to_line(c.document.buffer(), line_of(c, row));
+}
+
+// Where Vim's scrolling command `name` puts the view's top row and each
+// caret of `carets`: Ctrl-D and Ctrl-U half a view (or `count` rows, kept in
+// `half` for the next), Ctrl-F and Ctrl-B a view less two rows, the carets
+// moving with the text or into sight; Ctrl-E and Ctrl-Y a row, the carets
+// moving only to stay in sight; zz, zt and zb the primary caret's row to the
+// middle, the top or the bottom (with a count, line `count` first), z., z<CR>
+// and z- the same at its first non-blank. Nothing for another name, or with
+// no view.
+std::optional<std::vector<Selection>> scroll_view(CommandContext& c, std::string_view name,
+                                                  std::optional<std::size_t> count, std::span<const Selection> carets,
+                                                  std::size_t& half) {
+    if (c.in_view == nullptr || carets.empty()) return std::nullopt;
+    InView& view = *c.in_view;
+    const Buffer& buffer = c.document.buffer();
+    const std::size_t last = last_row(c);
+    const std::size_t rows = std::max<std::size_t>(view.rows, 1);
+    const std::size_t top = std::min(view.top, last);
+    // A caret on `row`, at its goal along the line.
+    const auto on_row = [&](const Selection& selection, std::size_t row) {
+        const float goal = selection.goal.value_or(c.layout.x_of(buffer, selection.caret));
+        const Position to = c.layout.position_at(buffer, line_of(c, std::min(row, last)), goal);
+        return Selection{.anchor = to, .caret = to, .goal = goal};
+    };
+    std::vector<Selection> out(carets.begin(), carets.end());
+
+    if (name == "<C-d>" || name == "<C-u>") {
+        if (count) half = *count;
+        const std::size_t n = half > 0 ? half : std::max<std::size_t>(rows / 2, 1);
+        const bool down = name == "<C-d>";
+        // Down no further than shows the text's last row at the bottom.
+        const std::size_t last_top = last + 1 > rows ? last + 1 - rows : 0;
+        view.top = down ? std::max(top, std::min(top + n, last_top)) : top - std::min(n, top);
+        for (Selection& selection : out) {
+            const std::size_t row = row_of(c, selection.caret.line);
+            selection = on_row(selection, down ? std::min(row + n, last) : row - std::min(n, row));
+        }
+        return out;
+    }
+    const bool page = name == "<C-f>" || name == "<C-b>";
+    if (page || name == "<C-e>" || name == "<C-y>") {
+        const std::size_t n = (page ? std::max<std::size_t>(rows > 2 ? rows - 2 : 1, 1) : 1) * count.value_or(1);
+        const bool down = name == "<C-f>" || name == "<C-e>";
+        view.top = down ? std::min(top + n, last) : top - std::min(n, top);
+        // The carets kept in sight, as far from the edges as the rows kept
+        // around the caret, where the text goes on past them.
+        const std::size_t bottom = std::min(view.top + rows - 1, last);
+        const std::size_t highest = std::min(view.top + (view.top > 0 ? view.around : 0), bottom);
+        const std::size_t lowest = std::max(bottom - (bottom < last ? std::min(view.around, bottom) : 0), highest);
+        for (Selection& selection : out) {
+            const std::size_t row = row_of(c, selection.caret.line);
+            if (row < highest) selection = on_row(selection, highest);
+            if (row > lowest) selection = on_row(selection, lowest);
+        }
+        return out;
+    }
+    const bool middle = name == "zz" || name == "z.";
+    const bool to_top = name == "zt" || name == "z<CR>";
+    if (!middle && !to_top && name != "zb" && name != "z-") return std::nullopt;
+    const bool first_text = name == "z." || name == "z<CR>" || name == "z-";
+    Selection& primary = out[std::min(c.selections.primary_index(), out.size() - 1)];
+    if (count) primary = on_row(primary, row_of(c, std::min(*count - 1, buffer.line_count() - 1)));
+    if (first_text) primary = Selection::at(first_non_blank(buffer, primary.caret.line));
+    const std::size_t row = row_of(c, primary.caret.line);
+    if (middle) {
+        view.top = row - std::min(row, (rows - 1) / 2);
+    } else if (to_top) {
+        view.top = row - std::min(row, view.around);
+    } else {
+        view.top = row + view.around + 1 > rows ? std::min(row + view.around + 1 - rows, row) : 0;
+    }
+    return out;
+}
+
 // Where the motion `command` takes `selection`'s caret; nothing for a
 // command that isn't a motion, or a motion that can't go. f, t, F and T
 // keep what they look for in `search`, which ; and , look for again.
@@ -319,6 +429,7 @@ std::optional<Went> motion(const CommandContext& c, const Command& command, cons
         return to_line(buffer, at.line - n);
     }
     if (name == "_") return to_line(buffer, at.line + n - 1);
+    if (name == "H" || name == "M" || name == "L") return in_sight(c, command);
     if (name == "}" || name == "{") {
         const Moved moved = name == "}" ? paragraph_after(buffer, at, n) : paragraph_before(buffer, at, n);
         return went(moved.to, moved.kind);
@@ -828,6 +939,27 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         return;
     }
     if (name == ".") return repeat(command.count, c);
+    // The view scrolled, the carets with it.
+    if (std::optional<std::vector<Selection>> scrolled = scroll_view(c, name, command.count, c.selections.all(), half_page_)) {
+        c.selections.set(std::move(*scrolled), c.selections.primary_index());
+        c.document.history().close();
+        settle(c);
+        return;
+    }
+    // The folds at the carets.
+    struct FoldKey {
+        std::string_view key;
+        std::string_view command;
+    };
+    static constexpr FoldKey FOLD_KEYS[] = {
+        {"zo", "fold.open"}, {"zc", "fold.close"}, {"za", "fold.toggle"}, {"zR", "fold.open_all"}, {"zM", "fold.close_all"},
+    };
+    for (const FoldKey& fold : FOLD_KEYS) {
+        if (fold.key != name) continue;
+        (void)run_command(fold.command, c);
+        settle(c);
+        return;
+    }
 
     std::vector<Selection> moved;
     bool any = false;
@@ -1133,6 +1265,17 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
     if (act_on_visual(name, command.argument, n, command.reg, c)) {
         making_ = std::move(change);
         return;
+    }
+
+    // The view scrolled, each selection's caret end with it.
+    std::vector<Selection> caret_ends;
+    for (const VisualEnds& ends : visual_) caret_ends.push_back({.anchor = ends.caret, .caret = ends.caret, .goal = ends.goal});
+    if (const std::optional<std::vector<Selection>> scrolled = scroll_view(c, name, command.count, caret_ends, half_page_)) {
+        for (std::size_t i = 0; i < visual_.size(); ++i) {
+            visual_[i].caret = on_character(buffer, (*scrolled)[i].caret);
+            visual_[i].goal = (*scrolled)[i].goal;
+        }
+        return show_visual(c);
     }
 
     // A motion moves each selection's caret end.

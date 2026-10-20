@@ -217,6 +217,9 @@ private:
     bool operator_waits_{false};
     // What f, t, F or T last looked for, which ; and , look for again.
     std::optional<CharSearch> search_;
+    // How many rows Ctrl-D and Ctrl-U move once a count has said; half the
+    // view until then.
+    std::size_t half_page_{0};
     // Visual mode's ends, and the selections it last made from them: others
     // than those were made by the mouse or an edit.
     std::vector<VisualEnds> visual_;

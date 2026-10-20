@@ -37,6 +37,18 @@ struct Clipboard {
 
 /// What a command acts on: one view of a document, and what the view lends
 /// it.
+/// The rows of the text a view has in sight, for what moves by them or
+/// scrolls the view (Vim's H, Ctrl-D, zz). A command may change `top`; the
+/// view then scrolls there.
+struct InView {
+    /// The first row wholly in sight; a closed fold's lines are one row.
+    std::size_t top{0};
+    /// How many rows are wholly in sight.
+    std::size_t rows{1};
+    /// How many rows the view keeps in sight above and below the caret.
+    std::size_t around{0};
+};
+
 struct CommandContext {
     /// The text the command edits, with its history, colours and indent.
     Document& document;
@@ -49,6 +61,9 @@ struct CommandContext {
     Folds* folds{nullptr};
     /// What `edit.type` types.
     std::string_view text{};
+    /// The rows the view has in sight; what moves by them does nothing
+    /// without them.
+    InView* in_view{nullptr};
 };
 
 struct Command {

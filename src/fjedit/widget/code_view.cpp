@@ -695,6 +695,13 @@ void draw_side(core::Context& ui, const Document& document, EditorView& view, co
     if (view.scroll != scrolled) ui.request_frame();
 }
 
+// How many rows the view keeps in sight above and below the caret: `around`,
+// or as many as fit on both sides.
+std::size_t rows_kept(std::size_t around, const Frame& frame) {
+    const auto fit = static_cast<std::size_t>(std::max(0.0f, (frame.rect.height() / frame.line - 1.0f) * 0.5f));
+    return std::min(around, fit);
+}
+
 // Scrolls so the primary caret is in sight with `around` rows above and
 // below it, as many as fit and the text has, then keeps the scroll inside
 // the text.
@@ -703,8 +710,7 @@ void reveal(EditorView& view, const Frame& frame, const Buffer& buffer, const Te
         const Position caret = view.selections.primary().caret;
         const std::size_t row = view.folds.row_of(caret.line);
         const std::size_t last = view.folds.row_count(buffer.line_count()) - 1;
-        const auto fit = static_cast<std::size_t>(std::max(0.0f, (frame.rect.height() / frame.line - 1.0f) * 0.5f));
-        const std::size_t keep = std::min(around, fit);
+        const std::size_t keep = rows_kept(around, frame);
         const float top = static_cast<float>(row - std::min(keep, row)) * frame.line;
         const float bottom = static_cast<float>(std::min(row + keep, last) + 1) * frame.line;
         if (top < view.scroll.y) {
@@ -1318,11 +1324,18 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             }
         }
     };
+    // The rows wholly in sight, which Vim's H, Ctrl-D and zz move by and
+    // may scroll.
+    const auto first_row = static_cast<std::size_t>(std::ceil(view.scroll.y / frame.line - 0.01f));
+    const auto past_last = static_cast<std::size_t>((view.scroll.y + frame.rect.height()) / frame.line + 0.01f);
+    InView in_view{.top = first_row,
+                   .rows = past_last > first_row ? past_last - first_row : 1,
+                   .around = rows_kept(view.around_caret, frame)};
     // Vim's view of the document, for it to act through.
     const auto vim_context = [&] {
         view.folds.catch_up(document);
         return CommandContext{.document = document, .selections = view.selections, .layout = layout,
-                              .clipboard = &clipboard, .folds = &view.folds, .text = {}};
+                              .clipboard = &clipboard, .folds = &view.folds, .text = {}, .in_view = &in_view};
     };
 
     if (focus.focused) {
@@ -1340,6 +1353,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                     ask_completion();
                 }
             });
+            // Scrolled by Vim: its first row in sight where Vim put it.
+            if (in_view.top != first_row) view.scroll.y = static_cast<float>(in_view.top) * frame.line;
         } else {
             take_keys(ui, keymap, view, run, [&](std::string_view text) {
                 run("edit.type", text);

@@ -1475,6 +1475,24 @@ TEST_CASE("With Vim on, leaving insert mode takes the completion list with it", 
     REQUIRE(c.e.view.vim->mode() == vim::Mode::Normal);
 }
 
+TEST_CASE("With Vim on, Ctrl-D scrolls the view with the caret, and zt puts the caret's line at the top", "[code_view][vim]") {
+    std::string text;
+    for (int i = 0; i < 100; ++i) text += "line\n";
+    WithVim v(text);
+    v.e.h.type("gg");
+    v.e.h.press(Key::D, CTRL);
+    v.e.h.step();
+    const float rows = v.e.view.scroll.y / CODE_LINE;
+    REQUIRE(rows > 0.0f);
+    REQUIRE(static_cast<float>(v.e.caret().line) == rows);
+    v.e.h.type("50G");
+    v.e.h.step();
+    v.e.h.type("zt");
+    v.e.h.step();
+    REQUIRE(v.e.view.scroll.y == 49.0f * CODE_LINE);
+    REQUIRE(v.e.caret().line == 49);
+}
+
 TEST_CASE("With Vim on, a dot makes an insert again with the completion taken in it", "[code_view][vim][completion]") {
     Completing c;
     c.e.view.vim.emplace();
