@@ -192,6 +192,16 @@ private:
     // view in front, as Vim runs it: what would lose unsaved changes is
     // refused, said where Vim says it, unless the command has a !.
     void run_ex(const vim::ExCommand& command);
+    // Answers what the view in front's Vim asked of the program: runs its
+    // `:` command, or keeps or goes to a file's mark.
+    void answer_vim(const vim::Asked& asked);
+    // A file's mark set in the file in front: taken from every other file,
+    // open or let go, as a file's mark is in one file at a time.
+    void keep_file_mark(char name);
+    // A file's mark the file in front hasn't: the file that has it opened
+    // in front, its caret at the mark or on its line's first text, as
+    // `wanted` says. Vim's E20 is said when no file has it.
+    void go_to_file_mark(const vim::MarkWanted& wanted);
     // The keyboard into group `index`'s tab in front.
     void focus_group(std::size_t index);
     // Closes `group`'s tab `index`, and lets its file go when no tab
@@ -287,9 +297,16 @@ private:
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;
-    // Vim's `:` commands the view in front handed up, run once the views
-    // are drawn.
-    std::vector<vim::ExCommand> vim_commands_;
+    // What the view in front's Vim asked of the program, answered once the
+    // views are drawn.
+    std::vector<vim::Asked> vim_asked_;
+    // The files' marks (`A`-`Z`) of files let go, each with its file, until
+    // the file opens again.
+    struct FileMark {
+        std::filesystem::path path;
+        Position at;
+    };
+    std::map<char, FileMark> closed_marks_;
     // The folders listed after Vim's `:e`, each with or without its hidden
     // entries, until the disk is next looked at; and how every view's Vim
     // asks for them.

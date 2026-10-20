@@ -27,7 +27,8 @@ struct ExAddress {
     Kind kind{Kind::Current};
     /// Kind::Number: the line counted from 1, 0 for above the first.
     std::size_t number{0};
-    /// Kind::Mark: `<`, `>` or a letter.
+    /// Kind::Mark: the character after the `'`, a mark's name when it is a
+    /// letter, `'`, `` ` ``, `[`, `]`, `<` or `>`.
     char mark{0};
     /// Kind::Forward and Kind::Backward: the pattern, empty for the last.
     std::string pattern;

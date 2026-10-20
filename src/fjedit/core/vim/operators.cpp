@@ -201,6 +201,30 @@ void change_ranges(std::span<const std::optional<Range>> ranges, CommandContext&
 }
 
 void yank_ranges(std::span<const std::optional<Range>> ranges, CommandContext& c) {
+    // `[` and `]` on the first and the last character yanked; for whole
+    // lines, the first line's start and the last line's end.
+    const Buffer& buffer = c.document.buffer();
+    std::optional<Position> first;
+    std::optional<Position> last;
+    for (const std::optional<Range>& range : ranges) {
+        if (!range) continue;
+        Position from = range->span.from;
+        Position to = range->span.to;
+        if (range->linewise) {
+            from.byte = 0;
+            to.byte = buffer.line(to.line).size();
+        } else if (to.byte > 0) {
+            to = left_in_line(buffer, to, 1);
+        } else if (to.line > from.line) {
+            to = {.line = to.line - 1, .byte = buffer.line(to.line - 1).size()};
+        }
+        first = first ? std::min(*first, from) : from;
+        last = last ? std::max(*last, to) : to;
+    }
+    if (first && last) {
+        c.document.set_mark('[', *first);
+        c.document.set_mark(']', *last);
+    }
     const std::vector<Selection> was = selections_of(c);
     commit(c, Edit{}, [&](const Edit&) {
         std::vector<Selection> after;

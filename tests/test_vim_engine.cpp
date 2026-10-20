@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 using namespace fjedit;
@@ -22,8 +23,10 @@ struct Vim {
     vim::Engine engine;
     // The rows a view ten rows high has in sight.
     InView sight{.top = 0, .rows = 10, .around = 0};
-    // The `:` commands handed on for the program, in order.
+    // The `:` commands handed on for the program, in order, and the files'
+    // marks set and gone to.
     std::vector<vim::ExCommand> handed;
+    std::vector<vim::Asked> marks;
 
     explicit Vim(std::string_view marked) : view(marked) {}
 
@@ -39,7 +42,13 @@ struct Vim {
         REQUIRE(chords);
         for (const Chord& key : *chords) {
             CommandContext acting = context();
-            if (std::optional<vim::ExCommand> command = engine.take(key, acting)) handed.push_back(std::move(*command));
+            std::optional<vim::Asked> asked = engine.take(key, acting);
+            if (!asked) continue;
+            if (const auto* command = std::get_if<vim::ExCommand>(&*asked)) {
+                handed.push_back(*command);
+            } else {
+                marks.push_back(std::move(*asked));
+            }
         }
     }
 
@@ -1581,9 +1590,10 @@ TEST_CASE("The engine says the mode a map's keys are typed in, and runs a map's 
     CHECK_FALSE(v.engine.run_line("3", acting));
     CHECK(v.shown() == "a\nb\n|c");
     CHECK(v.engine.mode() == vim::Mode::Normal);
-    const std::optional<vim::ExCommand> write = v.engine.run_line("w", acting);
+    const std::optional<vim::Asked> write = v.engine.run_line("w", acting);
     REQUIRE(write);
-    CHECK(write->name == "write");
+    REQUIRE(std::holds_alternative<vim::ExCommand>(*write));
+    CHECK(std::get<vim::ExCommand>(*write).name == "write");
     // timeoutlen, in milliseconds.
     v.keys(":set tm=300<CR>");
     CHECK(v.engine.settings().timeout_ms == 300);
@@ -1747,4 +1757,133 @@ TEST_CASE("The : line says what is wrong as Vim does, keeps what was typed, and 
     CHECK(v.engine.shown_search() != nullptr);
     v.keys("noh<CR>");
     CHECK(v.engine.shown_search() == nullptr);
+}
+
+TEST_CASE("m sets a mark: ' goes to its line's first text, ` to the very place, and edits carry it", "[vim][marks]") {
+    Vim v("one\n  t|wo\nthree");
+    v.keys("maG`a");
+    CHECK(v.shown() == "one\n  t|wo\nthree");
+    v.keys("G'a");
+    CHECK(v.shown() == "one\n  |two\nthree");
+    // A line put in above, and text before it on its line, carry it.
+    v.keys("ggOzero<Esc>G`a");
+    CHECK(v.shown() == "zero\none\n  t|wo\nthree");
+    v.keys("Ixy<Esc>G`a");
+    CHECK(v.shown() == "zero\none\n  xyt|wo\nthree");
+    CHECK(v.view.document.mark('a') == Position{2, 5});
+    v.keys("'b");
+    CHECK(v.engine.message().text == "E20: Mark not set");
+    v.keys("'!");
+    CHECK(v.engine.message().text == "E78: Unknown mark");
+    v.keys("m!");
+    CHECK(v.engine.message().text == "E191: Argument must be a letter or forward/backward quote");
+    // m waits for the mark's name, which no binding may take.
+    v.keys("m");
+    CHECK(v.engine.wants_character());
+    v.keys("<Esc>");
+    CHECK_FALSE(v.engine.wants_character());
+}
+
+TEST_CASE("An operator takes what a mark's motion passes over: whole lines after ', up to the place after `",
+          "[vim][marks]") {
+    Vim lines("|a\nb\nc\nd");
+    lines.keys("jjmaggd'a");
+    CHECK(lines.shown() == "|d");
+    Vim place("ab|cdef");
+    place.keys("ma0d`a");
+    CHECK(place.shown() == "|cdef");
+}
+
+TEST_CASE("'' and `` go back to where the latest jump went from; m' sets it, and edits carry it", "[vim][marks]") {
+    Vim v("a\nb|b\nc\nd");
+    v.keys("G``");
+    CHECK(v.shown() == "a\nb|b\nc\nd");
+    v.keys("``");
+    CHECK(v.shown() == "a\nbb\nc\n|d");
+    v.keys("''");
+    CHECK(v.shown() == "a\n|bb\nc\nd");
+    // A move that isn't a jump leaves it.
+    v.keys("j''");
+    CHECK(v.shown() == "a\nbb\nc\n|d");
+    // A line put in above carries it.
+    v.keys("ggOz<Esc>''");
+    CHECK(v.shown() == "z\na\nbb\nc\n|d");
+
+    // A search, and a line gone to on the : line, are jumps.
+    Vim s("|a\nb\nc");
+    s.keys("/c<CR>''");
+    CHECK(s.shown() == "|a\nb\nc");
+    s.keys(":3<CR>''");
+    CHECK(s.shown() == "|a\nb\nc");
+    s.keys("jm'j''");
+    CHECK(s.shown() == "a\n|b\nc");
+    Vim none("|a");
+    none.keys("''");
+    CHECK(none.engine.message().text == "E20: Mark not set");
+}
+
+TEST_CASE("Marks on the last change or yank and on the last visual selection, carried as the text changes",
+          "[vim][marks]") {
+    Vim v("|one\ntwo\nthree");
+    v.keys("yjG`[");
+    CHECK(v.shown() == "|one\ntwo\nthree");
+    v.keys("`]");
+    CHECK(v.shown() == "one\ntw|o\nthree");
+    // Lines put below begin on the line after.
+    v.keys("ggyyjp");
+    REQUIRE(v.view.buffer().text() == "one\ntwo\none\nthree");
+    v.keys("gg`[");
+    CHECK(v.view.selections.primary().caret == Position{2, 0});
+    v.keys("gg`]");
+    CHECK(v.view.selections.primary().caret == Position{2, 2});
+    // An insert, all that was typed in it; a delete, where the text was.
+    Vim typed("ab|c");
+    typed.keys("iXY<Esc>0`[");
+    CHECK(typed.shown() == "ab|XYc");
+    typed.keys("`]");
+    CHECK(typed.shown() == "abX|Yc");
+    Vim gone("a|bcd");
+    gone.keys("x$`[");
+    CHECK(gone.shown() == "a|cd");
+
+    Vim s("ab|cd\nefgh\nij");
+    s.keys("vjl<Esc>gg`<");
+    CHECK(s.shown() == "ab|cd\nefgh\nij");
+    s.keys("`>");
+    CHECK(s.shown() == "abcd\nefg|h\nij");
+    // Whole lines in visual line mode.
+    s.keys("ggVj<Esc>G`<");
+    CHECK(s.shown() == "|abcd\nefgh\nij");
+    s.keys("`>");
+    CHECK(s.shown() == "abcd\nefg|h\nij");
+    // '<,'> names the lines selected, wherever an edit has moved them.
+    Vim m("a\n|b\nc\nd");
+    m.keys("Vj<Esc>ggOz<Esc>:'<,'>d<CR>");
+    CHECK(m.view.buffer().text() == "z\na\nd");
+    Vim r("|1\n2\n3\n4\n5");
+    r.keys("jmajjmbgg:'a,'bd<CR>");
+    CHECK(r.view.buffer().text() == "1\n5");
+}
+
+TEST_CASE("A file's mark is handed up when set, gone to when this file has it, and asked for when not",
+          "[vim][marks]") {
+    Vim v("|a\nb");
+    v.keys("jmA");
+    REQUIRE(v.marks.size() == 1);
+    const auto* set = std::get_if<vim::MarkSet>(&v.marks[0]);
+    REQUIRE(set != nullptr);
+    CHECK(set->name == 'A');
+    v.keys("gg'A");
+    CHECK(v.shown() == "a\n|b");
+    CHECK(v.marks.size() == 1);
+    v.keys("`B");
+    REQUIRE(v.marks.size() == 2);
+    const auto* wanted = std::get_if<vim::MarkWanted>(&v.marks[1]);
+    REQUIRE(wanted != nullptr);
+    CHECK(wanted->name == 'B');
+    CHECK(wanted->exact);
+    // After an operator it goes nowhere: it is in another file.
+    v.keys("d'B");
+    CHECK(v.marks.size() == 2);
+    CHECK(v.view.buffer().text() == "a\nb");
 }

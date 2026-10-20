@@ -4,6 +4,7 @@
 #include "fjedit/core/language.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/text_file.hpp"
+#include "fjedit/core/vim/motions.hpp"
 #include "fjedit/core/vim/notation.hpp"
 #include "fjedit/lsp/client.hpp"
 #include "fjedit/program/icons.hpp"
@@ -34,6 +35,7 @@
 #include <iterator>
 #include <tuple>
 #include <utility>
+#include <variant>
 
 namespace fjedit {
 
@@ -288,6 +290,12 @@ std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path
 }
 
 void Program::let_go(const std::filesystem::path& path) {
+    // Its files' marks wait for it to open again.
+    if (const Document* document = workspace_.find(path)) {
+        for (const auto& [name, at] : document->marks()) {
+            if (name >= 'A' && name <= 'Z') closed_marks_[name] = {.path = workspace_.name(path), .at = at};
+        }
+    }
     services_.close(path);
     workspace_.close(path);
 }
@@ -398,6 +406,15 @@ void Program::open(const std::filesystem::path& path) {
     note_.clear();
     Group& group = groups_[active_];
     const std::filesystem::path named = workspace_.name(path);
+    // The files' marks it had when it was let go are its again.
+    for (auto kept = closed_marks_.begin(); kept != closed_marks_.end();) {
+        if (kept->second.path != named) {
+            ++kept;
+            continue;
+        }
+        (*document)->set_mark(kept->first, kept->second.at);
+        kept = closed_marks_.erase(kept);
+    }
     auto found = std::ranges::find(group.tabs, named, &Tab::path);
     if (found == group.tabs.end()) {
         group.tabs.push_back({.path = named, .view = make_view(named, **document)});
@@ -598,6 +615,53 @@ void Program::run_ex(const vim::ExCommand& command) {
     }
 }
 
+void Program::answer_vim(const vim::Asked& asked) {
+    if (const auto* command = std::get_if<vim::ExCommand>(&asked)) return run_ex(*command);
+    if (const auto* set = std::get_if<vim::MarkSet>(&asked)) return keep_file_mark(set->name);
+    go_to_file_mark(std::get<vim::MarkWanted>(asked));
+}
+
+void Program::keep_file_mark(char name) {
+    const Tab* tab = front_tab();
+    if (tab == nullptr) return;
+    const Document* own = workspace_.find(tab->path);
+    closed_marks_.erase(name);
+    for (const std::filesystem::path& path : workspace_.files()) {
+        Document* document = workspace_.find(path);
+        if (document != nullptr && document != own) document->forget_mark(name);
+    }
+}
+
+void Program::go_to_file_mark(const vim::MarkWanted& wanted) {
+    // The file open that has it, or the one let go with it.
+    std::optional<std::filesystem::path> holder;
+    for (const std::filesystem::path& path : workspace_.files()) {
+        const Document* document = workspace_.find(path);
+        if (document != nullptr && document->mark(wanted.name)) {
+            holder = path;
+            break;
+        }
+    }
+    if (const auto kept = closed_marks_.find(wanted.name); !holder && kept != closed_marks_.end()) {
+        holder = kept->second.path;
+    }
+    if (!holder) {
+        if (Tab* tab = front_tab(); tab != nullptr && tab->view->vim) {
+            tab->view->vim->say({.text = "E20: Mark not set", .error = true});
+        }
+        return;
+    }
+    open(*holder);
+    Tab* tab = front_tab();
+    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    const std::optional<Position> at = document != nullptr ? document->mark(wanted.name) : std::nullopt;
+    // Not opened: what went wrong is noted.
+    if (!at) return;
+    const Position to = wanted.exact ? *at : vim::first_non_blank(document->buffer(), at->line);
+    tab->view->selections = Selections(Selection::at(to));
+    tab->view->reveal = true;
+}
+
 void Program::focus_group(std::size_t index) {
     active_ = index;
     if (Tab* tab = front_tab()) tab->view->focus = true;
@@ -736,7 +800,7 @@ void Program::draw() {
                                                static_cast<float>(preferences_.text_size), preferences_.vim));
     }
     if (const std::optional<Location> going = std::exchange(going_, std::nullopt)) go_to(going->path, going->span);
-    for (const vim::ExCommand& command : std::exchange(vim_commands_, {})) run_ex(command);
+    for (const vim::Asked& asked : std::exchange(vim_asked_, {})) answer_vim(asked);
     ui::end_host_window();
     draw_status();
     if (preferences_window_.draw(preferences_, clangd_shown(), fjls_shown(), keys_path_).open_keys) open_keys();
@@ -889,7 +953,7 @@ void Program::draw_group(Group& group, std::size_t index) {
             const CodeViewResult result = code_view("Code", *document, *tab.view, keymap_, {.min = at, .max = at + room});
             if (result.focused) active_ = index;
             if (result.go) going_ = result.go;
-            for (const vim::ExCommand& command : result.program_commands) vim_commands_.push_back(command);
+            for (const vim::Asked& asked : result.asked) vim_asked_.push_back(asked);
             if (result.zoom != 0) {
                 // Ctrl and the wheel size every view's text, as the
                 // preferences do, and the size is kept with them.

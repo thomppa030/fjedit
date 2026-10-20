@@ -133,7 +133,8 @@ Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) 
     }
     const bool prefix = key.text == "g" || key.text == "z";
     const bool takes_character = key.text == "f" || key.text == "t" || key.text == "F" || key.text == "T" ||
-                                 (key.text == "r" && command.op.empty());
+                                 key.text == "'" || key.text == "`" ||
+                                 ((key.text == "r" || key.text == "m") && command.op.empty());
     if (!prefix && !takes_character) {
         command.name = notation(key);
         return ends_at(keys, i + 1);
@@ -425,10 +426,56 @@ std::optional<Span> search_from(const Buffer& buffer, const Pattern& pattern, st
     return *found;
 }
 
+// Whether `name` is a file's mark, `A`-`Z`.
+bool file_mark(char name) {
+    return name >= 'A' && name <= 'Z';
+}
+
+// Whether `m` sets the mark `name` in the text: a letter, or one of those
+// Vim keeps itself, [ ] < >.
+bool settable_mark(char name) {
+    return (name >= 'a' && name <= 'z') || file_mark(name) || name == '[' || name == ']' || name == '<' || name == '>';
+}
+
+// Where `kept` is in `document` now, caught up with the edits made since;
+// kept inside the text when its note of edits no longer reaches back.
+Position caught_up(const Document& document, const detail::Kept& kept) {
+    Position at = kept.at;
+    if (const std::optional<std::span<const Edit>> edits = document.edits_since(kept.version)) {
+        for (const Edit& edit : *edits) at = map(edit, at, Bias::Before);
+    }
+    return document.buffer().clamp(at);
+}
+
+// Where the mark `name` is in the text: a letter's, one Vim keeps itself,
+// or for ' and ` the place the latest jump went from, `context`. An error
+// worded as Vim's when it isn't set, a file's mark in another file among
+// them, or no mark has that name.
+ftk::Result<Position> mark_at(const CommandContext& c, std::string_view name, const std::optional<detail::Kept>& context) {
+    const char mark = name.size() == 1 ? name[0] : '\0';
+    if (mark == '\'' || mark == '`') {
+        if (!context) return ftk::make_error("E20: Mark not set");
+        return caught_up(c.document, *context);
+    }
+    if (!settable_mark(mark)) return ftk::make_error("E78: Unknown mark");
+    const std::optional<Position> at = c.document.mark(mark);
+    if (!at) return ftk::make_error("E20: Mark not set");
+    return *at;
+}
+
+// Whether the motion `name` is a jump, as Vim has them: where it went from
+// is kept for '' to go back to.
+bool jumps(std::string_view name) {
+    static constexpr std::string_view JUMPS[] = {"G", "gg", "H", "M", "L", "{",  "}",  "%",
+                                                 "n", "N",  "*", "#", "g*", "g#", "'", "`"};
+    return std::ranges::contains(JUMPS, name);
+}
+
 // Where the motion `command` takes `selection`'s caret; nothing for a
 // command that isn't a motion, or a motion that can't go. f, t, F and T
 // keep what they look for in `remembered`, which ; and , look for again;
-// n, N, * and # go on with its search, * and # making it.
+// n, N, * and # go on with its search, * and # making it; ' and ` go to a
+// mark, '' and `` to where it keeps the latest jump went from.
 std::optional<Went> motion(const CommandContext& c, const Command& command, const Selection& selection,
                            detail::Remembered& remembered) {
     const Buffer& buffer = c.document.buffer();
@@ -488,6 +535,16 @@ std::optional<Went> motion(const CommandContext& c, const Command& command, cons
         const std::optional<Position> paired = paired_bracket(buffer, c.document.syntax(), at);
         if (!paired) return std::nullopt;
         return went(*paired, MotionKind::Inclusive);
+    }
+    // A mark: ' to its line's first text, ` to the very place.
+    if (name == "'" || name == "`") {
+        const ftk::Result<Position> marked = mark_at(c, command.argument, remembered.context);
+        if (!marked) {
+            remembered.message = {.text = marked.error(), .error = true};
+            return std::nullopt;
+        }
+        if (name == "'") return to_line(buffer, marked->line);
+        return went(*marked);
     }
 
     // The search: n and N go on with it; * and # look for the word at the
@@ -845,13 +902,18 @@ std::optional<std::vector<Chord>> keys_for(std::string_view name, Mode mode) {
     return std::nullopt;
 }
 
-std::optional<ExCommand> Engine::take(const Chord& key, CommandContext& context) {
+std::optional<Asked> Engine::take(const Chord& key, CommandContext& context) {
     // A key of Ctrl-O's one command, which may go through visual mode and
     // the command line.
     const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_) || mode_ == Mode::Command);
     remembered_.message = {};
     remembered_.settings = settings_->pattern;
+    // A change begins with a key outside insert mode, and goes on through
+    // the insert it begins.
+    const uint64_t version = context.document.version();
+    if (!typing(mode_)) change_began_ = version;
     dispatch(key, context);
+    if (!quiet_ && context.document.version() != version) mark_changed(change_began_, context);
     // A change is whole once no insert goes on with it.
     if (making_ && !typing(mode_)) last_change_ = std::exchange(making_, std::nullopt);
     if (for_one_command && typing(mode_)) {
@@ -860,7 +922,7 @@ std::optional<ExCommand> Engine::take(const Chord& key, CommandContext& context)
     } else if (for_one_command && mode_ == Mode::Normal && keys_.empty()) {
         end_one_command(context);
     }
-    return std::exchange(handed_, std::nullopt);
+    return std::exchange(asked_, std::nullopt);
 }
 
 void Engine::dispatch(const Chord& key, CommandContext& context) {
@@ -1096,17 +1158,9 @@ ftk::Result<std::size_t> Engine::line_at(const ExAddress& address, std::size_t c
         case ExAddress::Kind::Current: line = static_cast<long>(current) + 1; break;
         case ExAddress::Kind::Last: line = count; break;
         case ExAddress::Kind::Mark: {
-            // '< and '> are the last visual selection's first and last lines.
-            if ((address.mark != '<' && address.mark != '>') || last_visual_.empty()) {
-                return ftk::make_error("E20: Mark not set");
-            }
-            std::size_t first = buffer.line_count();
-            std::size_t last = 0;
-            for (const VisualEnds& ends : last_visual_) {
-                first = std::min({first, ends.anchor.line, ends.caret.line});
-                last = std::max({last, ends.anchor.line, ends.caret.line});
-            }
-            line = static_cast<long>(address.mark == '<' ? first : last) + 1;
+            const ftk::Result<Position> marked = mark_at(c, std::string_view(&address.mark, 1), remembered_.context);
+            if (!marked) return std::unexpected(marked.error());
+            line = static_cast<long>(marked->line) + 1;
             break;
         }
         case ExAddress::Kind::Forward:
@@ -1207,7 +1261,8 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
     if (name == "normal") return run_normal(command, first, last, c);
     if (name == "sort") return run_sort(command, first, last, c);
     if (name.empty()) {
-        // A range alone goes to its last line.
+        // A range alone goes to its last line, a jump.
+        remembered_.context = detail::Kept{.at = c.selections.primary().caret, .version = c.document.version()};
         c.selections = Selections(Selection::at(first_non_blank(c.document.buffer(), last)));
         return settle(c);
     }
@@ -1267,7 +1322,50 @@ void Engine::hand_on(ExCommand command) {
     }
     // None for a window fjedit doesn't have: nothing, as when Vim has none
     // there.
-    handed_ = std::move(*read);
+    if (*read) asked_ = std::move(**read);
+}
+
+void Engine::set_mark(std::string_view name, Position at, CommandContext& c) {
+    const char mark = name.size() == 1 ? name[0] : '\0';
+    if (mark == '\'' || mark == '`') {
+        remembered_.context = detail::Kept{.at = at, .version = c.document.version()};
+        return;
+    }
+    if (!settable_mark(mark)) {
+        remembered_.message = {.text = "E191: Argument must be a letter or forward/backward quote", .error = true};
+        return;
+    }
+    c.document.set_mark(mark, at);
+    if (file_mark(mark)) asked_ = MarkSet{.name = mark};
+}
+
+void Engine::mark_changed(uint64_t version, CommandContext& c) {
+    const std::optional<std::span<const Edit>> edits = c.document.edits_since(version);
+    if (!edits) return;
+    // What each edit put in, with what those before it put in carried
+    // through it.
+    std::optional<Span> changed;
+    for (const Edit& edit : *edits) {
+        if (changed) {
+            changed = Span{.from = map(edit, changed->from, Bias::Before), .to = map(edit, changed->to, Bias::After)};
+        }
+        for (const Span& span : spans_after(edit)) {
+            changed = changed ? Span{.from = std::min(changed->from, span.from), .to = std::max(changed->to, span.to)}
+                              : span;
+        }
+    }
+    if (!changed) return;
+    // Lines put in after a line's end begin on the next line, as `p` puts
+    // them. `]` is on the last character put in, or where text was taken
+    // out.
+    const Buffer& buffer = c.document.buffer();
+    Position first = changed->from;
+    if (first.line < changed->to.line && first.byte == buffer.line(first.line).size()) {
+        first = {.line = first.line + 1, .byte = 0};
+    }
+    const Position last = changed->empty() ? changed->from : std::max(before(buffer, changed->to), first);
+    c.document.set_mark('[', first);
+    c.document.set_mark(']', last);
 }
 
 std::optional<NameChoices> Engine::name_choices() const {
@@ -2062,8 +2160,7 @@ void Engine::settle(CommandContext& context, bool by_mouse) {
         if (context.selections == shown_) return;
         // Carets alone end visual mode; selections become its own.
         if (!selecting) {
-            last_visual_ = visual_;
-            last_visual_mode_ = mode_;
+            keep_visual(context);
             mode_ = Mode::Normal;
         } else {
             visual_ = ends_of(buffer, context.selections);
@@ -2102,10 +2199,12 @@ MapModes Engine::map_mode() const {
     return operator_waits_ ? MapModes::OperatorPending : MapModes::Normal;
 }
 
-std::optional<ExCommand> Engine::run_line(std::string_view line, CommandContext& context) {
+std::optional<Asked> Engine::run_line(std::string_view line, CommandContext& context) {
     remembered_.settings = settings_->pattern;
+    const uint64_t version = context.document.version();
     run_ex(line, context);
-    return std::exchange(handed_, std::nullopt);
+    if (context.document.version() != version) mark_changed(version, context);
+    return std::exchange(asked_, std::nullopt);
 }
 
 std::vector<Position> Engine::cursors() const {
@@ -2128,8 +2227,8 @@ std::string Engine::pending() const {
 bool Engine::wants_character() const {
     if (register_next_) return true;
     if (mode_ == Mode::Insert || mode_ == Mode::Replace || keys_.empty()) return false;
-    const std::string& last = keys_.back().text;
-    if (last != "f" && last != "t" && last != "F" && last != "T" && last != "r" && last != "\"") return false;
+    static constexpr std::string_view TAKING[] = {"f", "t", "F", "T", "r", "m", "'", "`", "\""};
+    if (!std::ranges::contains(TAKING, std::string_view(keys_.back().text))) return false;
     Command command;
     return (visual(mode_) ? parse_visual(keys_, command) : parse(keys_, command)) == Parsed::Waiting;
 }
@@ -2156,7 +2255,10 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     // Ctrl-W's window commands, the program's to run; after an operator,
     // nothing.
     if (command.name.starts_with("<C-w>")) {
-        if (command.op.empty()) handed_ = window_command(std::string_view(command.name).substr(5));
+        if (!command.op.empty()) return;
+        if (std::optional<ExCommand> window = window_command(std::string_view(command.name).substr(5))) {
+            asked_ = std::move(*window);
+        }
         return;
     }
     // A change noted for `.`, as its keys spell it.
@@ -2311,6 +2413,16 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         return;
     }
 
+    // m sets a mark at the primary caret.
+    if (name == "m") return set_mark(command.argument, c.selections.primary().caret, c);
+    // A file's mark in another file: the program goes there.
+    const bool to_mark = name == "'" || name == "`";
+    if (to_mark && command.argument.size() == 1 && file_mark(command.argument[0]) && !c.document.mark(command.argument[0])) {
+        asked_ = MarkWanted{.name = command.argument[0], .exact = name == "`"};
+        return;
+    }
+
+    const Position from = c.selections.primary().caret;
     std::vector<Selection> moved;
     bool any = false;
     for (const Selection& selection : c.selections.all()) {
@@ -2322,6 +2434,8 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         }
     }
     if (!any) return;
+    // A jump keeps where it went from, for '' to go back to.
+    if (jumps(name)) remembered_.context = detail::Kept{.at = from, .version = c.document.version()};
     c.selections.set(std::move(moved), c.selections.primary_index());
     c.document.history().close();
     settle(c);
@@ -2552,9 +2666,29 @@ void Engine::show_visual(CommandContext& context) {
     shown_ = context.selections;
 }
 
-void Engine::leave_visual(CommandContext& context) {
+void Engine::keep_visual(CommandContext& context) {
     last_visual_ = visual_;
     last_visual_mode_ = mode_;
+    if (visual_.empty()) return;
+    const Buffer& buffer = context.document.buffer();
+    Position first = visual_.front().anchor;
+    Position last = first;
+    for (const VisualEnds& ends : visual_) {
+        first = std::min({first, ends.anchor, ends.caret});
+        last = std::max({last, ends.anchor, ends.caret});
+    }
+    first = buffer.clamp(first);
+    last = buffer.clamp(last);
+    if (mode_ == Mode::VisualLine) {
+        first.byte = 0;
+        last.byte = buffer.line(last.line).size();
+    }
+    context.document.set_mark('<', first);
+    context.document.set_mark('>', last);
+}
+
+void Engine::leave_visual(CommandContext& context) {
+    keep_visual(context);
     std::vector<Selection> carets;
     for (const VisualEnds& ends : visual_) {
         carets.push_back({.anchor = ends.caret, .caret = ends.caret, .goal = ends.goal});
@@ -2588,8 +2722,10 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
     }
     // Ctrl-W's window commands, out of visual mode as `:` goes.
     if (name.starts_with("<C-w>")) {
-        handed_ = window_command(name.substr(5));
-        if (handed_) leave_visual(c);
+        std::optional<ExCommand> window = window_command(name.substr(5));
+        if (!window) return;
+        asked_ = std::move(*window);
+        leave_visual(c);
         return;
     }
     if (name == "<C-l>") {
@@ -2624,6 +2760,11 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
         }
         return show_visual(c);
     }
+    // m sets a mark at the primary selection's caret end.
+    if (name == "m") {
+        if (visual_.empty()) return;
+        return set_mark(command.argument, visual_[std::min(c.selections.primary_index(), visual_.size() - 1)].caret, c);
+    }
     // A change is noted for `.` with how much the selection takes.
     std::optional<Repeat> change;
     if (!replaying_ && name != "y" && name != "Y") {
@@ -2646,7 +2787,10 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
         return show_visual(c);
     }
 
-    // A motion moves each selection's caret end.
+    // A motion moves each selection's caret end; a jump keeps where the
+    // primary's went from.
+    const std::optional<Position> from =
+        visual_.empty() ? std::nullopt : std::optional(visual_[std::min(c.selections.primary_index(), visual_.size() - 1)].caret);
     bool any = false;
     for (VisualEnds& ends : visual_) {
         const Selection at{.anchor = ends.caret, .caret = ends.caret, .goal = ends.goal};
@@ -2656,7 +2800,9 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
             any = true;
         }
     }
-    if (any) show_visual(c);
+    if (!any) return;
+    if (jumps(name) && from) remembered_.context = detail::Kept{.at = *from, .version = c.document.version()};
+    show_visual(c);
 }
 
 bool Engine::act_on_visual(std::string_view name, std::string_view argument, std::size_t count, char reg,
@@ -2687,8 +2833,7 @@ bool Engine::act_on_visual(std::string_view name, std::string_view argument, std
     };
     // Out of visual mode for a change, its selection kept for gv.
     const auto leave_for_change = [&] {
-        last_visual_ = visual_;
-        last_visual_mode_ = mode_;
+        keep_visual(c);
         mode_ = Mode::Normal;
         c.document.history().close();
     };
@@ -2779,8 +2924,7 @@ bool Engine::act_on_visual(std::string_view name, std::string_view argument, std
             carets.push_back(Selection::at(at));
         }
         const std::size_t primary = c.selections.primary_index();
-        last_visual_ = visual_;
-        last_visual_mode_ = mode_;
+        keep_visual(c);
         mode_ = Mode::Insert;
         block_insert_ = block;
         c.selections.set(std::move(carets), primary);

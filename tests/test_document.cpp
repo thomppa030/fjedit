@@ -84,3 +84,24 @@ TEST_CASE("A document's indent is the one its text shows", "[document]") {
     const Document plain("a\nb", language_for("x.cpp"), {.tabs = false, .width = 3});
     REQUIRE(plain.indent().width == 3);
 }
+
+TEST_CASE("A document's marks move with its edits as a caret does, and are kept inside its text", "[document][vim]") {
+    Document document("one\ntwo", language_for("x.txt"));
+    document.set_mark('a', {1, 1});
+    document.set_mark('b', {9, 9});
+    REQUIRE(document.mark('b') == Position{1, 3});
+    REQUIRE_FALSE(document.mark('c'));
+
+    (void)document.apply(insert({0, 0}, "zero\n"));
+    REQUIRE(document.mark('a') == Position{2, 1});
+    (void)document.apply(insert({2, 0}, "xy"));
+    REQUIRE(document.mark('a') == Position{2, 3});
+    // Text put in at a mark goes after it.
+    (void)document.apply(insert({2, 3}, "!"));
+    REQUIRE(document.mark('a') == Position{2, 3});
+    // Its text taken out, it stays where the text was.
+    (void)document.apply({{{.span = {{1, 2}, {2, 4}}, .text = ""}}});
+    REQUIRE(document.mark('a') == Position{1, 2});
+    document.forget_mark('a');
+    REQUIRE_FALSE(document.mark('a'));
+}

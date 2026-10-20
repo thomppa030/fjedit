@@ -19,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 using namespace fjedit;
@@ -46,7 +47,9 @@ struct Editor {
             const CodeViewResult result = code_view("Code", document, view, keys, {.min = {0.0f, 0.0f}, .max = {800.0f, 600.0f}});
             if (result.go) went = result.go;
             if (result.rename) renamed = result.rename;
-            for (const vim::ExCommand& command : result.program_commands) handed.push_back(command);
+            for (const vim::Asked& asked : result.asked) {
+                if (const auto* command = std::get_if<vim::ExCommand>(&asked)) handed.push_back(*command);
+            }
             zoomed += result.zoom;
         });
         h.step(2);

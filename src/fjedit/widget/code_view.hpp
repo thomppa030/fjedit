@@ -236,10 +236,10 @@ struct CodeViewResult {
     /// A rename typed in place and ended with Enter, its typing taken back:
     /// for the one drawing the view to ask the service to make everywhere.
     std::optional<Rename> rename{};
-    /// With Vim on, the `:` commands that are the program's ended in it
-    /// (vim::Engine::take()), in the order they were typed: for the one
-    /// drawing the view to run.
-    std::vector<vim::ExCommand> program_commands{};
+    /// With Vim on, what its keys asked of the program (vim::Engine::take()),
+    /// in the order they were typed: `:` commands that are the program's, and
+    /// a file's marks set and gone to. For the one drawing the view to answer.
+    std::vector<vim::Asked> asked{};
     /// Steps the text is asked to grow by, Ctrl and the wheel over the view,
     /// a notch a step; fewer than none to shrink. For the one drawing the
     /// view, which chooses its text size.

@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -84,6 +85,14 @@ public:
     /// for after an edit.
     [[nodiscard]] const std::vector<FoldRange>& folds() const;
 
+    /// Vim's marks: named places in its text (`a`-`z`, `A`-`Z`, and those
+    /// Vim keeps itself, `[ ] < >`), which every view of it shares and which
+    /// move with its edits as a caret does.
+    void set_mark(char name, Position at) { marks_[name] = buffer_.clamp(at); }
+    [[nodiscard]] std::optional<Position> mark(char name) const;
+    void forget_mark(char name) { marks_.erase(name); }
+    [[nodiscard]] const std::map<char, Position>& marks() const { return marks_; }
+
     /// How many of the latest edits the document keeps a note of, at the
     /// least: the note is trimmed in batches, so it may hold up to twice as
     /// many.
@@ -103,6 +112,8 @@ private:
 
     mutable std::vector<FoldRange> folds_;
     mutable std::optional<uint64_t> folds_version_;
+
+    std::map<char, Position> marks_;
 };
 
 } // namespace fjedit

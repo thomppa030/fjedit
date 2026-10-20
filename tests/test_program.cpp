@@ -1203,3 +1203,48 @@ TEST_CASE("Every command the program names it runs", "[program]") {
     Running run({{"a.txt", ""}});
     for (const Program::Command& command : Program::commands()) CHECK(run.program->run(command.name));
 }
+
+TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in one file at a time", "[program][vim]") {
+    Running run({{"a.txt", "one\n  two\n"}, {"b.txt", "b\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "b.txt");
+    run.h.type("jlllmA");
+    run.h.step(2);
+    run.press_row("b.txt");
+    run.h.step();
+    run.h.type("`A");
+    run.h.step(2);
+    REQUIRE(run.program->front() == a);
+    // At the very place: x takes the w.
+    run.h.type("x");
+    run.h.step(2);
+    CHECK(run.program->workspace().find(a)->buffer().text() == "one\n  to\n");
+    run.h.type("u");
+    run.h.step(2);
+    // Closed, the file keeps it; ' opens the file again on the first text
+    // of the mark's line.
+    ex(run, "q");
+    REQUIRE(run.program->workspace().find(a) == nullptr);
+    run.h.type("'A");
+    run.h.step(2);
+    REQUIRE(run.program->front() == a);
+    run.h.type("x");
+    run.h.step(2);
+    CHECK(run.program->workspace().find(a)->buffer().text() == "one\n  wo\n");
+    run.h.type("u");
+    run.h.step(2);
+    // Set in b.txt, it leaves a.txt.
+    run.press_row("b.txt");
+    run.h.step();
+    run.h.type("mA");
+    run.h.step(2);
+    CHECK_FALSE(run.program->workspace().find(a)->mark('A'));
+    CHECK(run.program->workspace().find(b)->mark('A'));
+    // One no file has is said.
+    run.h.type("'Z");
+    run.h.step(2);
+    CHECK(on_status_bar(run, ftk::theme::error()));
+}

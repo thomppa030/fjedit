@@ -9,6 +9,7 @@ Document::Document(std::string_view text, const Language& language, Indent fallb
 Edit Document::apply(const Edit& edit) {
     Edit undo = buffer_.apply(edit);
     syntax_.edited(buffer_, edit);
+    for (auto& [name, at] : marks_) at = map(edit, at, Bias::Before);
 
     journal_.push_back(edit);
     // Trimmed in batches, so most edits move nothing.
@@ -18,6 +19,12 @@ Edit Document::apply(const Edit& edit) {
         journal_start_ += drop;
     }
     return undo;
+}
+
+std::optional<Position> Document::mark(char name) const {
+    const auto found = marks_.find(name);
+    if (found == marks_.end()) return std::nullopt;
+    return buffer_.clamp(found->second);
 }
 
 std::optional<Selections> Document::undo() {
