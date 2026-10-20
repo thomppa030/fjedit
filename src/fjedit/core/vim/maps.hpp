@@ -62,6 +62,14 @@ public:
     /// The keys waiting for a longer map, for the status bar to show.
     [[nodiscard]] std::vector<Chord> waiting() const;
 
+    /// The keys waiting let go, played nowhere: Esc over the keys that can
+    /// come next.
+    void drop() {
+        held_.clear();
+        typeahead_.clear();
+        deadline_.reset();
+    }
+
     /// The maps of `mode` whose keys begin with `keys` and go on past them,
     /// for a list of what can come next.
     [[nodiscard]] std::vector<const Mapping*> longer(MapModes mode, const std::vector<Chord>& keys) const;

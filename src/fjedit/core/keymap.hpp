@@ -61,6 +61,15 @@ struct KeyMatch {
     bool longer{false};
 };
 
+/// A key that can come next after keys pressed, as a list of what can come
+/// next shows it (sheet 47, S2): the binding it makes, when it makes one,
+/// and the commands of the longer ones that go on past it.
+struct KeyNext {
+    Chord key;
+    std::optional<std::string_view> command;
+    std::vector<std::string_view> longer;
+};
+
 class Keymap {
 public:
     /// Plain editing, the mode a view starts in.
@@ -96,6 +105,10 @@ public:
     /// What `pressed`, the keys pressed so far, comes to in `mode`. A whole
     /// binding wins over waiting for a longer one.
     [[nodiscard]] KeyMatch find(std::string_view mode, std::span<const Chord> pressed) const;
+
+    /// The keys that can come after `pressed` in `mode`, each once, in the
+    /// order they were first bound.
+    [[nodiscard]] std::vector<KeyNext> next_keys(std::string_view mode, std::span<const Chord> pressed) const;
 
     /// The keys that run `command` in `mode`, for a menu or tooltip to show:
     /// the first binding made, or nothing.

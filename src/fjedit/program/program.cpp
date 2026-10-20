@@ -111,6 +111,14 @@ void show_as_preferred(EditorView& view, const Preferences& preferences,
     }
     view.maps.use(maps);
     if (!preferences.vim) view.vim.reset();
+    // The program's own commands, by their titles, for the keys that can
+    // come next.
+    if (!view.command_title) {
+        view.command_title = [](std::string_view name) {
+            const auto command = std::ranges::find(Program::commands(), name, &Program::Command::name);
+            return command == Program::commands().end() ? std::string() : std::string(command->title);
+        };
+    }
 }
 
 // How the status bar names Vim's mode, and the tone of its pill (sheet 47,
@@ -298,15 +306,18 @@ std::filesystem::path Program::keys_file() {
     return ftk::platform::config_dir() / "fjedit" / "keys.vim";
 }
 
-std::span<const std::string_view> Program::commands() {
-    static constexpr std::string_view NAMES[] = {"file.save",        "file.save_all", "file.close",  "file.quit",
-                                                 "view.split",       "files.find",    "tab.next",    "tab.previous",
-                                                 "edit.preferences"};
-    return NAMES;
+std::span<const Program::Command> Program::commands() {
+    static constexpr Command COMMANDS[] = {
+        {"file.save", "Save"},          {"file.save_all", "Save all"},      {"file.close", "Close"},
+        {"file.quit", "Quit"},          {"view.split", "Split"},            {"files.find", "Find in files"},
+        {"tab.next", "Next tab"},       {"tab.previous", "Previous tab"},   {"edit.preferences", "Preferences"},
+    };
+    return COMMANDS;
 }
 
 bool Program::has_command(std::string_view name) const {
-    return std::ranges::contains(commands(), name) || find_command(name) != nullptr || is_view_command(name);
+    return std::ranges::contains(commands(), name, &Command::name) || find_command(name) != nullptr ||
+           is_view_command(name);
 }
 
 void Program::read_keys() {

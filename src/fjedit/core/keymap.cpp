@@ -112,6 +112,26 @@ KeyMatch Keymap::find(std::string_view mode, std::span<const Chord> pressed) con
     return match;
 }
 
+std::vector<KeyNext> Keymap::next_keys(std::string_view mode, std::span<const Chord> pressed) const {
+    std::vector<KeyNext> out;
+    for (const Binding& binding : bindings_) {
+        if (binding.mode != mode || binding.keys.size() <= pressed.size()) continue;
+        if (!std::equal(pressed.begin(), pressed.end(), binding.keys.begin())) continue;
+        const Chord& next = binding.keys[pressed.size()];
+        auto found = std::ranges::find(out, next, &KeyNext::key);
+        if (found == out.end()) {
+            out.push_back({.key = next, .command = {}, .longer = {}});
+            found = std::prev(out.end());
+        }
+        if (binding.keys.size() == pressed.size() + 1) {
+            found->command = binding.command;
+        } else {
+            found->longer.push_back(binding.command);
+        }
+    }
+    return out;
+}
+
 std::optional<std::vector<Chord>> Keymap::keys_for(std::string_view mode, std::string_view command) const {
     for (const Binding& binding : bindings_) {
         if (binding.mode == mode && binding.command == command) return binding.keys;

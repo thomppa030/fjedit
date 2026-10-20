@@ -3,6 +3,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
+#include <string_view>
 #include <vector>
 
 using namespace fjedit;
@@ -153,4 +155,31 @@ TEST_CASE("Binding the same keys again replaces the binding, and unbinding takes
     REQUIRE(keys.find(Keymap::EDITING, std::vector<Chord>{ctrl(Key::D)}).command == "edit.copy_lines_down");
     keys.unbind(Keymap::EDITING, std::vector<Chord>{ctrl(Key::D)});
     REQUIRE_FALSE(keys.find(Keymap::EDITING, std::vector<Chord>{ctrl(Key::D)}).command.has_value());
+}
+
+TEST_CASE("The keys that can come next say what they run, and what longer bindings go on past them", "[keymap]") {
+    Keymap keys;
+    const auto typed = [](std::string_view text) {
+        std::vector<Chord> out;
+        for (const char c : text) out.push_back(Chord::typed(std::string_view(&c, 1)));
+        return out;
+    };
+    keys.bind(Keymap::VIM_NORMAL, typed("gd"), "definition.go");
+    keys.bind(Keymap::VIM_NORMAL, typed("grn"), "symbol.rename");
+    keys.bind(Keymap::VIM_NORMAL, typed("gr"), "find.open");
+    keys.bind(Keymap::VIM_VISUAL, typed("gx"), "edit.copy");
+    const std::vector<KeyNext> next = keys.next_keys(Keymap::VIM_NORMAL, typed("g"));
+    REQUIRE(next.size() == 2);
+    CHECK(next[0].key == Chord::typed("d"));
+    CHECK(next[0].command == std::optional<std::string_view>{"definition.go"});
+    CHECK(next[0].longer.empty());
+    CHECK(next[1].key == Chord::typed("r"));
+    CHECK(next[1].command == std::optional<std::string_view>{"find.open"});
+    CHECK(next[1].longer == std::vector<std::string_view>{"symbol.rename"});
+    // A whole binding a longer one begins with says so.
+    const KeyMatch gr = keys.find(Keymap::VIM_NORMAL, typed("gr"));
+    CHECK(gr.command == std::optional<std::string_view>{"find.open"});
+    CHECK(gr.longer);
+    CHECK_FALSE(gr.waiting);
+    CHECK(keys.next_keys(Keymap::VIM_NORMAL, typed("gd")).empty());
 }

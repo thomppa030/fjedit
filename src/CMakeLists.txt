@@ -54,6 +54,7 @@ add_library(fjedit-widget STATIC
     fjedit/widget/go_to_line.cpp
     fjedit/widget/markdown.cpp
     fjedit/widget/minimap.cpp
+    fjedit/widget/next_keys.cpp
     fjedit/widget/text_layout.cpp)
 add_library(fjedit::widget ALIAS fjedit-widget)
 ftk_target_defaults(fjedit-widget)

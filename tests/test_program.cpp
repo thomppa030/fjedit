@@ -1201,5 +1201,5 @@ TEST_CASE("Preferences' Open makes keys.vim with a few lines of comment, and ope
 
 TEST_CASE("Every command the program names it runs", "[program]") {
     Running run({{"a.txt", ""}});
-    for (const std::string_view name : Program::commands()) CHECK(run.program->run(name));
+    for (const Program::Command& command : Program::commands()) CHECK(run.program->run(command.name));
 }

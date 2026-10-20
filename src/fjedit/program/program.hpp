@@ -67,8 +67,14 @@ public:
     /// fjedit's settings folder, beside settings.ini.
     [[nodiscard]] static std::filesystem::path keys_file();
 
-    /// The names of the program's own commands, which run() runs.
-    [[nodiscard]] static std::span<const std::string_view> commands();
+    /// One of the program's own commands: what keys call it by, and what a
+    /// list of keys shows for it.
+    struct Command {
+        std::string_view name;
+        std::string_view title;
+    };
+    /// The program's own commands, which run() runs.
+    [[nodiscard]] static std::span<const Command> commands();
 
     /// Draws a frame of the program, filling the window's work area.
     void draw();

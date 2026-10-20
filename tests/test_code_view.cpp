@@ -1578,22 +1578,72 @@ TEST_CASE("With Vim on, keys go through keys.vim's maps before Vim, <Cmd> lines 
 TEST_CASE("With Vim on, keys that begin a longer map or binding wait timeoutlen, then go as they stand",
           "[code_view][vim][maps]") {
     WithVim v("abc");
-    use_maps(v, "nnoremap <leader>fg <Cmd>w<CR>\n");
+    use_maps(v, "nnoremap <leader>fg <Cmd>w<CR>\ninoremap jk <Esc>\n");
+    // A wait shorter than the half second before the keys that can come
+    // next show: Space waits for the map, then is Vim's, a step right.
+    v.e.view.vim->settings().timeout_ms = 200;
     v.e.h.type("0 ");
     v.e.h.step();
-    // Space waits for the map; past the wait it is Vim's, a step right.
     CHECK(v.e.caret() == Position{0, 0});
     CHECK(v.e.view.maps.waiting() == *vim::parse_notation("<Space>"));
-    v.e.h.step(70);
+    v.e.h.step(20);
     CHECK(v.e.caret() == Position{0, 1});
-    // A binding of the keymap's waits the same way, as long as timeoutlen.
+    // A binding of the keymap's waits the same way.
     v.e.keys.bind(Keymap::VIM_NORMAL, *vim::parse_notation("<Space>x"), "edit.select_all");
-    v.e.view.vim->settings().timeout_ms = 200;
     v.e.h.type(" ");
     v.e.h.step(3);
     CHECK(v.e.caret() == Position{0, 1});
     v.e.h.step(40);
     CHECK(v.e.caret() == Position{0, 2});
+    // In insert mode it is timeoutlen however long: a lone j of jk is typed.
+    v.e.view.vim->settings().timeout_ms = 1000;
+    v.e.h.type("ij");
+    v.e.h.step(3);
+    CHECK(v.e.text() == "abc");
+    CHECK_FALSE(v.e.view.showing_next_keys);
+    v.e.h.step(70);
+    CHECK(v.e.text() == "abjc");
+}
+
+TEST_CASE("With Vim on, keys that waited half a second show what can come next and wait for it; Esc lets them go",
+          "[code_view][vim][maps]") {
+    WithVim v("abc");
+    use_maps(v, "nnoremap <leader>fg <Cmd>w<CR>\nnnoremap <leader>w <Cmd>w<CR>\n");
+    v.e.h.type("0 ");
+    v.e.h.step(20);
+    CHECK_FALSE(v.e.view.showing_next_keys);
+    v.e.h.step(20);
+    CHECK(v.e.view.showing_next_keys);
+    // Drawn at the code's bottom right, its keys on raised caps.
+    const auto caps = drawn(v.e.h, ftk::theme::surface_raised());
+    CHECK(std::ranges::any_of(caps, [](const ftk::ui::core::Rect& cap) { return cap.min.x > 400.0f && cap.min.y > 400.0f; }));
+    // Held past timeoutlen.
+    v.e.h.step(70);
+    CHECK(v.e.caret() == Position{0, 0});
+    CHECK(v.e.view.maps.waiting() == *vim::parse_notation("<Space>"));
+    // The next key goes on as it would have: w runs its map.
+    v.e.h.type("w");
+    v.e.h.step();
+    CHECK(v.e.handed.size() == 1);
+    CHECK_FALSE(v.e.view.showing_next_keys);
+    // Esc lets the keys waiting go, and goes no further itself.
+    v.e.h.type(" ");
+    v.e.h.step(40);
+    REQUIRE(v.e.view.showing_next_keys);
+    v.e.h.press(Key::Escape);
+    v.e.h.step();
+    CHECK(v.e.view.maps.waiting().empty());
+    CHECK_FALSE(v.e.view.showing_next_keys);
+    CHECK(v.e.caret() == Position{0, 0});
+    // A binding of the keymap's shows the same.
+    v.e.keys.bind(Keymap::VIM_NORMAL, *vim::parse_notation("gx"), "edit.delete_lines");
+    v.e.h.type("g");
+    v.e.h.step(40);
+    CHECK(v.e.view.showing_next_keys);
+    v.e.h.type("x");
+    v.e.h.step();
+    CHECK_FALSE(v.e.view.showing_next_keys);
+    CHECK(v.e.text().empty());
 }
 
 TEST_CASE("With Vim on, the caret is a block in normal mode, a bar in insert mode", "[code_view][vim]") {

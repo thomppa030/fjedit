@@ -28,6 +28,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -88,6 +89,14 @@ struct EditorView {
     /// keys.vim's maps in play on this view, the keys typed going through
     /// them before the keymap's bindings and Vim.
     vim::Maps maps;
+    /// Since when keys wait for the rest of a map or a binding; and whether
+    /// the plate of the keys that can come next shows, which holds them
+    /// until the next key (sheet 47, S2).
+    std::optional<double> waiting_since;
+    bool showing_next_keys{false};
+    /// The title of a command the one drawing the view runs, for that
+    /// plate; the view knows its own and the editor's.
+    std::function<std::string(std::string_view)> command_title;
     /// What the one drawing the view knows of its files that Vim's `:` line
     /// says (the file's name, whether closing loses changes), set before it
     /// draws the view.

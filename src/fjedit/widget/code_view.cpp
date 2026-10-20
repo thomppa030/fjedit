@@ -4,9 +4,11 @@
 #include "fjedit/core/find.hpp"
 #include "fjedit/core/motion.hpp"
 #include "fjedit/core/structure.hpp"
+#include "fjedit/core/vim/notation.hpp"
 #include "fjedit/widget/code_colours.hpp"
 #include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/minimap.hpp"
+#include "fjedit/widget/next_keys.hpp"
 #include "fjedit/widget/text_layout.hpp"
 
 #include "ftk/base/utf8.hpp"
@@ -483,6 +485,10 @@ std::vector<Chord> vim_keys(std::span<const core::Keystroke> strokes) {
     return keys;
 }
 
+// How long keys wait for the rest of a map or a binding before the plate
+// of what can come next shows (sheet 47, S2).
+constexpr double NEXT_KEYS_DELAY = 0.5;
+
 // The frame's keys with Vim on (decision 7 of the Vim plan): through
 // keys.vim's maps first, each in the mode it is typed in; then those the
 // keymap binds in Vim's mode (the completion list's first while it is
@@ -532,13 +538,113 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ac
         .error = [&](std::string_view error) { view.vim->say({.text = std::string(error), .error = true}); },
     };
     view.maps.wait_for(wait);
-    for (const Chord& key : vim_keys(ui.keystrokes())) view.maps.take(key, now, player);
-    // Keys that waited as long as they may go as they stand: the maps' first,
-    // then the keymap's. A frame comes when the wait runs out.
+    for (const Chord& key : vim_keys(ui.keystrokes())) {
+        // Over the keys that can come next, Esc lets those waiting go.
+        if (view.showing_next_keys && key.text.empty() && key.key == ftk::ui::Key::Escape &&
+            key.modifiers == ftk::ui::Modifiers{}) {
+            view.maps.drop();
+            view.pending.clear();
+            view.showing_next_keys = false;
+            continue;
+        }
+        view.maps.take(key, now, player);
+    }
+    // Keys that waited half a second show what can come next, and wait from
+    // then on for the next key, as which-key holds them: in normal, visual
+    // and operator-pending modes, where which-key shows. Typing in insert
+    // mode or on the command line keeps to timeoutlen.
+    const vim::MapModes mode = view.vim->map_mode();
+    const bool plate_mode = vim::any_of(mode, vim::MapModes::Normal | vim::MapModes::Visual |
+                                                  vim::MapModes::OperatorPending);
+    const bool waiting = plate_mode && (!view.maps.waiting().empty() || !view.pending.empty());
+    if (!waiting) {
+        view.waiting_since.reset();
+        view.showing_next_keys = false;
+    } else if (!view.waiting_since) {
+        view.waiting_since = now;
+    }
+    if (waiting && now >= *view.waiting_since + NEXT_KEYS_DELAY) view.showing_next_keys = true;
+    if (waiting && !view.showing_next_keys) ui.request_frame_at(*view.waiting_since + NEXT_KEYS_DELAY);
+    if (view.showing_next_keys) return;
+    // Otherwise keys that waited as long as they may go as they stand: the
+    // maps' first, then the keymap's. A frame comes when the wait runs out.
     if (view.maps.deadline() && now >= *view.maps.deadline()) view.maps.time_out(player);
     if (!view.pending.empty() && now >= view.pending_since + wait) bound(true);
     if (view.maps.deadline()) ui.request_frame_at(*view.maps.deadline());
     if (!view.pending.empty()) ui.request_frame_at(view.pending_since + wait);
+}
+
+// What a map does, as the plate of next keys says it: its keys in Vim's
+// notation, its `<Cmd>` lines after a `:`.
+std::string map_written(const vim::Mapping& map) {
+    std::string out;
+    for (const vim::MapStep& step : map.does) {
+        if (!out.empty()) out += ' ';
+        if (step.is_command) {
+            out += ":" + step.command;
+        } else {
+            for (const Chord& key : step.keys) out += vim::notation(key);
+        }
+    }
+    return out.empty() ? std::string("nothing") : out;
+}
+
+// The title of the command called `name`: the editor's, the view's, or what
+// the one drawing the view calls it; its name when none does.
+std::string command_title(const EditorView& view, std::string_view name) {
+    if (const Command* command = find_command(name)) return std::string(command->title);
+    for (const ViewCommand& command : view_commands()) {
+        if (command.name == name) return std::string(command.title);
+    }
+    if (view.command_title) {
+        if (std::string title = view.command_title(name); !title.empty()) return title;
+    }
+    return std::string(name);
+}
+
+// The keys that can come after those waiting, with what each runs: the
+// maps' while keys wait for a longer map, else the keymap's bindings'.
+// A key that begins more says the one they lead to, or how many.
+std::vector<NextKey> next_keys_of(const EditorView& view, const Keymap& keymap) {
+    struct Gathered {
+        Chord key;
+        std::optional<std::string> runs;
+        std::vector<std::string> longer;
+    };
+    std::vector<Gathered> gathered;
+    const auto gather = [&](const Chord& key) -> Gathered& {
+        const auto found = std::ranges::find(gathered, key, &Gathered::key);
+        if (found != gathered.end()) return *found;
+        gathered.push_back({.key = key, .runs = {}, .longer = {}});
+        return gathered.back();
+    };
+    const std::vector<Chord> held = view.maps.waiting();
+    if (!held.empty()) {
+        for (const vim::Mapping* map : view.maps.longer(view.vim->map_mode(), held)) {
+            Gathered& next = gather(map->keys[held.size()]);
+            if (map->keys.size() == held.size() + 1) {
+                next.runs = map_written(*map);
+            } else {
+                next.longer.push_back(map_written(*map));
+            }
+        }
+    } else {
+        for (const KeyNext& next : keymap.next_keys(vim::keymap_mode(view.vim->mode()), view.pending)) {
+            Gathered& key = gather(next.key);
+            if (next.command) key.runs = command_title(view, *next.command);
+            for (const std::string_view longer : next.longer) key.longer.push_back(command_title(view, longer));
+        }
+    }
+    std::vector<NextKey> out;
+    for (const Gathered& next : gathered) {
+        const bool group = !next.longer.empty();
+        std::string title = next.runs.value_or(std::string());
+        if (group && !next.runs) {
+            title = next.longer.size() == 1 ? next.longer.front() : std::format("{} more", next.longer.size());
+        }
+        out.push_back({.key = chords_text(std::span(&next.key, 1)), .title = std::move(title), .group = group});
+    }
+    return out;
 }
 
 // A rename asked for at the caret (sheet 48): the service asked where the
@@ -1718,6 +1824,15 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             if (names) view.vim->choose_name(*chosen);
             if (paths) view.vim->choose_path(*chosen);
             ui.set_focus(id);
+        }
+    }
+    // The keys that can come after those waiting, once they have waited.
+    if (view.vim && view.showing_next_keys) {
+        const std::vector<NextKey> next = next_keys_of(view, keymap);
+        if (!next.empty()) {
+            std::vector<Chord> typed = view.pending;
+            for (const Chord& key : view.maps.waiting()) typed.push_back(key);
+            next_keys_plate(chords_text(typed), next, view.text_size, code);
         }
     }
 
