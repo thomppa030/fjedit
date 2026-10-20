@@ -116,26 +116,28 @@ std::optional<std::size_t> command_line_plate(char kind, std::string_view text, 
             ui::next_width(plate.inner_width());
             const char prompt[] = {kind, '\0'};
             ui::shown_entry("Command line##vim", text, {.prompt = prompt, .caret = text.size(), .note = note});
-            // The names it can become, their words in a column past the
-            // longest.
-            if (rows) {
+        }
+        // The names it can become, their words in a column past the
+        // longest. The tree is made at the kit's size, so its rows grow with
+        // the code's text as the field does.
+        if (rows) {
+            if (auto tree = ui::Tree("##names", text_size)) {
+                const ui::FontScope mono(theme::mono_font(), 0.0f);
                 float column = 0.0f;
                 for (const vim::ExCommandName& name : names->names) column = std::max(column, ui::text_size(name.name).x);
                 column += ui::text_size("  ").x;
-                if (auto tree = ui::Tree("##names", text_size)) {
-                    for (std::size_t i = 0; i < names->names.size(); ++i) {
-                        const vim::ExCommandName& name = names->names[i];
-                        const std::string id(name.name);
-                        const ui::TreeRowResult row = ui::tree_row({
-                            .id = id.c_str(),
-                            .name = name.name,
-                            .description = name.words,
-                            .description_at = column,
-                            .selection = names->lit == i ? ui::RowSelection::Primary : ui::RowSelection::None,
-                            .query = names->typed,
-                        });
-                        if (row.clicked) clicked = i;
-                    }
+                for (std::size_t i = 0; i < names->names.size(); ++i) {
+                    const vim::ExCommandName& name = names->names[i];
+                    const std::string id(name.name);
+                    const ui::TreeRowResult row = ui::tree_row({
+                        .id = id.c_str(),
+                        .name = name.name,
+                        .description = name.words,
+                        .description_at = column,
+                        .selection = names->lit == i ? ui::RowSelection::Primary : ui::RowSelection::None,
+                        .query = names->typed,
+                    });
+                    if (row.clicked) clicked = i;
                 }
             }
         }

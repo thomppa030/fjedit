@@ -1631,6 +1631,16 @@ TEST_CASE("With Vim on, the : line lists the commands a name typed can become; T
     CHECK(v.e.h.find("wq", ftk::ui::core::Role::TreeItem) == nullptr);
 }
 
+TEST_CASE("With Vim on, the : line's rows grow with the code's text, as its field does", "[code_view][vim]") {
+    WithVim v("spin");
+    v.e.h.type(":w");
+    v.e.h.step();
+    const float small = v.e.h.find("write", ftk::ui::core::Role::TreeItem)->rect.height();
+    v.e.view.text_size = 21.0f;
+    v.e.h.step();
+    CHECK(v.e.h.find("write", ftk::ui::core::Role::TreeItem)->rect.height() >= small + 8.0f);
+}
+
 TEST_CASE("With Vim on, the : line's plate says under its field what Enter will do", "[code_view][vim]") {
     WithVim v("spin");
     v.e.view.file_facts = {.file = "windmill.cpp", .closing_loses = true, .unsaved = "windmill.cpp"};
