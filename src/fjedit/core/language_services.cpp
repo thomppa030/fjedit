@@ -217,6 +217,15 @@ Asked<std::vector<Location>> LanguageServices::definition(const fs::path& path, 
         told_of(path), [&](LanguageService& service) { return service.definition(path, at); }, fold, {});
 }
 
+Asked<std::vector<Span>> LanguageServices::occurrences(const fs::path& path, Position at) {
+    const auto fold = [](std::vector<std::vector<Span>> answers) {
+        const auto found = std::ranges::find_if(answers, [](const auto& answer) { return !answer.empty(); });
+        return found != answers.end() ? std::move(*found) : std::vector<Span>{};
+    };
+    return ask_all<std::vector<Span>>(
+        told_of(path), [&](LanguageService& service) { return service.occurrences(path, at); }, fold, {});
+}
+
 Asked<ftk::Result<WorkspaceEdit>> LanguageServices::rename(const fs::path& path, Position at, std::string_view name) {
     // The first that can rename it; when none can, why the first can't.
     const auto fold = [](std::vector<ftk::Result<WorkspaceEdit>> answers) {

@@ -108,6 +108,15 @@ TEST_CASE("Definitions are read from a location, a list, or links", "[lsp][conve
     REQUIRE(locations_from(Json(), positions).empty());
 }
 
+TEST_CASE("Where a symbol stands is read from its highlights, in order", "[lsp][convert]") {
+    const Positions positions;
+    REQUIRE(occurrences_from(parsed(R"([
+        {"range":{"start":{"line":3,"character":4},"end":{"line":3,"character":9}},"kind":2},
+        {"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":9}},"kind":3}])"),
+                             positions) == std::vector<Span>{{{0, 4}, {0, 9}}, {{3, 4}, {3, 9}}});
+    REQUIRE(occurrences_from(Json(), positions).empty());
+}
+
 TEST_CASE("Text edits become one edit in order, and a workspace edit one per file", "[lsp][convert]") {
     const Edit edit = edit_from(parsed(R"([
         {"range":{"start":{"line":3,"character":0},"end":{"line":3,"character":1}},"newText":"b"},

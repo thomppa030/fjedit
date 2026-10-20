@@ -75,6 +75,10 @@ using PositionsFor = std::function<Positions(const std::filesystem::path& path)>
 /// A definition's answer: one location, several, or links to them.
 [[nodiscard]] std::vector<Location> locations_from(const Json& result, const PositionsFor& positions);
 
+/// Where a symbol stands in a file, read from a documentHighlight answer:
+/// each highlight's range, in order; none for a null answer.
+[[nodiscard]] std::vector<Span> occurrences_from(const Json& result, const Positions& positions);
+
 /// A list of the protocol's text edits as one edit, its changes in order.
 [[nodiscard]] Edit edit_from(const Json& text_edits, const Positions& positions);
 

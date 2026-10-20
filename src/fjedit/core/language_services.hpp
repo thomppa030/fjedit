@@ -6,8 +6,8 @@
 // completion is one list, each entry keeping its own service's change, and a
 // character typed is asked only of the services that name it; a hover is one
 // card, each answer under the one before with a rule between.
-// A definition, a rename and a format come from the first service that has
-// one, colours from the first that knows any. A file one service answers for
+// A definition, where a symbol stands, a rename and a format come from the
+// first service that has one, colours from the first that knows any. A file one service answers for
 // is that service's alone, its answers passed on as they are.
 //
 //     LanguageServices services({clangd, fjls}, folder);
@@ -79,6 +79,7 @@ public:
                                               const CompletionTrigger& trigger) override;
     [[nodiscard]] Asked<std::optional<Hover>> hover(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<std::vector<Location>> definition(const std::filesystem::path& path, Position at) override;
+    [[nodiscard]] Asked<std::vector<Span>> occurrences(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<ftk::Result<WorkspaceEdit>> rename(const std::filesystem::path& path, Position at,
                                                            std::string_view name) override;
     [[nodiscard]] Asked<std::optional<VersionedEdit>> format(const std::filesystem::path& path) override;

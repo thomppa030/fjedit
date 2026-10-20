@@ -238,6 +238,11 @@ public:
     [[nodiscard]] virtual Asked<std::vector<Location>> definition(const std::filesystem::path& path,
                                                                   Position at) = 0;
 
+    /// Where in the file at `path` what is named at `at` stands: where it is
+    /// made and each use, in its document as it is when asked, in order;
+    /// none when the service can't say.
+    [[nodiscard]] virtual Asked<std::vector<Span>> occurrences(const std::filesystem::path& path, Position at) = 0;
+
     /// The edits that rename what is named at `at` to `name`, everywhere
     /// it is used, or why it can't be.
     [[nodiscard]] virtual Asked<ftk::Result<WorkspaceEdit>> rename(const std::filesystem::path& path, Position at,

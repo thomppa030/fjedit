@@ -220,6 +220,16 @@ std::vector<Location> locations_from(const Json& result, const PositionsFor& pos
     return out;
 }
 
+std::vector<Span> occurrences_from(const Json& result, const Positions& positions) {
+    std::vector<Span> out;
+    if (!result.is_array()) return out;
+    for (const Json& highlight : result) {
+        if (highlight.is_object() && highlight.contains("range")) out.push_back(positions.span(highlight["range"]));
+    }
+    std::ranges::sort(out, {}, &Span::from);
+    return out;
+}
+
 Edit edit_from(const Json& text_edits, const Positions& positions) {
     Edit edit;
     if (!text_edits.is_array()) return edit;

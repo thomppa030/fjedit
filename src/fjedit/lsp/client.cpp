@@ -40,6 +40,7 @@ Json capabilities() {
                {"contextSupport", true}}},
              {"hover", {{"contentFormat", {"markdown", "plaintext"}}}},
              {"definition", {{"linkSupport", true}}},
+             {"documentHighlight", Json::object()},
              {"rename", Json::object()},
              {"formatting", Json::object()},
              {"semanticTokens",
@@ -465,6 +466,20 @@ Asked<std::vector<Location>> Client::definition(const fs::path& path, Position a
                                               return positions_for(where);
                                           });
                                       });
+}
+
+Asked<std::vector<Span>> Client::occurrences(const fs::path& path, Position at) {
+    const auto found = open_.find(path);
+    if (found == open_.end()) {
+        return std::make_shared<const Pending<std::vector<Span>>>(Pending<std::vector<Span>>{.answered = true});
+    }
+    if (ready()) sync(path, found->second);
+    return ask<std::vector<Span>>("textDocument/documentHighlight",
+                                  [this, path, uri = found->second.uri, at] { return document_at(path, uri, at); },
+                                  [this, path](const jsonrpc::Answer& answer) -> std::vector<Span> {
+                                      if (!answer) return {};
+                                      return occurrences_from(*answer, positions_for(path));
+                                  });
 }
 
 Asked<ftk::Result<WorkspaceEdit>> Client::rename(const fs::path& path, Position at, std::string_view name) {

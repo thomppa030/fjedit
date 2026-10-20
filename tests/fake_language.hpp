@@ -40,6 +40,8 @@ struct FakeLanguage final : fjedit::LanguageService {
     std::vector<fjedit::CompletionTrigger> completions_why;
     std::vector<Question<std::optional<fjedit::Hover>>> hovers;
     std::vector<Question<std::vector<fjedit::Location>>> definitions;
+    /// Where a symbol stands, asked (documentHighlight).
+    std::vector<Question<std::vector<fjedit::Span>>> highlights;
     std::vector<Question<ftk::Result<fjedit::WorkspaceEdit>>> renames;
     std::vector<std::string> new_names;
     std::vector<Question<std::optional<fjedit::VersionedEdit>>> formats;
@@ -82,6 +84,10 @@ struct FakeLanguage final : fjedit::LanguageService {
     [[nodiscard]] fjedit::Asked<std::vector<fjedit::Location>> definition(const std::filesystem::path& path,
                                                                           fjedit::Position at) override {
         return ask(definitions, path, at);
+    }
+    [[nodiscard]] fjedit::Asked<std::vector<fjedit::Span>> occurrences(const std::filesystem::path& path,
+                                                                       fjedit::Position at) override {
+        return ask(highlights, path, at);
     }
     [[nodiscard]] fjedit::Asked<ftk::Result<fjedit::WorkspaceEdit>> rename(const std::filesystem::path& path,
                                                                            fjedit::Position at,

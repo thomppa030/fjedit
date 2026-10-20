@@ -222,6 +222,12 @@ TEST_CASE("A definition, a rename and a format come from the first service that 
     REQUIRE(definition->answered);
     CHECK(definition->answer == std::vector<Location>{there});
 
+    const std::vector<Span> uses{{{0, 4}, {0, 9}}, {{2, 0}, {2, 5}}};
+    const auto occurrences = two.services.occurrences("a.hpp", {0, 5});
+    answer_both<std::vector<Span>>(two, two.first->highlights, two.second->highlights, {}, uses);
+    REQUIRE(occurrences->answered);
+    CHECK(occurrences->answer == uses);
+
     const auto rename = two.services.rename("a.hpp", {0, 5}, "pace");
     answer_both<ftk::Result<WorkspaceEdit>>(two, two.first->renames, two.second->renames,
                                             ftk::make_error("clangd can't"), WorkspaceEdit{{"a.hpp", {}}});

@@ -138,12 +138,16 @@ TEST_CASE("clangd completes a member, and says what code is and where it is defi
     REQUIRE(count->change.span == Span{{4, 40}, {4, 44}});
 }
 
-TEST_CASE("clangd renames everywhere a name is used, and formats a file", "[lsp][clangd]") {
+TEST_CASE("clangd says where a name stands, renames everywhere it is used, and formats a file", "[lsp][clangd]") {
     Project project;
     SKIP_WITHOUT_CLANGD(project);
     const fs::path path = project.folder.write("coin.cpp", "");
     auto document = cpp("int  spin_speed=2;\nint f() { return spin_speed; }\n");
     project.clangd->open(path, *document);
+
+    // Where the name stands in the file: where it is made, and its use.
+    const std::vector<Span> uses = project.answer(project.clangd->occurrences(path, Position{1, 18}));
+    REQUIRE(uses == std::vector<Span>{{{0, 5}, {0, 15}}, {{1, 17}, {1, 27}}});
 
     const ftk::Result<WorkspaceEdit> renamed = project.answer(project.clangd->rename(path, Position{1, 18}, "speed"));
     REQUIRE(renamed.has_value());

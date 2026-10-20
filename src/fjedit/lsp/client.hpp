@@ -71,6 +71,7 @@ public:
                                               const CompletionTrigger& trigger) override;
     [[nodiscard]] Asked<std::optional<Hover>> hover(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<std::vector<Location>> definition(const std::filesystem::path& path, Position at) override;
+    [[nodiscard]] Asked<std::vector<Span>> occurrences(const std::filesystem::path& path, Position at) override;
     [[nodiscard]] Asked<ftk::Result<WorkspaceEdit>> rename(const std::filesystem::path& path, Position at,
                                                            std::string_view name) override;
     [[nodiscard]] Asked<std::optional<VersionedEdit>> format(const std::filesystem::path& path) override;
