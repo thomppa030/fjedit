@@ -84,7 +84,8 @@ std::string tab_label(const std::filesystem::path& path) {
 // changed it for the session; Vim on it sharing `registers` and `settings`
 // with the other views, which are told what the views show.
 void show_as_preferred(EditorView& view, const Preferences& preferences,
-                       const std::shared_ptr<vim::Registers>& registers, const std::shared_ptr<vim::Settings>& settings) {
+                       const std::shared_ptr<vim::Registers>& registers, const std::shared_ptr<vim::Settings>& settings,
+                       const vim::PathLister& paths) {
     view.minimap = preferences.minimap;
     view.text_size = static_cast<float>(preferences.text_size);
     view.line_numbers = settings->relative_numbers
@@ -93,8 +94,12 @@ void show_as_preferred(EditorView& view, const Preferences& preferences,
     view.around_caret = settings->around_caret.value_or(static_cast<std::size_t>(preferences.around_caret));
     settings->relative_numbers_shown = view.line_numbers == LineNumbers::Relative;
     settings->around_caret_shown = view.around_caret;
-    // Vim turned on starts each view in its normal mode.
-    if (preferences.vim && !view.vim) view.vim.emplace(registers, settings);
+    // Vim turned on starts each view in its normal mode, listing paths
+    // after `:e` as the program does.
+    if (preferences.vim && !view.vim) {
+        view.vim.emplace(registers, settings);
+        view.vim->list_paths_with(paths);
+    }
     if (!preferences.vim) view.vim.reset();
 }
 
@@ -253,7 +258,7 @@ LanguageServerShown Program::fjls_shown() const {
 
 std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
     auto view = std::make_unique<EditorView>(document);
-    show_as_preferred(*view, preferences_, registers_, vim_settings_);
+    show_as_preferred(*view, preferences_, registers_, vim_settings_, path_lister_);
     if (services_.serves(path)) {
         view->service = &services_;
         view->path = path;
@@ -405,6 +410,7 @@ void Program::check_disk(double now) {
         }
     }
     tree_.forget_listings();
+    path_listings_.clear();
     keep_unsaved();
 }
 
@@ -424,6 +430,15 @@ std::size_t Program::tabs_showing(const std::filesystem::path& path) const {
     std::size_t showing = 0;
     for (const Group& group : groups_) showing += static_cast<std::size_t>(std::ranges::count(group.tabs, path, &Tab::path));
     return showing;
+}
+
+std::vector<vim::PathEntry> Program::list_paths(std::string_view folder, bool hidden) {
+    const std::filesystem::path at = workspace_.root() / std::filesystem::path(folder);
+    const auto listed = path_listings_.find({at, hidden});
+    if (listed != path_listings_.end()) return listed->second;
+    std::vector<vim::PathEntry> entries;
+    for (const FolderEntry& entry : read_folder(at, hidden)) entries.push_back({.name = entry.name, .folder = entry.folder});
+    return path_listings_.emplace(std::pair{at, hidden}, std::move(entries)).first->second;
 }
 
 std::optional<std::filesystem::path> Program::first_unsaved() const {
@@ -770,7 +785,7 @@ void Program::draw_group(Group& group, std::size_t index) {
                 }
             }
         }
-        show_as_preferred(*tab.view, preferences_, registers_, vim_settings_);
+        show_as_preferred(*tab.view, preferences_, registers_, vim_settings_, path_lister_);
         const std::optional<std::filesystem::path> unsaved = first_unsaved();
         tab.view->file_facts = {.file = tab.path.filename().string(),
                                 .closing_loses = workspace_.unsaved(tab.path) && tabs_showing(tab.path) == 1,

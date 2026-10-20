@@ -958,22 +958,28 @@ void Engine::take_command(const Chord& key, CommandContext& c) {
         register_next_ = true;
         return;
     } else if (tab) {
-        // The next of the names the name typed can become, or the one
-        // before; past either end, the name as typed.
+        // The next of the paths or names what is typed can become, or the
+        // one before; past either end, what was typed.
         if (line.line.kind != ':') return;
-        const std::optional<NameTyped> typed = name_typed(line.naming_from ? *line.naming_from : text);
-        if (!typed) return;
-        const std::size_t count = typed->names.size();
+        const std::string from = line.naming_from ? *line.naming_from : text;
         const bool forward = named == "<Tab>";
-        std::optional<std::size_t> next;
-        if (!line.named) {
-            next = forward ? 0 : count - 1;
-        } else if (forward && *line.named + 1 < count) {
-            next = *line.named + 1;
-        } else if (!forward && *line.named > 0) {
-            next = *line.named - 1;
+        const auto round = [&](std::size_t count) -> std::optional<std::size_t> {
+            if (!line.named) return forward ? std::size_t{0} : count - 1;
+            if (forward && *line.named + 1 < count) return *line.named + 1;
+            if (!forward && *line.named > 0) return *line.named - 1;
+            return std::nullopt;
+        };
+        if (const std::optional<PathTyped> path = path_typed(from)) {
+            const std::size_t count = paths_matching(*path).size();
+            if (count == 0) return;
+            // One alone goes in, and the round ends there: a folder's
+            // entries list next.
+            if (count == 1) return put_path(0, true);
+            return put_path(round(count), false);
         }
-        return put_name(next);
+        const std::optional<NameTyped> typed = name_typed(from);
+        if (!typed) return;
+        return put_name(round(typed->names.size()));
     } else if (named == "<Up>" || named == "<Down>") {
         // The lines typed before on a line of this kind that begin with
         // what is typed, older with Up; Down past the latest gives back what
@@ -1280,6 +1286,58 @@ void Engine::put_name(std::optional<std::size_t> index) {
     if (!typed || (index && *index >= typed->names.size())) return;
     line.named = index;
     line.line.text = from.substr(0, typed->at) + std::string(index ? typed->names[*index].name : typed->typed);
+}
+
+std::vector<PathEntry> Engine::paths_matching(const PathTyped& typed) const {
+    if (!list_paths_) return {};
+    // Hidden ones once a dot begins the name.
+    std::vector<PathEntry> entries = list_paths_(typed.folder, typed.name.starts_with('.'));
+    std::erase_if(entries, [&](const PathEntry& entry) { return !entry.name.starts_with(typed.name); });
+    return entries;
+}
+
+std::optional<PathChoices> Engine::path_choices() const {
+    if (!typing_ || typing_->line.kind != ':') return std::nullopt;
+    const Typing& line = *typing_;
+    const std::optional<PathTyped> typed = path_typed(line.naming_from ? *line.naming_from : line.line.text);
+    if (!typed) return std::nullopt;
+    std::vector<PathEntry> entries = paths_matching(*typed);
+    if (entries.empty()) return std::nullopt;
+    PathChoices out{.folder = std::string(typed->folder), .typed = std::string(typed->name),
+                    .entries = std::move(entries), .lit = line.named};
+    // Before Tab, the one typed whole.
+    if (!out.lit) {
+        const auto whole = std::ranges::find(out.entries, typed->name, &PathEntry::name);
+        if (whole != out.entries.end()) out.lit = static_cast<std::size_t>(whole - out.entries.begin());
+    }
+    return out;
+}
+
+void Engine::choose_path(std::size_t index) {
+    if (!typing_ || typing_->line.kind != ':') return;
+    put_path(index, true);
+}
+
+void Engine::put_path(std::optional<std::size_t> index, bool end) {
+    Typing& line = *typing_;
+    if (!line.naming_from) line.naming_from = line.line.text;
+    const std::string from = *line.naming_from;
+    const std::optional<PathTyped> typed = path_typed(from);
+    if (!typed) return;
+    const std::vector<PathEntry> entries = paths_matching(*typed);
+    if (index && *index >= entries.size()) return;
+    std::string put = from.substr(0, typed->at) + std::string(typed->folder);
+    if (index) {
+        put += entries[*index].name + (entries[*index].folder ? "/" : "");
+    } else {
+        put += typed->name;
+    }
+    line.line.text = std::move(put);
+    line.named = index;
+    if (end) {
+        line.naming_from.reset();
+        line.named.reset();
+    }
 }
 
 std::optional<Outcome> Engine::outcome(const CommandContext& c, const FileFacts& files) const {

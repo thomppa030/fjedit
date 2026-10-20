@@ -2,12 +2,16 @@
 
 #include "fjedit/core/structure.hpp"
 #include "fjedit/widget/code_view.hpp"
+#include "fjedit/widget/file_look.hpp"
 
 #include "ftk/base/utf8.hpp"
 #include "ftk/ui/kit/feedback.hpp"
+#include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/item.hpp"
 #include "ftk/ui/kit/layout.hpp"
 #include "ftk/ui/kit/plate.hpp"
+#include "ftk/ui/kit/region.hpp"
+#include "ftk/ui/kit/rows_in_view.hpp"
 #include "ftk/ui/kit/text.hpp"
 #include "ftk/ui/kit/text_field.hpp"
 #include "ftk/ui/kit/tree.hpp"
@@ -15,6 +19,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <format>
 
 namespace fjedit {
@@ -27,6 +32,8 @@ namespace theme = ftk::theme;
 // The plate's width (sheet 39); for Vim's `:` line, find's (sheet 49).
 constexpr float PLATE_WIDTH = 320.0f;
 constexpr float COMMAND_PLATE_WIDTH = 420.0f;
+// The rows of paths in sight under Vim's `:e`, before the list scrolls.
+constexpr std::size_t PATH_ROWS = 8;
 
 // `text` without the spaces around it.
 std::string_view trimmed(std::string_view text) {
@@ -102,15 +109,18 @@ GoToLinePlate go_to_line_plate(GoToLineState& state, const Document& document, P
 }
 
 std::optional<std::size_t> command_line_plate(char kind, std::string_view text, std::string_view note,
-                                              const vim::NameChoices* names, const vim::Outcome* outcome,
-                                              float text_size, ftk::ui::core::Rect over) {
+                                              const vim::NameChoices* names, const vim::PathChoices* paths,
+                                              const vim::Outcome* outcome, float text_size,
+                                              ftk::ui::core::Rect over) {
     std::optional<std::size_t> clicked;
     // A `:` line is as wide as find's plate from its first key, so the
     // words under it never make it jump.
     const float base = kind == ':' ? COMMAND_PLATE_WIDTH : PLATE_WIDTH;
     const float width = std::min(base * text_size / CODE_TEXT, over.width() - 2.0f * ui::PLATE_INSET);
     if (auto plate = ui::Plate("##command_line", over.min, over.max, ui::PlatePlace::TopCenter, width)) {
-        const bool rows = names != nullptr && !names->names.empty();
+        const bool name_rows = names != nullptr && !names->names.empty();
+        const bool path_rows = paths != nullptr && !paths->entries.empty();
+        const bool rows = name_rows || path_rows;
         {
             const ui::FontScope mono(theme::mono_font(), text_size);
             ui::next_width(plate.inner_width());
@@ -120,7 +130,7 @@ std::optional<std::size_t> command_line_plate(char kind, std::string_view text, 
         // The names it can become, their words in a column past the
         // longest. The tree is made at the kit's size, so its rows grow with
         // the code's text as the field does.
-        if (rows) {
+        if (name_rows) {
             if (auto tree = ui::Tree("##names", text_size)) {
                 const ui::FontScope mono(theme::mono_font(), 0.0f);
                 float column = 0.0f;
@@ -138,6 +148,33 @@ std::optional<std::size_t> command_line_plate(char kind, std::string_view text, 
                         .query = names->typed,
                     });
                     if (row.clicked) clicked = i;
+                }
+            }
+        }
+        // The paths it can become, each as the file tree shows it, in a
+        // list that scrolls past its first rows to keep the lit one in sight.
+        if (path_rows) {
+            const float row_height = std::round(theme::TREE_ROW * text_size / ui::font_size());
+            const std::size_t shown = std::min(paths->entries.size(), PATH_ROWS);
+            if (auto list = ui::Region("##paths", {0.0f, static_cast<float>(shown) * row_height})) {
+                if (auto tree = ui::Tree("##paths", text_size)) {
+                    const ui::FontScope mono(theme::mono_font(), 0.0f);
+                    const ui::RowsInView in_view(paths->entries.size(), paths->lit);
+                    for (std::size_t i = in_view.first(); i < in_view.end(); ++i) {
+                        const vim::PathEntry& entry = paths->entries[i];
+                        const std::string name = entry.folder ? entry.name + "/" : entry.name;
+                        const FileLook look = entry.folder ? FileLook{.icon = ui::icon::folder, .hue = {}} : file_look(entry.name);
+                        const ui::TreeRowResult row = ui::tree_row({
+                            .id = name.c_str(),
+                            .name = name,
+                            .icon = look.icon,
+                            .hue = look.hue,
+                            .tint = entry.folder ? std::optional(theme::accent()) : std::nullopt,
+                            .selection = paths->lit == i ? ui::RowSelection::Primary : ui::RowSelection::None,
+                            .query = paths->typed,
+                        });
+                        if (row.clicked) clicked = i;
+                    }
                 }
             }
         }

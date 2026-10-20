@@ -207,6 +207,23 @@ std::optional<NameTyped> name_typed(std::string_view line) {
     return out;
 }
 
+std::optional<PathTyped> path_typed(std::string_view line) {
+    std::size_t at = 0;
+    if (!read_range(line, at)) return std::nullopt;
+    const std::size_t begin = at;
+    while (at < line.size() && letter(line[at])) ++at;
+    // :e to :edit, as parse_ex() reads them.
+    const std::string_view name = line.substr(begin, at - begin);
+    if (name.empty() || !std::string_view("edit").starts_with(name)) return std::nullopt;
+    if (at < line.size() && line[at] == '!') ++at;
+    if (at == line.size() || line[at] != ' ') return std::nullopt;
+    skip_blanks(line, at);
+    const std::string_view path = line.substr(at);
+    const std::size_t slash = path.rfind('/');
+    const std::size_t split = slash == std::string_view::npos ? 0 : slash + 1;
+    return PathTyped{.at = at, .folder = path.substr(0, split), .name = path.substr(split)};
+}
+
 Delimited split_pattern(std::string_view text, char delimiter) {
     std::size_t at = 0;
     while (at < text.size()) {

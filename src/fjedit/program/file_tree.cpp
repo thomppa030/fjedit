@@ -1,6 +1,5 @@
 #include "fjedit/program/file_tree.hpp"
 
-#include "fjedit/core/language.hpp"
 #include "fjedit/program/icons.hpp"
 
 #include "ftk/ui/kit/icons.hpp"
@@ -15,7 +14,6 @@ namespace fjedit {
 namespace {
 
 namespace ui = ftk::ui;
-using ftk::theme::Hue;
 
 // `text` with A to Z as a to z, to sort names as people read them.
 std::string folded(std::string_view text) {
@@ -26,38 +24,29 @@ std::string folded(std::string_view text) {
 
 } // namespace
 
-FileLook file_look(const std::filesystem::path& path) {
-    const std::string_view name = language_for(path.filename().string()).name;
-    if (name == "C++") return {.icon = icon::code_file, .hue = Hue::slate};
-    if (name == "GLSL" || name == "FJSL") return {.icon = icon::code_file, .hue = Hue::blue};
-    if (name == "FJSS") return {.icon = icon::sheet_file, .hue = Hue::lilac};
-    if (name == "Widget") return {.icon = icon::widget_file, .hue = Hue::lilac};
-    if (name == "JSON") {
-        if (path.extension() == ".fjmat") return {.icon = icon::data_file, .hue = Hue::blue};
-        return {.icon = icon::data_file, .hue = Hue::grey};
-    }
-    return {.icon = icon::plain_file};
-}
-
-const std::vector<FileTree::Entry>& FileTree::entries(const std::filesystem::path& folder) {
-    const auto found = listed_.find(folder);
-    if (found != listed_.end()) return found->second;
-    std::vector<Entry> read;
+std::vector<FolderEntry> read_folder(const std::filesystem::path& folder, bool hidden) {
+    std::vector<FolderEntry> read;
     std::error_code error;
     for (std::filesystem::directory_iterator it(folder, std::filesystem::directory_options::skip_permission_denied,
                                                 error),
          end;
          !error && it != end; it.increment(error)) {
         const std::string name = it->path().filename().string();
-        if (name.starts_with('.')) continue;
+        if (!hidden && name.starts_with('.')) continue;
         std::error_code kind_error;
         read.push_back({.path = it->path(), .name = name, .folder = it->is_directory(kind_error)});
     }
-    std::ranges::sort(read, [](const Entry& a, const Entry& b) {
+    std::ranges::sort(read, [](const FolderEntry& a, const FolderEntry& b) {
         if (a.folder != b.folder) return a.folder;
         return folded(a.name) < folded(b.name);
     });
-    return listed_.emplace(folder, std::move(read)).first->second;
+    return read;
+}
+
+const std::vector<FolderEntry>& FileTree::entries(const std::filesystem::path& folder) {
+    const auto found = listed_.find(folder);
+    if (found != listed_.end()) return found->second;
+    return listed_.emplace(folder, read_folder(folder)).first->second;
 }
 
 std::optional<std::filesystem::path> FileTree::draw(const std::filesystem::path& selected) {
@@ -86,7 +75,7 @@ void FileTree::draw_folder(const std::filesystem::path& folder, int depth, const
         return;
     }
     open_.insert(folder);
-    for (const Entry& entry : entries(folder)) {
+    for (const FolderEntry& entry : entries(folder)) {
         if (entry.folder) {
             draw_folder(entry.path, depth + 1, selected, pressed);
             continue;

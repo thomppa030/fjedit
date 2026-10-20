@@ -1564,6 +1564,62 @@ TEST_CASE("Tab goes round the commands a name typed can become, and back to it; 
     v.keys("<Esc>");
 }
 
+TEST_CASE("Tab goes round the paths after :e; one alone goes in, a folder's entries listing next", "[vim][ex]") {
+    Vim v("|a");
+    // A folder of the program's, as it would list it.
+    std::vector<std::string> asked;
+    v.engine.list_paths_with([&](std::string_view folder, bool hidden) {
+        asked.emplace_back(std::string(folder) + (hidden ? " hidden" : ""));
+        if (folder == "src/") return std::vector<vim::PathEntry>{{.name = "main.cpp", .folder = false}};
+        std::vector<vim::PathEntry> root{{.name = "scripts", .folder = true},
+                                         {.name = "src", .folder = true},
+                                         {.name = "spin.txt", .folder = false}};
+        if (hidden) root.insert(root.begin(), vim::PathEntry{.name = ".git", .folder = true});
+        return root;
+    });
+    const auto line = [&] { return v.engine.command_line()->text; };
+    v.keys(":e s");
+    const std::optional<vim::PathChoices> choices = v.engine.path_choices();
+    REQUIRE(choices);
+    CHECK(choices->typed == "s");
+    CHECK(choices->entries.size() == 3);
+    CHECK_FALSE(choices->lit);
+    CHECK(asked.back() == "");
+    v.keys("<Tab>");
+    CHECK(line() == "e scripts/");
+    CHECK(v.engine.path_choices()->lit == std::optional<std::size_t>{0});
+    v.keys("<Tab><Tab>");
+    CHECK(line() == "e spin.txt");
+    v.keys("<Tab>");
+    CHECK(line() == "e s");
+    v.keys("<S-Tab>");
+    CHECK(line() == "e spin.txt");
+    v.keys("<Esc>");
+    // One alone goes in and ends the round; the next Tab lists inside.
+    v.keys(":e sr<Tab>");
+    CHECK(line() == "e src/");
+    v.keys("<Tab>");
+    CHECK(line() == "e src/main.cpp");
+    CHECK(asked.back() == "src/");
+    v.keys("<Esc>");
+    // Hidden ones once a dot begins the name.
+    v.keys(":e .<Tab>");
+    CHECK(line() == "e .git/");
+    CHECK(asked.back() == " hidden");
+    v.keys("<Esc>");
+    // A click goes in, a folder's entries next.
+    v.keys(":e s");
+    v.engine.choose_path(1);
+    CHECK(line() == "e src/");
+    CHECK(v.engine.path_choices()->entries == std::vector<vim::PathEntry>{{.name = "main.cpp", .folder = false}});
+    v.keys("<Esc>");
+    // Nothing matching: nothing listed, Tab leaves the line.
+    v.keys(":e zz<Tab>");
+    CHECK_FALSE(v.engine.path_choices());
+    CHECK(line() == "e zz");
+    v.keys("<Esc>");
+}
+
 TEST_CASE("The : line says what the program's commands will do, and what they will refuse over changes",
           "[vim][ex]") {
     Vim v("|a");

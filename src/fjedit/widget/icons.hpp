@@ -24,4 +24,11 @@ inline constexpr const char* operation = ICON_LC_PARENTHESES;
 inline constexpr const char* file = ICON_LC_FILE;
 inline constexpr const char* folder = ICON_LC_FOLDER;
 
+// Kinds of file (sheet 39), each tinted in its category's hue (file_look()).
+inline constexpr const char* code_file = ICON_LC_FILE_CODE;   // C++ and shaders
+inline constexpr const char* sheet_file = ICON_LC_HASH;       // stylesheets
+inline constexpr const char* widget_file = ICON_LC_CODE;      // widgets and their markup
+inline constexpr const char* data_file = ICON_LC_BRACES;      // JSON, and the assets written in it
+inline constexpr const char* plain_file = ICON_LC_FILE;
+
 } // namespace fjedit::icon

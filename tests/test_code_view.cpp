@@ -1631,6 +1631,26 @@ TEST_CASE("With Vim on, the : line lists the commands a name typed can become; T
     CHECK(v.e.h.find("wq", ftk::ui::core::Role::TreeItem) == nullptr);
 }
 
+TEST_CASE("With Vim on, the : line lists the paths after :e; a click on a folder goes into it", "[code_view][vim]") {
+    WithVim v("spin");
+    v.e.view.vim->list_paths_with([](std::string_view folder, bool) {
+        if (folder == "src/") return std::vector<vim::PathEntry>{{.name = "main.cpp", .folder = false}};
+        return std::vector<vim::PathEntry>{{.name = "src", .folder = true}, {.name = "spin.cpp", .folder = false}};
+    });
+    const auto field = [&] { return v.e.h.find("Command line", ftk::ui::core::Role::TextField); };
+    v.e.h.type(":e s");
+    v.e.h.step();
+    REQUIRE(v.e.h.find("spin.cpp", ftk::ui::core::Role::TreeItem) != nullptr);
+    const auto* folder = v.e.h.find("src/", ftk::ui::core::Role::TreeItem);
+    REQUIRE(folder != nullptr);
+    v.e.h.click_at(folder->rect.centre());
+    v.e.h.step();
+    CHECK(field()->value == "e src/");
+    v.e.h.step();
+    CHECK(v.e.h.find("main.cpp", ftk::ui::core::Role::TreeItem) != nullptr);
+    CHECK(v.e.h.find("spin.cpp", ftk::ui::core::Role::TreeItem) == nullptr);
+}
+
 TEST_CASE("With Vim on, the : line's rows grow with the code's text, as its field does", "[code_view][vim]") {
     WithVim v("spin");
     v.e.h.type(":w");

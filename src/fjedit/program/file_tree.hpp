@@ -6,7 +6,7 @@
 // read when it is first opened and again when the tree is told to forget
 // what it read, so files made or removed elsewhere come and go.
 
-#include "ftk/ui/theme.hpp"
+#include "fjedit/widget/file_look.hpp"
 
 #include <filesystem>
 #include <map>
@@ -17,15 +17,17 @@
 
 namespace fjedit {
 
-/// How a file is shown: its kind's icon, and the hue of its category.
-struct FileLook {
-    const char* icon{nullptr};
-    std::optional<ftk::theme::Hue> hue{};
+/// One of a folder's entries.
+struct FolderEntry {
+    std::filesystem::path path;
+    std::string name;
+    bool folder{false};
 };
 
-/// How the file at `path` is shown, by its kind: C++ in Logic's hue, shaders
-/// in Rendering's, stylesheets and widgets in UI's, JSON assets as data.
-[[nodiscard]] FileLook file_look(const std::filesystem::path& path);
+/// The entries of `folder`, folders before files, each by name as people
+/// read them; those whose names begin with a dot only with `hidden`. None
+/// when it can't be read.
+[[nodiscard]] std::vector<FolderEntry> read_folder(const std::filesystem::path& folder, bool hidden = false);
 
 class FileTree {
 public:
@@ -39,19 +41,13 @@ public:
     void forget_listings() { listed_.clear(); }
 
 private:
-    struct Entry {
-        std::filesystem::path path;
-        std::string name;
-        bool folder{false};
-    };
-
     // The entries of `folder`, read the first time they are asked for.
-    [[nodiscard]] const std::vector<Entry>& entries(const std::filesystem::path& folder);
+    [[nodiscard]] const std::vector<FolderEntry>& entries(const std::filesystem::path& folder);
     void draw_folder(const std::filesystem::path& folder, int depth, const std::filesystem::path& selected,
                      std::optional<std::filesystem::path>& pressed);
 
     std::filesystem::path root_;
-    std::map<std::filesystem::path, std::vector<Entry>> listed_;
+    std::map<std::filesystem::path, std::vector<FolderEntry>> listed_;
     // The folders open when last drawn, which show the open folder's icon.
     std::set<std::filesystem::path> open_;
 };

@@ -31,6 +31,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace fjedit {
@@ -162,6 +163,9 @@ private:
     [[nodiscard]] std::size_t tabs_showing(const std::filesystem::path& path) const;
     // The first file opened that has unsaved changes, when one has.
     [[nodiscard]] std::optional<std::filesystem::path> first_unsaved() const;
+    // The folder `folder`, typed after Vim's `:e` from the folder open,
+    // listed as the file tree lists it; hidden ones too with `hidden`.
+    [[nodiscard]] std::vector<vim::PathEntry> list_paths(std::string_view folder, bool hidden);
     // Runs a `:` command of Vim's that is the program's, handed up by the
     // view in front, as Vim runs it: what would lose unsaved changes is
     // refused, said where Vim says it, unless the command has a !.
@@ -254,6 +258,11 @@ private:
     // Vim's `:` commands the view in front handed up, run once the views
     // are drawn.
     std::vector<vim::ExCommand> vim_commands_;
+    // The folders listed after Vim's `:e`, each with or without its hidden
+    // entries, until the disk is next looked at; and how every view's Vim
+    // asks for them.
+    std::map<std::pair<std::filesystem::path, bool>, std::vector<vim::PathEntry>> path_listings_;
+    vim::PathLister path_lister_{[this](std::string_view folder, bool hidden) { return list_paths(folder, hidden); }};
     // A rename typed in place, asked of the services: the names and where,
     // and the services' answer to come.
     struct Renaming {

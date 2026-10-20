@@ -19,6 +19,7 @@ namespace fjedit {
 namespace vim {
 struct NameChoices;
 struct Outcome;
+struct PathChoices;
 } // namespace vim
 
 /// A view's go to line: whether it is open, what is typed in it, and the
@@ -59,12 +60,14 @@ GoToLinePlate go_to_line_plate(GoToLineState& state, const Document& document, P
 /// `note` (a search's match count) inside the field's right end, in the
 /// mono face at the code's `text_size`, the plate as much wider. Under the
 /// field (sheet 49), while a `:` line's command name is typed, the `names`
-/// it can become, each with its words, the one Enter runs lit; otherwise
-/// what the line will do (`outcome`), which under the names shows only
-/// when it will be refused. It takes no keys, which the view reads for
-/// Vim; returns the name clicked.
+/// it can become, each with its words, the one Enter runs lit; while a path
+/// is typed after `:e`, the `paths` it can become, as the file tree shows
+/// them; otherwise what the line will do (`outcome`), which under the rows
+/// shows only when it will be refused. It takes no keys, which the view
+/// reads for Vim; returns the row clicked.
 std::optional<std::size_t> command_line_plate(char kind, std::string_view text, std::string_view note,
-                                              const vim::NameChoices* names, const vim::Outcome* outcome,
-                                              float text_size, ftk::ui::core::Rect over);
+                                              const vim::NameChoices* names, const vim::PathChoices* paths,
+                                              const vim::Outcome* outcome, float text_size,
+                                              ftk::ui::core::Rect over);
 
 } // namespace fjedit

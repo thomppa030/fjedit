@@ -1679,11 +1679,14 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         const std::string count = view.vim->shown_search() != nullptr ? match_count(view.find, view.selections) : "";
         const std::optional<vim::Outcome> outcome = view.vim->outcome(vim_context(), view.file_facts);
         const std::optional<vim::NameChoices> names = view.vim->name_choices();
-        const std::optional<std::size_t> chosen = command_line_plate(
-            line.kind, line.text, count, names ? &*names : nullptr, outcome ? &*outcome : nullptr, view.text_size, code);
-        // A name clicked goes in as Tab would put it, the keyboard kept.
+        const std::optional<vim::PathChoices> paths = view.vim->path_choices();
+        const std::optional<std::size_t> chosen =
+            command_line_plate(line.kind, line.text, count, names ? &*names : nullptr, paths ? &*paths : nullptr,
+                               outcome ? &*outcome : nullptr, view.text_size, code);
+        // A row clicked goes in as Tab would put it, the keyboard kept.
         if (chosen) {
-            view.vim->choose_name(*chosen);
+            if (names) view.vim->choose_name(*chosen);
+            if (paths) view.vim->choose_path(*chosen);
             ui.set_focus(id);
         }
     }

@@ -221,3 +221,20 @@ TEST_CASE("A name being typed lists the commands it can become, after any range"
         CHECK(parse_ex(command.name)->name == command.name);
     }
 }
+
+TEST_CASE("A path typed after :e splits into its folder and the name begun", "[vim][ex]") {
+    const auto deep = path_typed("e src/fjedit/co");
+    REQUIRE(deep);
+    CHECK(deep->at == 2);
+    CHECK(deep->folder == "src/fjedit/");
+    CHECK(deep->name == "co");
+    const auto fresh = path_typed("edit! ");
+    REQUIRE(fresh);
+    CHECK(fresh->folder.empty());
+    CHECK(fresh->name.empty());
+    CHECK(path_typed("ed  .cl")->name == ".cl");
+    // Not :e, or no blank after it yet.
+    CHECK_FALSE(path_typed("e"));
+    CHECK_FALSE(path_typed("w src/"));
+    CHECK_FALSE(path_typed("ex src/"));
+}

@@ -88,6 +88,18 @@ struct NameTyped {
 /// follows the range, or when no command's name begins as typed.
 [[nodiscard]] std::optional<NameTyped> name_typed(std::string_view line);
 
+/// A path being typed after `:e`: where the path begins in the line, the
+/// folder typed of it (to its last /, empty for none), and the name begun
+/// after that.
+struct PathTyped {
+    std::size_t at{0};
+    std::string_view folder;
+    std::string_view name;
+};
+/// Nothing unless the line is :e or :edit, with or without a !, and a blank
+/// after it.
+[[nodiscard]] std::optional<PathTyped> path_typed(std::string_view line);
+
 // What follows a command's name, read as the command reads it, apart from
 // running it: the engine runs what these read, and the `:` line's words
 // say what they read before Enter.

@@ -24,6 +24,7 @@
 #include "fjedit/core/vim/registers.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -115,6 +116,29 @@ struct Outcome {
 struct NameChoices {
     std::string typed;
     std::vector<ExCommandName> names;
+    std::optional<std::size_t> lit;
+};
+
+/// One of a folder's entries, as the `:` line lists them after `:e`.
+struct PathEntry {
+    std::string name;
+    bool folder{false};
+
+    bool operator==(const PathEntry&) const = default;
+};
+
+/// Lists the folder `folder`, as typed after `:e` ("src/", empty for where
+/// `:e` begins), the way the program lists files; those hidden too with
+/// `hidden`. None when it can't be read. The engine never reads the disk.
+using PathLister = std::function<std::vector<PathEntry>(std::string_view folder, bool hidden)>;
+
+/// While a path is typed after `:e`: the folder typed of it, the name begun
+/// after that, which a list picks out, the folder's entries whose names
+/// begin so, and the one Tab put in.
+struct PathChoices {
+    std::string folder;
+    std::string typed;
+    std::vector<PathEntry> entries;
     std::optional<std::size_t> lit;
 };
 
@@ -246,6 +270,21 @@ public:
     /// typed, as Tab would put it: one picked with the mouse.
     void choose_name(std::size_t index);
 
+    /// How the `:` line lists a folder after `:e`: the program's way.
+    /// Without one, no path is listed.
+    void list_paths_with(PathLister lister) { list_paths_ = std::move(lister); }
+
+    /// While a path is typed after `:e`, the entries of its folder it can
+    /// become. Tab puts the next in place of the name begun and Shift-Tab
+    /// the one before, round to the name as typed; when one alone matches
+    /// it goes in and the round ends, a folder with a / after it, so its
+    /// entries list next.
+    [[nodiscard]] std::optional<PathChoices> path_choices() const;
+
+    /// The entry `index` of path_choices() put in, the round ended: one
+    /// picked with the mouse, a folder going in.
+    void choose_path(std::size_t index);
+
     /// The search whose matches a view shows: a pattern typed after `/` or
     /// `?` as it is typed, otherwise the last search until Ctrl-L or `:noh`
     /// hides it; null while none shows.
@@ -343,6 +382,12 @@ private:
     // The command `index` of the names the line as typed can become put in
     // place of the name, or with none the name as typed, as Tab puts them.
     void put_name(std::optional<std::size_t> index);
+    // The entries of `typed`'s folder whose names begin with the name typed.
+    [[nodiscard]] std::vector<PathEntry> paths_matching(const PathTyped& typed) const;
+    // The entry `index` of those the path as typed can become put in place
+    // of the name begun, or with none the name as typed; with `end`, the
+    // round ends there.
+    void put_path(std::optional<std::size_t> index, bool end);
     // What `line`, typed after `:`, will do (outcome()); `inside` a :g, the
     // command it runs at each line it marks, said of that line.
     [[nodiscard]] Outcome read_line(std::string_view line, const CommandContext& context, const FileFacts& files,
@@ -438,6 +483,8 @@ private:
     std::optional<Pattern> preview_;
     // A `:` command for the program, until take() hands it on.
     std::optional<ExCommand> handed_;
+    // How a folder is listed after `:e`.
+    PathLister list_paths_;
     // The searches typed and the lines typed after `:`, the latest last.
     std::vector<std::string> history_;
     std::vector<std::string> commands_;

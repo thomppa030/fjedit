@@ -8,12 +8,8 @@
 
 namespace fjedit::icon {
 
-// Kinds of file (sheet 39), each tinted in its category's hue.
-inline constexpr const char* code_file = ICON_LC_FILE_CODE;   // C++ and shaders
-inline constexpr const char* sheet_file = ICON_LC_HASH;       // stylesheets
-inline constexpr const char* widget_file = ICON_LC_CODE;      // widgets and their markup
-inline constexpr const char* data_file = ICON_LC_BRACES;      // JSON, and the assets written in it
-inline constexpr const char* plain_file = ICON_LC_FILE;
+// The file tree: a folder open. The kinds of file are the widget's
+// (fjedit/widget/icons.hpp), which every view of a file shares.
 inline constexpr const char* open_folder = ICON_LC_FOLDER_OPEN;
 
 // The editor

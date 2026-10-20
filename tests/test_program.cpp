@@ -1067,6 +1067,30 @@ TEST_CASE("With Vim on, Ctrl-W v and s split beside, w h and l go between the gr
     CHECK(run.program->groups() == 2);
 }
 
+TEST_CASE("With Vim on, Tab after :e completes the folder's paths as the tree lists them", "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}, {"sub/b.txt", "b\n"}, {".hidden/c.txt", "c\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    const auto field = [&] { return run.h.find("Command line", Role::TextField); };
+    run.h.type(":e ");
+    run.h.step();
+    // What the tree lists, the hidden folder left out.
+    CHECK(run.h.find("sub/", Role::TreeItem) != nullptr);
+    CHECK(run.h.find("a.txt", Role::TreeItem) != nullptr);
+    CHECK(run.h.find(".hidden/", Role::TreeItem) == nullptr);
+    run.h.type("su");
+    run.h.press(Key::Tab);
+    run.h.step();
+    CHECK(field()->value == "e sub/");
+    run.h.press(Key::Tab);
+    run.h.step();
+    CHECK(field()->value == "e sub/b.txt");
+    run.h.press(Key::Enter);
+    run.h.step(2);
+    CHECK(run.program->front() == run.program->workspace().name(run.folder.path / "sub/b.txt"));
+}
+
 TEST_CASE("With Vim on, the : line says :q will be refused before Enter, as the program knows the tabs",
           "[program][vim]") {
     Running run({{"a.txt", "abc\n"}});
