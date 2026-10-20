@@ -591,10 +591,15 @@ void take_find_plate(const FindPlate& plate, Document& document, EditorView& vie
     if (plate.closed) find.open = false;
 }
 
-// The wheel scrolls: down the text, or along it with Shift. A notch up or
-// left is positive; the scroll grows down and right.
+// The wheel scrolls: down the text, or along it with Shift. With Ctrl it
+// asks for the text to grow, a notch up, or to shrink, and scrolls nothing.
+// A notch up or left is positive; the scroll grows down and right.
 void take_wheel(core::Context& ui, EditorView& view) {
     if (const core::Pointer* mouse = ui.find_pointer(core::PointerType::Mouse, 0)) {
+        if (ui.modifiers().ctrl) {
+            view.zoom += mouse->wheel.y;
+            return;
+        }
         const float step = ui.pointer_style().wheel_step;
         const bool along = ui.modifiers().shift;
         view.scroll.x += (along ? -mouse->wheel.y : mouse->wheel.x) * step;
@@ -1204,6 +1209,13 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                          core::Rect rect) {
     core::Context& ui = core::current();
     const ftk::ui::Id id = ui.id(label);
+    // A new text size keeps the line at the top, and how far along the
+    // lines it is, where they were.
+    if (view.drawn_text_size > 0.0f && view.drawn_text_size != view.text_size) {
+        view.scroll.y *= code_line(view.text_size) / code_line(view.drawn_text_size);
+        view.scroll.x *= view.text_size / view.drawn_text_size;
+    }
+    view.drawn_text_size = view.text_size;
     const Sizes sizes(view.text_size);
     TextLayout layout(ui.text(), mono(sizes.text, sizes.line), document.indent().width);
     layout.set_folds(&view.folds);
@@ -1457,7 +1469,15 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     }
 
     ui.semantics(id, core::Role::TextField, label, {}, {.focused = focus.focused}, rect);
-    return {.edited = document.version() != version, .focused = focus.focused, .go = std::move(go), .rename = rename};
+    // Whole steps of text size go to the one drawing the view; what is left
+    // of a notch waits for more.
+    const int zoom = static_cast<int>(std::trunc(view.zoom));
+    view.zoom -= static_cast<float>(zoom);
+    return {.edited = document.version() != version,
+            .focused = focus.focused,
+            .go = std::move(go),
+            .rename = rename,
+            .zoom = zoom};
 }
 
 } // namespace fjedit

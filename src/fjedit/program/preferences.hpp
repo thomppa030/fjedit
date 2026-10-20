@@ -20,7 +20,7 @@ namespace fjedit {
 
 /// The code's text size steps between these, in pixels.
 inline constexpr int TEXT_SIZE_MIN = 10;
-inline constexpr int TEXT_SIZE_MAX = 24;
+inline constexpr int TEXT_SIZE_MAX = 32;
 /// The rows kept around the caret step between none and this; more than
 /// half a view's keep the caret in its middle.
 inline constexpr int AROUND_CARET_MAX = 100;

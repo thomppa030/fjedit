@@ -94,6 +94,12 @@ struct EditorView {
     /// The code's text size; its lines, its line numbers and the marks on
     /// it scale with it.
     float text_size{CODE_TEXT};
+    /// The text size it was last drawn at: a new size keeps the line at its
+    /// top there.
+    float drawn_text_size{0.0f};
+    /// Notches of the wheel turned with Ctrl over it, not yet asked for as
+    /// steps of text size: a touchpad's small ones add up to a step.
+    float zoom{0.0f};
     /// How the gutter numbers the lines.
     LineNumbers line_numbers{LineNumbers::Absolute};
     /// How many rows it keeps in sight above and below the primary caret
@@ -175,6 +181,10 @@ struct CodeViewResult {
     /// Where a rename was asked for: the name there is for the one drawing
     /// the view to ask a new name for, and rename everywhere.
     std::optional<Position> rename{};
+    /// Steps the text is asked to grow by, Ctrl and the wheel over the view,
+    /// a notch a step; fewer than none to shrink. For the one drawing the
+    /// view, which chooses its text size.
+    int zoom{0};
 };
 
 /// Draws `view` of `document` filling `rect`: the code, then the minimap

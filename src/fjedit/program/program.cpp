@@ -690,6 +690,13 @@ void Program::draw_group(Group& group, std::size_t index) {
             const CodeViewResult result = code_view("Code", *document, *tab.view, keymap_, {.min = at, .max = at + room});
             if (result.focused) active_ = index;
             if (result.go) going_ = result.go;
+            if (result.zoom != 0) {
+                // Ctrl and the wheel size every view's text, as the
+                // preferences do, and the size is kept with them.
+                preferences_.text_size =
+                    std::clamp(preferences_.text_size + result.zoom, TEXT_SIZE_MIN, TEXT_SIZE_MAX);
+                ui::settings_changed();
+            }
             if (result.rename && tab.view->service != nullptr) {
                 const Span word = word_at(document->buffer(), *result.rename);
                 if (word.empty()) {
