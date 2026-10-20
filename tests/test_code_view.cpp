@@ -1651,6 +1651,25 @@ TEST_CASE("With Vim on, the : line lists the paths after :e; a click on a folder
     CHECK(v.e.h.find("spin.cpp", ftk::ui::core::Role::TreeItem) == nullptr);
 }
 
+TEST_CASE("With Vim on, the : line's lit row keeps inside the plate", "[code_view][vim]") {
+    WithVim v("spin");
+    v.e.h.type(":w");
+    v.e.h.step();
+    const auto* field = v.e.h.find("Command line", ftk::ui::core::Role::TextField);
+    REQUIRE(field != nullptr);
+    // The selection's wash under the field, as wide as the field at most.
+    const uint32_t wash = ftk::ui::core::pack_colour(ftk::theme::selection());
+    bool washed = false;
+    for (const auto& root : v.e.h.output().roots) {
+        for (const auto& p : root.draw->primitives) {
+            if (p.colour != wash || p.min.y < field->rect.max.y) continue;
+            washed = true;
+            CHECK(p.max.x <= field->rect.max.x + 1.0f);
+        }
+    }
+    CHECK(washed);
+}
+
 TEST_CASE("With Vim on, the : line's rows grow with the code's text, as its field does", "[code_view][vim]") {
     WithVim v("spin");
     v.e.h.type(":w");
