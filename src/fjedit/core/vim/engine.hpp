@@ -94,6 +94,34 @@ struct CommandLine {
     std::string text;
 };
 
+/// What a `:` line will do when Enter runs it, in plain words, said while
+/// it is typed (sheet 49): "Replace every gust with wind on lines 44 to 46".
+/// A name, a pattern, a path or keys typed stand in the words between \x01
+/// and \x02.
+struct Outcome {
+    /// It runs; it will be refused for the unsaved changes it would lose,
+    /// the words saying what would go ahead; or it won't run, the words
+    /// saying why.
+    enum class Kind : uint8_t { Runs, Refused, Fails };
+    Kind kind{Kind::Runs};
+    std::string text;
+
+    bool operator==(const Outcome&) const = default;
+};
+
+/// What the program knows of its files that the `:` line's words need.
+struct FileFacts {
+    /// The name of the file the view shows ("windmill.cpp"); empty for none
+    /// known.
+    std::string file;
+    /// Closing the view loses unsaved changes: its file has them and no
+    /// other view shows it.
+    bool closing_loses{false};
+    /// The name of a file with unsaved changes, which quitting would lose;
+    /// empty when none has.
+    std::string unsaved;
+};
+
 /// What a key had to say, as Vim's command line says it: an error
 /// ("E486: Pattern not found: spin") or a note ("search hit BOTTOM,
 /// continuing at TOP"); empty text when nothing.
@@ -193,6 +221,12 @@ public:
     /// The command line while one is typed; null otherwise.
     [[nodiscard]] const CommandLine* command_line() const { return typing_ ? &typing_->line : nullptr; }
 
+    /// What the `:` line being typed will do when Enter runs it, read as it
+    /// stands, with what the program knows in `files`: its range as the
+    /// lines it names in `context`, and what follows the name. Nothing while
+    /// no `:` line is typed, or nothing is typed on it.
+    [[nodiscard]] std::optional<Outcome> outcome(const CommandContext& context, const FileFacts& files) const;
+
     /// The search whose matches a view shows: a pattern typed after `/` or
     /// `?` as it is typed, otherwise the last search until Ctrl-L or `:noh`
     /// hides it; null while none shows.
@@ -287,12 +321,18 @@ private:
     // A `:` command that is the program's, handed on from take() once it
     // reads as Vim reads it; what doesn't is said.
     void hand_on(ExCommand command);
+    // What `line`, typed after `:`, will do (outcome()); `inside` a :g, the
+    // command it runs at each line it marks, said of that line.
+    [[nodiscard]] Outcome read_line(std::string_view line, const CommandContext& context, const FileFacts& files,
+                                    bool inside = false) const;
     // :s, :g and :v, :normal and :sort over lines `first` to `last`.
     void run_substitute(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_global(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_normal(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_sort(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_set(const ExCommand& command, CommandContext& context);
+    // Whether the setting `option` is on now, for the view `context` is of.
+    [[nodiscard]] bool setting_on(SetOption option, const CommandContext& context) const;
     // The line `address` names, counted from 1 (0 for above the first), the
     // caret's line `current` counted from 0; an error worded as Vim's. A
     // pattern's search is made into `searched`, which an empty pattern after

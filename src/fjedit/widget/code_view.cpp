@@ -1673,11 +1673,12 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         }
     }
     // Vim's command line, on go to line's plate, the matches' count in it
-    // while a pattern typed reads.
+    // while a pattern typed reads, and under it what a `:` line will do.
     if (view.vim && view.vim->command_line() != nullptr) {
         const vim::CommandLine& line = *view.vim->command_line();
         const std::string count = view.vim->shown_search() != nullptr ? match_count(view.find, view.selections) : "";
-        command_line_plate(line.kind, line.text, count, view.text_size, code);
+        const std::optional<vim::Outcome> outcome = view.vim->outcome(vim_context(), view.file_facts);
+        command_line_plate(line.kind, line.text, count, outcome ? &*outcome : nullptr, view.text_size, code);
     }
 
     // The completion list under the word being typed; an entry clicked is

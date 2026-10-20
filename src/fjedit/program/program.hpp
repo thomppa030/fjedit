@@ -160,6 +160,8 @@ private:
     void close_front();
     // How many tabs show the file at `path`, in every group.
     [[nodiscard]] std::size_t tabs_showing(const std::filesystem::path& path) const;
+    // The first file opened that has unsaved changes, when one has.
+    [[nodiscard]] std::optional<std::filesystem::path> first_unsaved() const;
     // Runs a `:` command of Vim's that is the program's, handed up by the
     // view in front, as Vim runs it: what would lose unsaved changes is
     // refused, said where Vim says it, unless the command has a !.

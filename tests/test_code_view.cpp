@@ -1608,6 +1608,47 @@ TEST_CASE("With Vim on, / shows its line on a plate and its matches through the 
     CHECK_FALSE(v.e.view.find.shown);
 }
 
+TEST_CASE("With Vim on, the : line's plate says under its field what Enter will do", "[code_view][vim]") {
+    WithVim v("spin");
+    v.e.view.file_facts = {.file = "windmill.cpp", .closing_loses = true, .unsaved = "windmill.cpp"};
+    // Whether the last frame drew in `colour` under the field, in the
+    // plate's width.
+    const auto under_field = [&](ftk::ui::Color colour) {
+        const auto* field = v.e.h.find("Command line", ftk::ui::core::Role::TextField);
+        REQUIRE(field != nullptr);
+        const uint32_t packed = ftk::ui::core::pack_colour(colour);
+        for (const auto& root : v.e.h.output().roots) {
+            for (const auto& p : root.draw->primitives) {
+                if (p.colour == packed && p.min.y >= field->rect.max.y && p.max.y <= field->rect.max.y + 3.0f * CODE_LINE &&
+                    p.min.x >= field->rect.min.x - 1.0f && p.max.x <= field->rect.max.x + 1.0f) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    v.e.h.type(":w");
+    v.e.h.step();
+    CHECK(under_field(ftk::theme::text_secondary()));
+    const float wide = v.e.h.find("Command line", ftk::ui::core::Role::TextField)->rect.width();
+    // A refusal to come, in the warning colour.
+    v.e.h.press(Key::Backspace);
+    v.e.h.type("q");
+    v.e.h.step();
+    CHECK(under_field(ftk::theme::warning()));
+    // A line that won't run, in the error colour.
+    v.e.h.press(Key::Backspace);
+    v.e.h.type("frob");
+    v.e.h.step();
+    CHECK(under_field(ftk::theme::error()));
+    // A search says nothing under its field, on go to line's narrower plate.
+    v.e.h.press(Key::Escape);
+    v.e.h.type("/s");
+    v.e.h.step();
+    CHECK_FALSE(under_field(ftk::theme::text_secondary()));
+    CHECK(v.e.h.find("Command line", ftk::ui::core::Role::TextField)->rect.width() < wide);
+}
+
 TEST_CASE("With Vim on, Ctrl-D scrolls the view with the caret, and zt puts the caret's line at the top", "[code_view][vim]") {
     std::string text;
     for (int i = 0; i < 100; ++i) text += "line\n";

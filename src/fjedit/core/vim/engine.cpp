@@ -715,6 +715,99 @@ std::vector<Chord> keys_before(const Command& command) {
     return keys;
 }
 
+// A `:` command of the program's read as Vim reads it: the command to hand
+// on (:wincmd's key as the command Vim runs for it), nothing for a window
+// fjedit doesn't have, or what is wrong, worded as Vim's.
+ftk::Result<std::optional<ExCommand>> program_command_read(ExCommand command) {
+    const std::string& name = command.name;
+    const std::string_view argument = command.argument;
+    if (command.range.from || command.range.whole) {
+        return ftk::make_error(std::format("Not supported yet: :{} with a range", name));
+    }
+    if (name == "wincmd") {
+        if (argument.empty()) return ftk::make_error("E471: Argument required");
+        return window_command(argument);
+    }
+    if (!argument.empty() && name != "edit") {
+        if (name == "write" || name == "wq" || name == "xit" || name == "split" || name == "vsplit") {
+            return ftk::make_error(std::format("Not supported yet: :{} with a file name", name));
+        }
+        const bool count = argument.find_first_not_of("0123456789") == std::string_view::npos;
+        if (count && (name == "bnext" || name == "bprevious")) {
+            return ftk::make_error(std::format("Not supported yet: :{} with a count", name));
+        }
+        return ftk::make_error(std::format("E488: Trailing characters: {}", argument));
+    }
+    return std::optional<ExCommand>(std::move(command));
+}
+
+// `text` typed, as the `:` line's words mark it (Outcome).
+std::string typed_words(std::string_view text) {
+    return std::format("\x01{}\x02", text);
+}
+
+// What went wrong, said plainly where someone new to Vim would stumble on
+// Vim's words; Vim's own otherwise.
+std::string plain_error(std::string_view error) {
+    constexpr std::string_view NOT_A_COMMAND = "E492: Not an editor command: ";
+    if (error.starts_with(NOT_A_COMMAND)) {
+        return std::format("Not a command: {}", typed_words(error.substr(NOT_A_COMMAND.size())));
+    }
+    if (error.starts_with("E35:")) return "No search before this to go on with";
+    if (error.starts_with("E16:")) return "No such line in this file";
+    if (error.starts_with("E20:")) return "That mark isn't set";
+    return std::string(error);
+}
+
+// Lines `first` to `last` of a text of `count` lines, as the words name
+// them: "line 44", "lines 44 to 46", "every line"; and as they name each of
+// them: "each of lines 44 to 46", "each line".
+std::string lines_words(std::size_t first, std::size_t last, std::size_t count) {
+    if (first == last) return std::format("line {}", first + 1);
+    if (first == 0 && last + 1 == count) return "every line";
+    return std::format("lines {} to {}", first + 1, last + 1);
+}
+std::string each_line_words(std::size_t first, std::size_t last, std::size_t count) {
+    if (first == last) return std::format("line {}", first + 1);
+    if (first == 0 && last + 1 == count) return "each line";
+    return std::format("each of lines {} to {}", first + 1, last + 1);
+}
+
+// Where :d and :y keep what they take, when it is not Vim's unnamed
+// register.
+std::string register_words(char reg) {
+    if (reg == '"') return {};
+    if (reg == '+' || reg == '*') return " into the clipboard";
+    return std::format(" into register {}", typed_words(std::string_view(&reg, 1)));
+}
+
+// A setting :set changes, as the words name it.
+std::string_view setting_words(SetOption option) {
+    switch (option) {
+        case SetOption::Number: return "line numbers";
+        case SetOption::RelativeNumber: return "relative line numbers";
+        case SetOption::IgnoreCase: return "ignoring case";
+        case SetOption::SmartCase: return "smart case";
+        case SetOption::HlSearch: return "showing the search's matches";
+        case SetOption::ExpandTab: return "indenting with spaces";
+        case SetOption::ShiftWidth:
+        case SetOption::TabStop: return "the indent width";
+        case SetOption::ScrollOff: return "the lines kept around the caret";
+    }
+    return {};
+}
+
+// `text` with its first letter made a capital, to begin the words; or made
+// small, to follow others.
+std::string capitalised(std::string text) {
+    if (!text.empty() && text[0] >= 'a' && text[0] <= 'z') text[0] = static_cast<char>(text[0] - 'a' + 'A');
+    return text;
+}
+std::string lowered(std::string text) {
+    if (!text.empty() && text[0] >= 'A' && text[0] <= 'Z') text[0] = static_cast<char>(text[0] - 'A' + 'a');
+    return text;
+}
+
 } // namespace
 
 std::string_view keymap_mode(Mode mode) {
@@ -1126,27 +1219,226 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
 }
 
 void Engine::hand_on(ExCommand command) {
-    const std::string& name = command.name;
-    const std::string_view argument = command.argument;
-    const auto refuse = [&](std::string text) { remembered_.message = {.text = std::move(text), .error = true}; };
-    if (command.range.from || command.range.whole) return refuse(std::format("Not supported yet: :{} with a range", name));
-    if (name == "wincmd") {
-        if (argument.empty()) return refuse("E471: Argument required");
-        // A window fjedit doesn't have: nothing, as when Vim has none there.
-        std::optional<ExCommand> window = window_command(argument);
-        if (!window) return;
-        command = std::move(*window);
-    } else if (!argument.empty() && name != "edit") {
-        if (name == "write" || name == "wq" || name == "xit" || name == "split" || name == "vsplit") {
-            return refuse(std::format("Not supported yet: :{} with a file name", name));
-        }
-        const bool count = argument.find_first_not_of("0123456789") == std::string_view::npos;
-        if (count && (name == "bnext" || name == "bprevious")) {
-            return refuse(std::format("Not supported yet: :{} with a count", name));
-        }
-        return refuse(std::format("E488: Trailing characters: {}", argument));
+    ftk::Result<std::optional<ExCommand>> read = program_command_read(std::move(command));
+    if (!read) {
+        remembered_.message = {.text = read.error(), .error = true};
+        return;
     }
-    handed_ = std::move(command);
+    // None for a window fjedit doesn't have: nothing, as when Vim has none
+    // there.
+    handed_ = std::move(*read);
+}
+
+std::optional<Outcome> Engine::outcome(const CommandContext& c, const FileFacts& files) const {
+    if (!typing_ || typing_->line.kind != ':' || typing_->line.text.empty()) return std::nullopt;
+    return read_line(typing_->line.text, c, files);
+}
+
+Outcome Engine::read_line(std::string_view text, const CommandContext& c, const FileFacts& files, bool inside) const {
+    const auto runs = [](std::string words) { return Outcome{.kind = Outcome::Kind::Runs, .text = std::move(words)}; };
+    const auto refused = [](std::string words) { return Outcome{.kind = Outcome::Kind::Refused, .text = std::move(words)}; };
+    const auto fails = [](std::string_view error) { return Outcome{.kind = Outcome::Kind::Fails, .text = plain_error(error)}; };
+    const ftk::Result<ExCommand> read = parse_ex(text);
+    if (!read) return fails(read.error());
+    const ExCommand& command = *read;
+    const std::string& name = command.name;
+
+    // The program's, said as the program will run them.
+    if (program_command(name)) {
+        const ftk::Result<std::optional<ExCommand>> checked = program_command_read(command);
+        if (!checked) return fails(checked.error());
+        if (!*checked) return runs("Nothing: no group stands there");
+        const ExCommand& run = **checked;
+        const std::string file = files.file.empty() ? "this file" : files.file;
+        const bool unsaved = !c.document.history().at_saved();
+        if (run.name == "write") return runs(std::format("Save {}", file));
+        if (run.name == "wall") return runs("Save all");
+        if (run.name == "quit" || run.name == "close") {
+            if (!files.closing_loses) return runs(std::format("Close {}", file));
+            if (!run.bang) {
+                return refused(std::format("Unsaved changes. {} drops them, {} saves first", typed_words(":q!"),
+                                           typed_words(":wq")));
+            }
+            return runs(std::format("Close {}, dropping its changes", file));
+        }
+        if (run.name == "wq" || (run.name == "xit" && unsaved)) return runs(std::format("Save and close {}", file));
+        if (run.name == "xit") return runs(std::format("Close {}", file));
+        if (run.name == "qall") {
+            if (files.unsaved.empty()) return runs("Quit");
+            if (!run.bang) {
+                return refused(std::format("Unsaved changes in {}. {} drops them, {} saves them", files.unsaved,
+                                           typed_words(":qa!"), typed_words(":wa")));
+            }
+            return runs("Quit, dropping every change");
+        }
+        if (run.name == "edit") {
+            if (!run.argument.empty()) return runs(std::format("Open {}", typed_words(run.argument)));
+            if (!unsaved) return runs(std::format("Read {} again", file));
+            if (!run.bang) return refused(std::format("Unsaved changes. {} drops them", typed_words(":e!")));
+            return runs(std::format("Read {} again, dropping its changes", file));
+        }
+        if (run.name == "bnext") return runs("Next tab");
+        if (run.name == "bprevious") return runs("Previous tab");
+        if (run.name == "split" || run.name == "vsplit") return runs("Split");
+        if (run.argument == "h") return runs("Go to the group on the left");
+        if (run.argument == "l") return runs("Go to the group on the right");
+        return runs("Go to the next group");
+    }
+
+    const bool whole = name == "global" || name == "vglobal" || name == "sort";
+    std::optional<Search> searched;
+    const ftk::Result<std::pair<std::size_t, std::size_t>> lines = lines_of(command.range, whole, c, searched);
+    if (!lines) return fails(lines.error());
+    auto [first, last] = *lines;
+    const std::size_t count = c.document.buffer().line_count();
+    // The lines it acts on; inside a :g, the line it marked, and a count's
+    // more lines from that one.
+    const auto where = [&](std::optional<std::size_t> counted = {}) {
+        if (!inside) return lines_words(first, last, count);
+        return counted && *counted > 1 ? std::format("{} lines from it", *counted) : std::string("it");
+    };
+    const auto on_each = [&] { return inside ? std::string("on it") : "on " + each_line_words(first, last, count); };
+
+    if (name == "set") {
+        // Each setting as it will be: on, off, asked, or given a number.
+        std::vector<std::string> parts;
+        std::string_view rest = command.argument;
+        while (!rest.empty()) {
+            const std::size_t blank = rest.find(' ');
+            const std::string_view item = rest.substr(0, blank);
+            rest = blank == std::string_view::npos ? std::string_view{} : rest.substr(blank + 1);
+            if (item.empty()) continue;
+            const ftk::Result<SetItem> set = read_set_item(item);
+            if (!set) return fails(set.error());
+            const std::string_view words = setting_words(set->option);
+            if (set->action == SetItem::Action::Ask) {
+                parts.push_back(set->on_off ? std::format("show whether {} is on", words) : std::format("show {}", words));
+            } else if (set->action == SetItem::Action::Value) {
+                parts.push_back(std::format("set {} to {}", words, set->value));
+            } else {
+                const bool to = set->action == SetItem::Action::Toggle ? !setting_on(set->option, c)
+                                                                       : set->action == SetItem::Action::On;
+                if (set->option == SetOption::Number && !to) return fails("Line numbers always show here");
+                parts.push_back(std::format("turn {} {}", words, to ? "on" : "off"));
+            }
+        }
+        if (parts.empty()) return runs("Name a setting to change it");
+        std::string said;
+        for (const std::string& part : parts) said += (said.empty() ? "" : ", ") + part;
+        return runs(capitalised(std::move(said)));
+    }
+    if (name == "nohlsearch") return runs("Hide the search's matches");
+    if (!acts_on_lines(name)) return fails(std::format("Not supported yet: :{}", name));
+    if (name.empty()) return runs(std::format("Go to line {}", last + 1));
+
+    if (name == "delete" || name == "yank") {
+        const ftk::Result<RegisterCount> argument = read_register_count(command.argument);
+        if (!argument) return fails(argument.error());
+        apply_count(argument->count, first, last, count);
+        return runs(std::format("{} {}{}", name == "delete" ? "Delete" : "Copy", where(argument->count),
+                                register_words(argument->reg)));
+    }
+    if (name == ">" || name == "<") {
+        const ftk::Result<Shift> argument = read_shift(name[0], command.argument);
+        if (!argument) return fails(argument.error());
+        apply_count(argument->count, first, last, count);
+        const std::string levels = argument->levels > 1 ? std::format(" by {} levels", argument->levels) : "";
+        return runs(std::format("{} {}{}", name == ">" ? "Indent" : "Outdent", where(argument->count), levels));
+    }
+    if (name == "move" || name == "copy" || name == "t") {
+        const ftk::Result<ExAddress> target = read_target(command.argument);
+        if (!target) return fails(target.error());
+        std::string to;
+        if (inside && target->kind != ExAddress::Kind::Number && target->kind != ExAddress::Kind::Last) {
+            // Found from each marked line in turn.
+            to = std::format("below {}", typed_words(command.argument));
+        } else {
+            std::optional<Search> aimed = searched;
+            const ftk::Result<std::size_t> below = line_at(*target, c.selections.primary().caret.line, c, aimed);
+            if (!below) return fails(below.error());
+            if (name == "move" && !inside && *below > first && *below <= last) {
+                return fails("E134: Cannot move a range of lines into itself");
+            }
+            to = *below == 0 ? "above the first line" : std::format("below line {}", *below);
+        }
+        return runs(std::format("{} {} {}", name == "move" ? "Move" : "Put a copy of", where(), to));
+    }
+    if (name == "substitute") {
+        const ftk::Result<SubstituteArgument> argument = read_substitute(command.argument);
+        if (!argument) return fails(argument.error());
+        std::string pattern;
+        std::string with;
+        bool every = false;
+        if (!argument->written) {
+            // :s alone, or with flags, the last again.
+            if (!substitute_) return fails("E35: No previous regular expression");
+            pattern = substitute_->pattern;
+            with = substitute_->with;
+        } else {
+            pattern = argument->written->pattern;
+            with = argument->written->with;
+            if (pattern.empty()) {
+                if (!remembered_.search) return fails("E35: No previous regular expression");
+                pattern = remembered_.search->text;
+            }
+        }
+        if (argument->every == SubstituteArgument::Every::Yes) every = true;
+        if (argument->every == SubstituteArgument::Every::AsLast) every = substitute_ && substitute_->every;
+        apply_count(argument->count, first, last, count);
+        if (const ftk::Result<Pattern> valid = read_pattern(pattern, remembered_.settings); !valid) {
+            return fails(valid.error());
+        }
+        const std::string_view which = every ? "every" : "the first";
+        const std::string at = every ? "on " + where(argument->count) : on_each();
+        std::string said = with.empty()
+                               ? std::format("Delete {} {} {}", which, typed_words(pattern), at)
+                               : std::format("Replace {} {} with {} {}", which, typed_words(pattern), typed_words(with), at);
+        if (argument->match_case) said += *argument->match_case ? ", matching case" : ", any case";
+        return runs(std::move(said));
+    }
+    if (name == "global" || name == "vglobal") {
+        if (inside) return fails("E147: Cannot do :global recursive");
+        const ftk::Result<GlobalArgument> argument = read_global(command.argument);
+        if (!argument) return fails(argument.error());
+        std::string pattern = argument->pattern;
+        if (pattern.empty()) {
+            const std::optional<Search>& before = searched ? searched : remembered_.search;
+            if (!before) return fails("E35: No previous regular expression");
+            pattern = before->text;
+        }
+        if (const ftk::Result<Pattern> valid = read_pattern(pattern, remembered_.settings); !valid) {
+            return fails(valid.error());
+        }
+        if (argument->command.empty()) return runs(std::format("Search for {}", typed_words(pattern)));
+        const bool matching = (name == "global") != command.bang;
+        const std::string marked =
+            std::format("every line {} {}{}", matching ? "with" : "without", typed_words(pattern),
+                        first == 0 && last + 1 == count ? "" : " in " + lines_words(first, last, count));
+        const ftk::Result<ExCommand> inner = parse_ex(argument->command);
+        if (!inner) return fails(inner.error());
+        if (inner->range.from || inner->range.whole) {
+            return runs(std::format("On {}, run {}", marked, typed_words(argument->command)));
+        }
+        if (inner->name == "delete" && inner->argument.empty()) return runs("Delete " + marked);
+        Outcome each = read_line(argument->command, c, files, true);
+        if (each.kind != Outcome::Kind::Runs) return each;
+        return runs(std::format("On {}, {}", marked, lowered(std::move(each.text))));
+    }
+    if (name == "normal") {
+        if (command.argument.empty()) return fails("E471: Argument required");
+        const bool ranged = command.range.from || command.range.whole;
+        return runs(std::format("Type {} in normal mode {}", typed_words(command.argument),
+                                ranged || inside ? on_each() : std::string("at the caret")));
+    }
+    // :sort, the last that acts on lines.
+    const ftk::Result<SortArgument> argument = read_sort(command.argument);
+    if (!argument) return fails(argument.error());
+    std::string said = std::format("Sort {}", where());
+    if (command.bang) said += " in reverse";
+    if (argument->by_number) said += " by their first number";
+    if (argument->fold_case) said += ", any case";
+    if (argument->unique) said += ", leaving out repeats";
+    return runs(std::move(said));
 }
 
 void Engine::run_substitute(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {
@@ -1294,20 +1586,23 @@ void Engine::run_normal(const ExCommand& command, std::size_t first, std::size_t
     c.document.history().join(steps);
 }
 
+bool Engine::setting_on(SetOption option, const CommandContext& c) const {
+    const Settings& settings = *settings_;
+    switch (option) {
+        case SetOption::Number: return true;
+        case SetOption::RelativeNumber: return settings.relative_numbers.value_or(settings.relative_numbers_shown);
+        case SetOption::IgnoreCase: return settings.pattern.ignore_case;
+        case SetOption::SmartCase: return settings.pattern.smart_case;
+        case SetOption::HlSearch: return settings.hlsearch;
+        case SetOption::ExpandTab: return !c.document.indent().tabs;
+        default: return false;
+    }
+}
+
 void Engine::run_set(const ExCommand& command, CommandContext& c) {
     using Option = SetOption;
     Settings& settings = *settings_;
-    const auto on = [&](Option option) {
-        switch (option) {
-            case Option::Number: return true;
-            case Option::RelativeNumber: return settings.relative_numbers.value_or(settings.relative_numbers_shown);
-            case Option::IgnoreCase: return settings.pattern.ignore_case;
-            case Option::SmartCase: return settings.pattern.smart_case;
-            case Option::HlSearch: return settings.hlsearch;
-            case Option::ExpandTab: return !c.document.indent().tabs;
-            default: return false;
-        }
-    };
+    const auto on = [&](Option option) { return setting_on(option, c); };
     const auto number = [&](Option option) -> std::size_t {
         if (option == Option::ScrollOff) return settings.around_caret.value_or(settings.around_caret_shown);
         return c.document.indent().width;

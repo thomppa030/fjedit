@@ -1066,3 +1066,35 @@ TEST_CASE("With Vim on, Ctrl-W v and s split beside, w h and l go between the gr
     window("c");
     CHECK(run.program->groups() == 2);
 }
+
+TEST_CASE("With Vim on, the : line says :q will be refused before Enter, as the program knows the tabs",
+          "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    // Whether the last frame drew anything in `colour`.
+    const auto drew = [&](ftk::ui::Color colour) {
+        const uint32_t packed = ftk::ui::core::pack_colour(colour);
+        for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+            for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+                if (p.colour == packed) return true;
+            }
+        }
+        return false;
+    };
+    run.h.type("x");
+    run.h.type(":q");
+    run.h.step();
+    CHECK(drew(ftk::theme::warning()));
+    run.h.press(Key::Escape);
+    run.h.step();
+    CHECK_FALSE(drew(ftk::theme::warning()));
+    // Shown in a second group too, closing one tab loses nothing.
+    run.h.press(Key::W, CTRL);
+    run.h.type("v");
+    run.h.step(2);
+    run.h.type(":q");
+    run.h.step();
+    CHECK_FALSE(drew(ftk::theme::warning()));
+}

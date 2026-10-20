@@ -82,6 +82,10 @@ struct EditorView {
     /// Vim on this view: its modes, and the keys read in them (sheet 47).
     /// None for the standard keys.
     std::optional<vim::Engine> vim;
+    /// What the one drawing the view knows of its files that Vim's `:` line
+    /// says (the file's name, whether closing loses changes), set before it
+    /// draws the view.
+    vim::FileFacts file_facts;
     /// The document's version the selections have caught up with.
     uint64_t seen{0};
     /// When the carets last moved, which they blink from.

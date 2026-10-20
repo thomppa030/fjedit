@@ -426,6 +426,13 @@ std::size_t Program::tabs_showing(const std::filesystem::path& path) const {
     return showing;
 }
 
+std::optional<std::filesystem::path> Program::first_unsaved() const {
+    for (const std::filesystem::path& path : workspace_.files()) {
+        if (workspace_.unsaved(path)) return path;
+    }
+    return std::nullopt;
+}
+
 void Program::run_ex(const vim::ExCommand& command) {
     Tab* tab = front_tab();
     if (tab == nullptr) return;
@@ -453,14 +460,11 @@ void Program::run_ex(const vim::ExCommand& command) {
         if (workspace_.unsaved(path)) return;
         close();
     } else if (name == "qall") {
-        const std::vector<std::filesystem::path> files = workspace_.files();
-        const auto unsaved = std::ranges::find_if(files, [&](const std::filesystem::path& file) {
-            return workspace_.unsaved(file);
-        });
-        if (unsaved != files.end() && !command.bang) {
+        const std::optional<std::filesystem::path> unsaved = first_unsaved();
+        if (unsaved && !command.bang) {
             return refuse(std::format("E162: No write since last change for buffer \"{}\"", unsaved->filename().string()));
         }
-        for (const std::filesystem::path& file : files) {
+        for (const std::filesystem::path& file : workspace_.files()) {
             if (workspace_.unsaved(file)) forget_kept(file);
         }
         quitting_ = true;
@@ -767,6 +771,10 @@ void Program::draw_group(Group& group, std::size_t index) {
             }
         }
         show_as_preferred(*tab.view, preferences_, registers_, vim_settings_);
+        const std::optional<std::filesystem::path> unsaved = first_unsaved();
+        tab.view->file_facts = {.file = tab.path.filename().string(),
+                                .closing_loses = workspace_.unsaved(tab.path) && tabs_showing(tab.path) == 1,
+                                .unsaved = unsaved ? unsaved->filename().string() : std::string()};
         Document* document = workspace_.find(tab.path);
         const glm::vec2 at = ui::cursor();
         const glm::vec2 room = ui::space_left();

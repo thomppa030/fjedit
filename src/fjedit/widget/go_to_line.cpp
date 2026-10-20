@@ -4,6 +4,7 @@
 #include "fjedit/widget/code_view.hpp"
 
 #include "ftk/base/utf8.hpp"
+#include "ftk/ui/kit/feedback.hpp"
 #include "ftk/ui/kit/item.hpp"
 #include "ftk/ui/kit/layout.hpp"
 #include "ftk/ui/kit/plate.hpp"
@@ -22,8 +23,9 @@ namespace {
 namespace ui = ftk::ui;
 namespace theme = ftk::theme;
 
-// The plate's width (sheet 39).
+// The plate's width (sheet 39); for Vim's `:` line, find's (sheet 49).
 constexpr float PLATE_WIDTH = 320.0f;
+constexpr float COMMAND_PLATE_WIDTH = 420.0f;
 
 // `text` without the spaces around it.
 std::string_view trimmed(std::string_view text) {
@@ -98,14 +100,26 @@ GoToLinePlate go_to_line_plate(GoToLineState& state, const Document& document, P
     return out;
 }
 
-void command_line_plate(char kind, std::string_view text, std::string_view note, float text_size,
-                        ftk::ui::core::Rect over) {
-    const float width = std::min(PLATE_WIDTH * text_size / CODE_TEXT, over.width() - 2.0f * ui::PLATE_INSET);
+void command_line_plate(char kind, std::string_view text, std::string_view note, const vim::Outcome* outcome,
+                        float text_size, ftk::ui::core::Rect over) {
+    // A `:` line is as wide as find's plate from its first key, so the
+    // words under it never make it jump.
+    const float base = kind == ':' ? COMMAND_PLATE_WIDTH : PLATE_WIDTH;
+    const float width = std::min(base * text_size / CODE_TEXT, over.width() - 2.0f * ui::PLATE_INSET);
     if (auto plate = ui::Plate("##command_line", over.min, over.max, ui::PlatePlace::TopCenter, width)) {
-        const ui::FontScope mono(theme::mono_font(), text_size);
-        ui::next_width(plate.inner_width());
-        const char prompt[] = {kind, '\0'};
-        ui::shown_entry("Command line##vim", text, {.prompt = prompt, .caret = text.size(), .note = note});
+        {
+            const ui::FontScope mono(theme::mono_font(), text_size);
+            ui::next_width(plate.inner_width());
+            const char prompt[] = {kind, '\0'};
+            ui::shown_entry("Command line##vim", text, {.prompt = prompt, .caret = text.size(), .note = note});
+        }
+        if (outcome != nullptr) {
+            const ui::FontScope body(ui::Font::Body, text_size);
+            std::optional<ui::Severity> severity;
+            if (outcome->kind == vim::Outcome::Kind::Refused) severity = ui::Severity::Warning;
+            if (outcome->kind == vim::Outcome::Kind::Fails) severity = ui::Severity::Error;
+            ui::outcome_line(severity, outcome->text);
+        }
     }
 }
 

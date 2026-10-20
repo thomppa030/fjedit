@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -1432,6 +1433,117 @@ TEST_CASE("Ctrl-W's keys are the commands Vim runs for them, from visual and ins
     v.keys("i<C-o><C-w>q");
     CHECK(written(v.handed) == std::vector<std::string>{"quit"});
     CHECK(v.engine.mode() == vim::Mode::Insert);
+}
+
+namespace {
+
+// What the `:` line will do with `line` typed on it, as the words say it,
+// what is typed in them between backticks; a refusal or what won't run
+// says so first. The line is left with Esc.
+std::string reading(Vim& v, std::string_view line, const vim::FileFacts& files = {}) {
+    v.keys(":");
+    if (!line.empty()) v.keys(line);
+    CommandContext acting = v.context();
+    const std::optional<vim::Outcome> outcome = v.engine.outcome(acting, files);
+    v.keys("<Esc>");
+    if (!outcome) return "(nothing)";
+    std::string text = outcome->text;
+    std::ranges::replace(text, '\x01', '`');
+    std::ranges::replace(text, '\x02', '`');
+    if (outcome->kind == vim::Outcome::Kind::Refused) return "refused: " + text;
+    if (outcome->kind == vim::Outcome::Kind::Fails) return "fails: " + text;
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("The : line says in plain words what Enter will do, its range as the lines it names", "[vim][ex]") {
+    Vim v("a\n|gust\ngust\ngust\nb\nwarn");
+    const std::string text = v.view.buffer().text();
+    CHECK(reading(v, "") == "(nothing)");
+    CHECK(reading(v, "5") == "Go to line 5");
+    CHECK(reading(v, "12") == "fails: No such line in this file");
+    CHECK(reading(v, "d") == "Delete line 2");
+    CHECK(reading(v, "2,4d a") == "Delete lines 2 to 4 into register `a`");
+    CHECK(reading(v, "d 3") == "Delete lines 2 to 4");
+    CHECK(reading(v, "%y") == "Copy every line");
+    CHECK(reading(v, "y +") == "Copy line 2 into the clipboard");
+    CHECK(reading(v, ">>") == "Indent line 2 by 2 levels");
+    CHECK(reading(v, "m0") == "Move line 2 above the first line");
+    CHECK(reading(v, "t$") == "Put a copy of line 2 below line 6");
+    CHECK(reading(v, "/warn/d") == "Delete line 6");
+    CHECK(reading(v, "2,4m3") == "fails: E134: Cannot move a range of lines into itself");
+    CHECK(reading(v, "s/gust/wind/") == "Replace the first `gust` with `wind` on line 2");
+    CHECK(reading(v, "2,4s/gust/wind/g") == "Replace every `gust` with `wind` on lines 2 to 4");
+    CHECK(reading(v, "%s/gust/wind/gi") == "Replace every `gust` with `wind` on every line, any case");
+    CHECK(reading(v, "%s/gust/wind/") == "Replace the first `gust` with `wind` on each line");
+    CHECK(reading(v, "2,4s/gust/wind/") == "Replace the first `gust` with `wind` on each of lines 2 to 4");
+    CHECK(reading(v, "g/warn/d") == "Delete every line with `warn`");
+    CHECK(reading(v, "v/warn/d") == "Delete every line without `warn`");
+    CHECK(reading(v, "g/gust/s/u/o/") == "On every line with `gust`, replace the first `u` with `o` on it");
+    CHECK(reading(v, "g/gust/.,+1d") == "On every line with `gust`, run `.,+1d`");
+    CHECK(reading(v, "g/gust/") == "Search for `gust`");
+    CHECK(reading(v, "g/gust/g/a/d") == "fails: E147: Cannot do :global recursive");
+    CHECK(reading(v, "norm A;") == "Type `A;` in normal mode at the caret");
+    CHECK(reading(v, "%norm A;") == "Type `A;` in normal mode on each line");
+    CHECK(reading(v, "sort u") == "Sort every line, leaving out repeats");
+    CHECK(reading(v, "sort! n") == "Sort every line in reverse by their first number");
+    CHECK(reading(v, "set rnu ic?") == "Turn relative line numbers on, show whether ignoring case is on");
+    CHECK(reading(v, "set sw=2") == "Set the indent width to 2");
+    CHECK(reading(v, "set hls!") == "Turn showing the search's matches off");
+    CHECK(reading(v, "set nonu") == "fails: Line numbers always show here");
+    CHECK(reading(v, "set foo") == "fails: E518: Unknown option: foo");
+    CHECK(reading(v, "noh") == "Hide the search's matches");
+    CHECK(reading(v, "frob") == "fails: Not a command: `frob`");
+    // Half typed: what Enter would do now.
+    CHECK(reading(v, "s/gu") == "Delete the first `gu` on line 2");
+    CHECK(reading(v, "s") == "fails: No search before this to go on with");
+    CHECK(reading(v, "s/a\\(").starts_with("fails: "));
+    // The selection's lines, as '<,'> names them.
+    v.keys("Vjj:s/gust/wind/g");
+    CommandContext acting = v.context();
+    const std::optional<vim::Outcome> selected = v.engine.outcome(acting, {});
+    REQUIRE(selected);
+    CHECK(selected->text == "Replace every \x01gust\x02 with \x01wind\x02 on lines 2 to 4");
+    v.keys("<Esc>");
+    // Reading does nothing: no text changed, no search made.
+    CHECK(v.view.buffer().text() == text);
+    CHECK(v.engine.shown_search() == nullptr);
+}
+
+TEST_CASE("The : line says what the program's commands will do, and what they will refuse over changes",
+          "[vim][ex]") {
+    Vim v("|a");
+    const vim::FileFacts saved{.file = "windmill.cpp", .closing_loses = false, .unsaved = {}};
+    CHECK(reading(v, "w", saved) == "Save windmill.cpp");
+    CHECK(reading(v, "w") == "Save this file");
+    CHECK(reading(v, "wa", saved) == "Save all");
+    CHECK(reading(v, "wq", saved) == "Save and close windmill.cpp");
+    CHECK(reading(v, "x", saved) == "Close windmill.cpp");
+    CHECK(reading(v, "q", saved) == "Close windmill.cpp");
+    CHECK(reading(v, "qa", saved) == "Quit");
+    CHECK(reading(v, "e scripts/wind.cpp", saved) == "Open `scripts/wind.cpp`");
+    CHECK(reading(v, "e", saved) == "Read windmill.cpp again");
+    CHECK(reading(v, "bn") == "Next tab");
+    CHECK(reading(v, "bp") == "Previous tab");
+    CHECK(reading(v, "vs") == "Split");
+    CHECK(reading(v, "wincmd l") == "Go to the group on the right");
+    CHECK(reading(v, "wincmd w") == "Go to the next group");
+    CHECK(reading(v, "wincmd j") == "Nothing: no group stands there");
+    CHECK(reading(v, "2w") == "fails: Not supported yet: :write with a range");
+    // Changed: closing it or reading it again would lose the change.
+    v.keys("x");
+    const vim::FileFacts changed{.file = "windmill.cpp", .closing_loses = true, .unsaved = "windmill.cpp"};
+    CHECK(reading(v, "q", changed) == "refused: Unsaved changes. `:q!` drops them, `:wq` saves first");
+    CHECK(reading(v, "q!", changed) == "Close windmill.cpp, dropping its changes");
+    CHECK(reading(v, "x", changed) == "Save and close windmill.cpp");
+    CHECK(reading(v, "qa", changed) == "refused: Unsaved changes in windmill.cpp. `:qa!` drops them, `:wa` saves them");
+    CHECK(reading(v, "qa!", changed) == "Quit, dropping every change");
+    CHECK(reading(v, "e", changed) == "refused: Unsaved changes. `:e!` drops them");
+    CHECK(reading(v, "e!", changed) == "Read windmill.cpp again, dropping its changes");
+    // Another tab shows it: closing this one loses nothing.
+    const vim::FileFacts shown{.file = "windmill.cpp", .closing_loses = false, .unsaved = "windmill.cpp"};
+    CHECK(reading(v, "q", shown) == "Close windmill.cpp");
 }
 
 TEST_CASE("The : line says what is wrong as Vim does, keeps what was typed, and :noh hides the matches",
