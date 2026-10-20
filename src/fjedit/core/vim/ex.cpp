@@ -13,15 +13,15 @@ struct Name {
     std::string_view shortest;
 };
 constexpr Name NAMES[] = {
-    {"bnext", "bn"},  {"bprevious", "bp"}, {"copy", "co"},   {"delete", "d"},      {"edit", "e"},
-    {"global", "g"},  {"move", "m"},       {"nohlsearch", "noh"}, {"normal", "norm"}, {"qall", "qa"},
-    {"quit", "q"},    {"set", "se"},       {"sort", "sor"},  {"split", "sp"},      {"substitute", "s"},
-    {"t", "t"},       {"vglobal", "v"},    {"vsplit", "vs"}, {"wall", "wa"},       {"wq", "wq"},
-    {"write", "w"},   {"xit", "x"},        {"yank", "y"},
+    {"bnext", "bn"},  {"bprevious", "bp"}, {"close", "clo"},  {"copy", "co"},          {"delete", "d"},
+    {"edit", "e"},    {"global", "g"},     {"move", "m"},     {"nohlsearch", "noh"},   {"normal", "norm"},
+    {"qall", "qa"},   {"quit", "q"},       {"set", "se"},     {"sort", "sor"},         {"split", "sp"},
+    {"substitute", "s"}, {"t", "t"},       {"vglobal", "v"},  {"vsplit", "vs"},        {"wall", "wa"},
+    {"wincmd", "winc"}, {"wq", "wq"},      {"write", "w"},    {"xit", "x"},            {"yank", "y"},
 };
 constexpr std::string_view COMMANDS[] = {
-    "bnext", "bprevious", "copy", "delete", "edit", "global", "move", "nohlsearch", "normal", "qall", "quit", "set",
-    "sort", "split", "substitute", "t", "vglobal", "vsplit", "wall", "wq", "write", "xit", "yank",
+    "bnext", "bprevious", "close", "copy", "delete", "edit", "global", "move", "nohlsearch", "normal", "qall", "quit",
+    "set", "sort", "split", "substitute", "t", "vglobal", "vsplit", "wall", "wincmd", "wq", "write", "xit", "yank",
 };
 
 bool digit(char c) {

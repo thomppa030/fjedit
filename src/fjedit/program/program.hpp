@@ -158,6 +158,14 @@ private:
     // Closes the tab in front, asking first when its file has unsaved
     // changes that no other tab shows.
     void close_front();
+    // How many tabs show the file at `path`, in every group.
+    [[nodiscard]] std::size_t tabs_showing(const std::filesystem::path& path) const;
+    // Runs a `:` command of Vim's that is the program's, handed up by the
+    // view in front, as Vim runs it: what would lose unsaved changes is
+    // refused, said where Vim says it, unless the command has a !.
+    void run_ex(const vim::ExCommand& command);
+    // The keyboard into group `index`'s tab in front.
+    void focus_group(std::size_t index);
     // Closes `group`'s tab `index`, and lets its file go when no tab
     // shows it any more. A group split off that has no tab left goes.
     void close_tab(Group& group, std::size_t index);
@@ -241,6 +249,9 @@ private:
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;
+    // Vim's `:` commands the view in front handed up, run once the views
+    // are drawn.
+    std::vector<vim::ExCommand> vim_commands_;
     // A rename typed in place, asked of the services: the names and where,
     // and the services' answer to come.
     struct Renaming {

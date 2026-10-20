@@ -126,6 +126,12 @@ std::string argument_of(const Chord& key) {
 // A motion or a command from `keys[i]` on.
 Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) {
     const Chord& key = keys[i];
+    // Ctrl-W begins a window command, which any key ends.
+    if (pressed(key, Key::W, {.ctrl = true})) {
+        if (i + 1 == keys.size()) return Parsed::Waiting;
+        command.name = "<C-w>" + notation(keys[i + 1]);
+        return ends_at(keys, i + 2);
+    }
     const bool prefix = key.text == "g" || key.text == "z";
     const bool takes_character = key.text == "f" || key.text == "t" || key.text == "F" || key.text == "T" ||
                                  (key.text == "r" && command.op.empty());
@@ -711,6 +717,33 @@ bool acts_on_lines(std::string_view name) {
     return std::ranges::contains(NAMES, name);
 }
 
+// Whether `name` is a `:` command that is the program's: its files
+// written, quit and edited, its tabs stepped, and its groups split and gone
+// between.
+bool program_command(std::string_view name) {
+    static constexpr std::string_view NAMES[] = {"write",  "wall",  "quit",      "qall",  "close",  "wq",    "xit",
+                                                 "edit",   "bnext", "bprevious", "split", "vsplit", "wincmd"};
+    return std::ranges::contains(NAMES, name);
+}
+
+// The key after Ctrl-W, as :wincmd takes it, as the command Vim runs for
+// it: Ctrl-W q is :quit, c :close, s and v :split and :vsplit, and w, h and
+// l go between the groups. Nothing for a window fjedit doesn't have, as
+// those above and below: its groups stand side by side.
+std::optional<ExCommand> window_command(std::string_view key) {
+    const auto named = [](std::string_view name, std::string_view argument = {}) {
+        return ExCommand{.range = {}, .name = std::string(name), .bang = false, .argument = std::string(argument)};
+    };
+    if (key == "w" || key == "<C-w>") return named("wincmd", "w");
+    if (key == "h" || key == "<C-h>") return named("wincmd", "h");
+    if (key == "l" || key == "<C-l>") return named("wincmd", "l");
+    if (key == "q" || key == "<C-q>") return named("quit");
+    if (key == "c") return named("close");
+    if (key == "s" || key == "S" || key == "<C-s>") return named("split");
+    if (key == "v" || key == "<C-v>") return named("vsplit");
+    return std::nullopt;
+}
+
 // A delimiter for :s and :g: anything but a letter, a digit, a blank, a
 // backslash, ", | and &.
 bool delimiter(char c) {
@@ -757,6 +790,7 @@ std::optional<std::vector<Chord>> keys_for(std::string_view name, Mode mode) {
         {"edit.cut", "\"+dd", "\"+d", ""},
         {"edit.copy", "\"+yy", "\"+y", ""},
         {"edit.paste", "\"+P", "\"+p", "<C-r>+"},
+        {"file.close", "<C-w>q", "<C-w>q", "<C-o><C-w>q"},
     };
     for (const CommandKeys& keys : COMMAND_KEYS) {
         if (keys.command != name) continue;
@@ -767,7 +801,7 @@ std::optional<std::vector<Chord>> keys_for(std::string_view name, Mode mode) {
     return std::nullopt;
 }
 
-std::optional<std::string> Engine::take(const Chord& key, CommandContext& context) {
+std::optional<ExCommand> Engine::take(const Chord& key, CommandContext& context) {
     // A key of Ctrl-O's one command, which may go through visual mode and
     // the command line.
     const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_) || mode_ == Mode::Command);
@@ -782,7 +816,7 @@ std::optional<std::string> Engine::take(const Chord& key, CommandContext& contex
     } else if (for_one_command && mode_ == Mode::Normal && keys_.empty()) {
         end_one_command(context);
     }
-    return std::nullopt;
+    return std::exchange(handed_, std::nullopt);
 }
 
 void Engine::dispatch(const Chord& key, CommandContext& context) {
@@ -1045,6 +1079,7 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
     }
     const ExCommand& command = *read;
     const std::string& name = command.name;
+    if (program_command(name)) return hand_on(command);
     const bool whole = name == "global" || name == "vglobal" || name == "sort";
     const ftk::Result<std::pair<std::size_t, std::size_t>> lines = lines_of(command.range, whole, c);
     if (!lines) {
@@ -1138,6 +1173,30 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
         }
         return settle(c);
     }
+}
+
+void Engine::hand_on(ExCommand command) {
+    const std::string& name = command.name;
+    const std::string_view argument = command.argument;
+    const auto refuse = [&](std::string text) { remembered_.message = {.text = std::move(text), .error = true}; };
+    if (command.range.from || command.range.whole) return refuse(std::format("Not supported yet: :{} with a range", name));
+    if (name == "wincmd") {
+        if (argument.empty()) return refuse("E471: Argument required");
+        // A window fjedit doesn't have: nothing, as when Vim has none there.
+        std::optional<ExCommand> window = window_command(argument);
+        if (!window) return;
+        command = std::move(*window);
+    } else if (!argument.empty() && name != "edit") {
+        if (name == "write" || name == "wq" || name == "xit" || name == "split" || name == "vsplit") {
+            return refuse(std::format("Not supported yet: :{} with a file name", name));
+        }
+        const bool count = argument.find_first_not_of("0123456789") == std::string_view::npos;
+        if (count && (name == "bnext" || name == "bprevious")) {
+            return refuse(std::format("Not supported yet: :{} with a count", name));
+        }
+        return refuse(std::format("E488: Trailing characters: {}", argument));
+    }
+    handed_ = std::move(command);
 }
 
 void Engine::run_substitute(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {
@@ -1746,6 +1805,12 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         if (command.count) lines = *command.count == 1 ? "." : std::format(".,.+{}", *command.count - 1);
         return begin_command_line(':', {}, false, c, std::move(lines));
     }
+    // Ctrl-W's window commands, the program's to run; after an operator,
+    // nothing.
+    if (command.name.starts_with("<C-w>")) {
+        if (command.op.empty()) handed_ = window_command(std::string_view(command.name).substr(5));
+        return;
+    }
     // A change noted for `.`, as its keys spell it.
     if (!replaying_ && changes(command)) {
         making_ = Repeat{.reg = command.reg, .count = count_of(command), .keys = keys_of(command), .typed = {},
@@ -2172,6 +2237,12 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
     if (name == ":") {
         leave_visual(c);
         return begin_command_line(':', {}, false, c, "'<,'>");
+    }
+    // Ctrl-W's window commands, out of visual mode as `:` goes.
+    if (name.starts_with("<C-w>")) {
+        handed_ = window_command(name.substr(5));
+        if (handed_) leave_visual(c);
+        return;
     }
     if (name == "<C-l>") {
         remembered_.shown = false;

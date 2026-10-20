@@ -413,13 +413,86 @@ void Program::close_front() {
     if (tab == nullptr) return;
     // Another tab showing the file keeps its changes: closing this one
     // loses nothing.
-    std::size_t showing = 0;
-    for (const Group& group : groups_) showing += static_cast<std::size_t>(std::ranges::count(group.tabs, tab->path, &Tab::path));
-    if (showing == 1 && workspace_.unsaved(tab->path)) {
+    if (tabs_showing(tab->path) == 1 && workspace_.unsaved(tab->path)) {
         closing_ = tab->path;
         return;
     }
     close_tab(groups_[active_], groups_[active_].front);
+}
+
+std::size_t Program::tabs_showing(const std::filesystem::path& path) const {
+    std::size_t showing = 0;
+    for (const Group& group : groups_) showing += static_cast<std::size_t>(std::ranges::count(group.tabs, path, &Tab::path));
+    return showing;
+}
+
+void Program::run_ex(const vim::ExCommand& command) {
+    Tab* tab = front_tab();
+    if (tab == nullptr) return;
+    const std::string& name = command.name;
+    const std::filesystem::path path = tab->path;
+    const auto refuse = [&](std::string text) {
+        if (tab->view->vim) tab->view->vim->say({.text = std::move(text), .error = true});
+    };
+    constexpr std::string_view NO_WRITE = "E37: No write since last change (add ! to override)";
+    // Closing the tab loses changes when its file has them and no other tab
+    // shows it.
+    const bool loses = workspace_.unsaved(path) && tabs_showing(path) == 1;
+    const auto close = [&] { close_tab(groups_[active_], groups_[active_].front); };
+    if (name == "write") {
+        save(path);
+    } else if (name == "wall") {
+        (void)run("file.save_all");
+    } else if (name == "quit" || name == "close") {
+        if (loses && !command.bang) return refuse(std::string(NO_WRITE));
+        close();
+    } else if (name == "wq" || name == "xit") {
+        // :x writes only a file with changes. One that couldn't be written
+        // keeps its tab, the note saying why.
+        if (name == "wq" || workspace_.unsaved(path)) save(path);
+        if (workspace_.unsaved(path)) return;
+        close();
+    } else if (name == "qall") {
+        const std::vector<std::filesystem::path> files = workspace_.files();
+        const auto unsaved = std::ranges::find_if(files, [&](const std::filesystem::path& file) {
+            return workspace_.unsaved(file);
+        });
+        if (unsaved != files.end() && !command.bang) {
+            return refuse(std::format("E162: No write since last change for buffer \"{}\"", unsaved->filename().string()));
+        }
+        for (const std::filesystem::path& file : files) {
+            if (workspace_.unsaved(file)) forget_kept(file);
+        }
+        quitting_ = true;
+    } else if (name == "edit" && !command.argument.empty()) {
+        // A path from the folder open, as Vim's from the folder it works in.
+        open(workspace_.root() / std::filesystem::path(command.argument));
+    } else if (name == "edit") {
+        // The file read again; with !, its changes dropped. Undone, they
+        // come back.
+        if (workspace_.unsaved(path) && !command.bang) return refuse(std::string(NO_WRITE));
+        if (const ftk::Result<> reloaded = workspace_.reload(path); !reloaded) {
+            note_ = reloaded.error();
+            return;
+        }
+        changed_.erase(path);
+    } else if (name == "bnext" || name == "bprevious") {
+        (void)run(name == "bnext" ? "tab.next" : "tab.previous");
+    } else if (name == "split" || name == "vsplit") {
+        // The groups stand side by side, so both split beside.
+        split(active_);
+    } else if (name == "wincmd") {
+        // w goes round the groups; h and l stop at the first and the last.
+        const std::size_t count = groups_.size();
+        if (command.argument == "w") focus_group((active_ + 1) % count);
+        if (command.argument == "h" && active_ > 0) focus_group(active_ - 1);
+        if (command.argument == "l" && active_ + 1 < count) focus_group(active_ + 1);
+    }
+}
+
+void Program::focus_group(std::size_t index) {
+    active_ = index;
+    if (Tab* tab = front_tab()) tab->view->focus = true;
 }
 
 void Program::close_tab(Group& group, std::size_t index) {
@@ -555,6 +628,7 @@ void Program::draw() {
                                                static_cast<float>(preferences_.text_size)));
     }
     if (const std::optional<Location> going = std::exchange(going_, std::nullopt)) go_to(going->path, going->span);
+    for (const vim::ExCommand& command : std::exchange(vim_commands_, {})) run_ex(command);
     ui::end_host_window();
     draw_status();
     preferences_window_.draw(preferences_, clangd_shown(), fjls_shown());
@@ -700,6 +774,7 @@ void Program::draw_group(Group& group, std::size_t index) {
             const CodeViewResult result = code_view("Code", *document, *tab.view, keymap_, {.min = at, .max = at + room});
             if (result.focused) active_ = index;
             if (result.go) going_ = result.go;
+            for (const vim::ExCommand& command : result.program_commands) vim_commands_.push_back(command);
             if (result.zoom != 0) {
                 // Ctrl and the wheel size every view's text, as the
                 // preferences do, and the size is kept with them.

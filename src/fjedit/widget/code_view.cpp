@@ -1535,6 +1535,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         return true;
     };
 
+    std::vector<vim::ExCommand> program_commands;
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
@@ -1543,7 +1544,9 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                 if (ends_rename(key)) return;
                 const bool inserting = view.vim->mode() == vim::Mode::Insert;
                 CommandContext context = vim_context();
-                if (const std::optional<std::string> asked = view.vim->take(key, context)) run(*asked);
+                if (std::optional<vim::ExCommand> handed = view.vim->take(key, context)) {
+                    program_commands.push_back(std::move(*handed));
+                }
                 // The completion list is insert mode's, and goes with it.
                 if (view.vim->mode() != vim::Mode::Insert) {
                     view.completing = {};
@@ -1715,6 +1718,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             .focused = focus.focused,
             .go = std::move(go),
             .rename = rename,
+            .program_commands = std::move(program_commands),
             .zoom = zoom};
 }
 

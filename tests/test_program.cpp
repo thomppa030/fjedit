@@ -562,17 +562,19 @@ TEST_CASE("The menus show the keys of the mode the view in front is in", "[progr
     CHECK(run.program->shortcut("format.document") == "Ctrl Shift I");
     CHECK(run.program->shortcut("definition.go") == "gd");
     CHECK(run.program->shortcut("symbol.rename") == "grn");
-    CHECK(run.program->shortcut("file.close").empty());
+    CHECK(run.program->shortcut("file.close") == "Ctrl W q");
     CHECK(run.program->shortcut("find.open").empty());
     run.h.type("v");
     run.h.step();
     CHECK(run.program->shortcut("edit.copy") == "\"+y");
     CHECK(run.program->shortcut("edit.undo").empty());
+    CHECK(run.program->shortcut("file.close") == "Ctrl W q");
     run.h.press(Key::Escape);
     run.h.type("i");
     run.h.step();
     CHECK(run.program->shortcut("edit.undo") == "Ctrl O u");
     CHECK(run.program->shortcut("edit.paste") == "Ctrl R +");
+    CHECK(run.program->shortcut("file.close") == "Ctrl O Ctrl W q");
 }
 
 TEST_CASE("With Vim on, :set rnu and so change every view for the session, Preferences left as they are",
@@ -907,4 +909,160 @@ TEST_CASE("A script header is told to clangd and fjls both, each with its dot on
     REQUIRE(run.languages_made == 1);
     const std::set<std::filesystem::path> told(run.fjls->opened.begin(), run.fjls->opened.end());
     REQUIRE(told == std::set<std::filesystem::path>{mover, look});
+}
+
+namespace {
+
+// `line` typed on Vim's `:` line and run.
+void ex(Running& run, std::string_view line) {
+    run.h.type(std::format(":{}", line));
+    run.h.press(Key::Enter);
+    run.h.step(2);
+}
+
+} // namespace
+
+TEST_CASE("With Vim on, :w saves; :q is refused over unsaved changes, asking nothing, and :q! drops them",
+          "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type("x");
+    ex(run, "w");
+    CHECK(run.folder.read("a.txt") == "bc\n");
+    run.h.type("x");
+    REQUIRE_FALSE(on_status_bar(run, ftk::theme::error()));
+    ex(run, "q");
+    REQUIRE(run.program->front().has_value());
+    CHECK(on_status_bar(run, ftk::theme::error()));
+    CHECK(run.h.find("Don't save", Role::Button) == nullptr);
+    ex(run, "q!");
+    CHECK_FALSE(run.program->front().has_value());
+    CHECK(run.program->workspace().files().empty());
+    CHECK(run.folder.read("a.txt") == "bc\n");
+}
+
+TEST_CASE("With Vim on, :q closes a tab whose changes another tab shows, and :wq and :x write and close",
+          "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}, {"b.txt", "b\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type("x");
+    ex(run, "sp");
+    REQUIRE(run.program->groups() == 2);
+    ex(run, "q");
+    CHECK(run.program->groups() == 1);
+    CHECK(run.program->workspace().unsaved(run.folder.path / "a.txt"));
+    ex(run, "wq");
+    CHECK_FALSE(run.program->front().has_value());
+    CHECK(run.folder.read("a.txt") == "bc\n");
+    // :x writes only a file with changes: what another program wrote stays.
+    run.press_row("b.txt");
+    run.h.step();
+    run.folder.write("b.txt", "outside\n");
+    ex(run, "x");
+    CHECK_FALSE(run.program->front().has_value());
+    CHECK(run.folder.read("b.txt") == "outside\n");
+}
+
+TEST_CASE("With Vim on, :qa quits; refused while a file has changes, and :qa! quits dropping them", "[program][vim]") {
+    {
+        Running run({{"a.txt", "abc\n"}});
+        run.program->preferences().vim = true;
+        run.press_row("a.txt");
+        run.h.step();
+        ex(run, "qa");
+        CHECK(run.program->quitting());
+    }
+    Running run({{"a.txt", "abc\n"}, {"b.txt", "b\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type("x");
+    run.press_row("b.txt");
+    run.h.step();
+    ex(run, "qa");
+    CHECK_FALSE(run.program->quitting());
+    CHECK(on_status_bar(run, ftk::theme::error()));
+    ex(run, "qa!");
+    CHECK(run.program->quitting());
+    CHECK(run.folder.read("a.txt") == "abc\n");
+}
+
+TEST_CASE("With Vim on, :e opens a file from the folder and reads the one in front again; :bn and :bp step the tabs",
+          "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}, {"sub/b.txt", "b\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "sub/b.txt");
+    ex(run, "e sub/b.txt");
+    CHECK(run.program->front() == b);
+    ex(run, "bp");
+    CHECK(run.program->front() == a);
+    ex(run, "bn");
+    CHECK(run.program->front() == b);
+    ex(run, "bn");
+    CHECK(run.program->front() == a);
+
+    // Read again; refused over changes; with !, the changes dropped, and
+    // undone, back.
+    run.folder.write("a.txt", "outside\n");
+    ex(run, "e");
+    CHECK(run.document("a.txt").buffer().text() == "outside\n");
+    run.h.type("x");
+    ex(run, "e");
+    CHECK(run.document("a.txt").buffer().text() == "utside\n");
+    CHECK(on_status_bar(run, ftk::theme::error()));
+    ex(run, "e!");
+    CHECK(run.document("a.txt").buffer().text() == "outside\n");
+    CHECK_FALSE(run.program->workspace().unsaved(a));
+    run.h.type("u");
+    run.h.step();
+    CHECK(run.document("a.txt").buffer().text() == "utside\n");
+}
+
+TEST_CASE("With Vim on, Ctrl-W v and s split beside, w h and l go between the groups, q and c close",
+          "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}, {"b.txt", "b\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "b.txt");
+    const auto window = [&](std::string_view key) {
+        run.h.press(Key::W, CTRL);
+        run.h.type(key);
+        run.h.step(2);
+    };
+    window("v");
+    REQUIRE(run.program->groups() == 2);
+    ex(run, "e b.txt");
+    CHECK(run.program->front() == b);
+    window("h");
+    CHECK(run.program->front() == a);
+    // The keys go to the group gone to.
+    run.h.type("x");
+    CHECK(run.document("a.txt").buffer().text() == "bc\n");
+    CHECK(run.document("b.txt").buffer().text() == "b\n");
+    window("l");
+    CHECK(run.program->front() == b);
+    window("l");
+    CHECK(run.program->front() == b);
+    window("w");
+    CHECK(run.program->front() == a);
+    window("w");
+    CHECK(run.program->front() == b);
+    // None stands above or below.
+    window("j");
+    CHECK(run.program->front() == b);
+    CHECK(run.program->groups() == 2);
+    window("s");
+    CHECK(run.program->groups() == 3);
+    window("q");
+    window("c");
+    CHECK(run.program->groups() == 2);
 }

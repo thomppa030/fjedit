@@ -21,6 +21,8 @@ struct Vim {
     vim::Engine engine;
     // The rows a view ten rows high has in sight.
     InView sight{.top = 0, .rows = 10, .around = 0};
+    // The `:` commands handed on for the program, in order.
+    std::vector<vim::ExCommand> handed;
 
     explicit Vim(std::string_view marked) : view(marked) {}
 
@@ -36,7 +38,7 @@ struct Vim {
         REQUIRE(chords);
         for (const Chord& key : *chords) {
             CommandContext acting = context();
-            (void)engine.take(key, acting);
+            if (std::optional<vim::ExCommand> command = engine.take(key, acting)) handed.push_back(std::move(*command));
         }
     }
 
@@ -1359,6 +1361,77 @@ TEST_CASE(":set and :noh leave every caret where it is; a command on lines acts 
     Vim lines("|ab\n|cd\nef");
     lines.keys(":d<CR>");
     CHECK(lines.shown() == "ab\n|ef");
+}
+
+namespace {
+
+// The names `commands` have, each with a ! after it when it has one and its
+// argument after a blank when it has one.
+std::vector<std::string> written(const std::vector<vim::ExCommand>& commands) {
+    std::vector<std::string> out;
+    for (const vim::ExCommand& command : commands) {
+        out.push_back(command.name + (command.bang ? "!" : "") + (command.argument.empty() ? "" : " " + command.argument));
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("The program's : commands are handed on as they read, the carets left; what doesn't read is said",
+          "[vim][ex]") {
+    Vim v("|a\n|b");
+    v.keys(":w<CR>");
+    CHECK(written(v.handed) == std::vector<std::string>{"write"});
+    CHECK(v.shown() == "|a\n|b");
+    v.handed.clear();
+    v.keys(":w!<CR>:wa<CR>:q<CR>:q!<CR>:clo<CR>:wq<CR>:x<CR>:qa!<CR>:e src/coin.cpp<CR>:e!<CR>");
+    v.keys(":bn<CR>:bp<CR>:sp<CR>:vs<CR>");
+    CHECK(written(v.handed) == std::vector<std::string>{"write!", "wall", "quit", "quit!", "close", "wq", "xit",
+                                                        "qall!", "edit src/coin.cpp", "edit!", "bnext",
+                                                        "bprevious", "split", "vsplit"});
+    v.handed.clear();
+    v.keys(":2w<CR>");
+    CHECK(v.engine.message().text == "Not supported yet: :write with a range");
+    v.keys(":w other.txt<CR>");
+    CHECK(v.engine.message().text == "Not supported yet: :write with a file name");
+    v.keys(":q now<CR>");
+    CHECK(v.engine.message().text == "E488: Trailing characters: now");
+    v.keys(":bn 2<CR>");
+    CHECK(v.engine.message().text == "Not supported yet: :bnext with a count");
+    v.keys(":wincmd<CR>");
+    CHECK(v.engine.message().text == "E471: Argument required");
+    // No group stands below another.
+    v.keys(":wincmd j<CR>");
+    CHECK(v.engine.message().text.empty());
+    CHECK(v.handed.empty());
+    // What the program has to say of one is said as the key's.
+    v.engine.say({.text = "E37: No write since last change (add ! to override)", .error = true});
+    CHECK(v.engine.message().error);
+    v.keys("l");
+    CHECK(v.engine.message().text.empty());
+}
+
+TEST_CASE("Ctrl-W's keys are the commands Vim runs for them, from visual and insert mode too", "[vim][ex]") {
+    Vim v("|ab\ncd");
+    v.keys("<C-w>w<C-w><C-w><C-w>h<C-w><C-h><C-w>l<C-w>q<C-w>c<C-w>s<C-w>v:wincmd l<CR>");
+    CHECK(written(v.handed) == std::vector<std::string>{"wincmd w", "wincmd w", "wincmd h", "wincmd h", "wincmd l",
+                                                        "quit", "close", "split", "vsplit", "wincmd l"});
+    // A window fjedit has none of, or Ctrl-W after an operator, does
+    // nothing: j moves no caret, d deletes nothing.
+    v.handed.clear();
+    v.keys("<C-w>j");
+    v.keys("d<C-w>w");
+    CHECK(v.handed.empty());
+    CHECK(v.shown() == "|ab\ncd");
+    // Out of visual mode, as `:` goes.
+    v.keys("vl<C-w>v");
+    CHECK(written(v.handed) == std::vector<std::string>{"vsplit"});
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    // Ctrl-O's one command, back in insert mode after it.
+    v.handed.clear();
+    v.keys("i<C-o><C-w>q");
+    CHECK(written(v.handed) == std::vector<std::string>{"quit"});
+    CHECK(v.engine.mode() == vim::Mode::Insert);
 }
 
 TEST_CASE("The : line says what is wrong as Vim does, keeps what was typed, and :noh hides the matches",

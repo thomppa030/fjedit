@@ -4,12 +4,12 @@
 // the mode the view is in. It takes the keys one at a time, as the keyboard
 // gives them (a character typed, or a key that types none), and acts at
 // every caret through the CommandContext the view lends it. The view feeds
-// it, draws its carets in the shape the mode gives, and runs the commands
-// it names for others to run.
+// it, draws its carets in the shape the mode gives, and hands on the `:`
+// commands that are the program's for the program to run.
 //
 //     fjedit::vim::Engine vim;
 //     for (const fjedit::Chord& key : keys) {
-//         if (std::optional<std::string> asked = vim.take(key, context)) run(*asked);
+//         if (std::optional<fjedit::vim::ExCommand> handed = vim.take(key, context)) run(*handed);
 //     }
 //
 // In normal mode each caret is an empty selection whose caret sits before
@@ -146,9 +146,13 @@ public:
         : registers_(std::move(registers)), settings_(std::move(settings)) {}
 
     /// Takes `key` in the mode it is in, acting at every selection of
-    /// `context`. Returns a command it names for the view or the program to
-    /// run (view_commands(), the program's), when it runs none itself.
-    std::optional<std::string> take(const Chord& key, CommandContext& context);
+    /// `context`. Returns a `:` command that is the program's, when the key
+    /// ended one: the file written, quit or edited, the tabs stepped, or the
+    /// groups split and gone between (`:w`, `:q!`, `:e path`, `:bn`, `:sp`;
+    /// `:wincmd w`, `h` or `l`). Ctrl-W's keys come as the command Vim runs
+    /// for them (Ctrl-W q as `:quit`). Each is read as far as Vim reads it:
+    /// a range, or an argument it takes none of, is said instead.
+    std::optional<ExCommand> take(const Chord& key, CommandContext& context);
 
     /// The selections put where the mode keeps them, after something other
     /// than the keys moved them: in normal mode each caret on a character
@@ -208,6 +212,10 @@ public:
     /// What the last key had to say; empty text when nothing. The next key
     /// clears it.
     [[nodiscard]] const Message& message() const { return remembered_.message; }
+
+    /// Says `message` as the last key's: what the program had to say of a
+    /// command handed to it ("E37: No write since last change").
+    void say(Message message) { remembered_.message = std::move(message); }
 
     /// What is yanked and deleted.
     [[nodiscard]] Registers& registers() { return *registers_; }
@@ -276,6 +284,9 @@ private:
                             std::string text = {});
     // A line typed after `:` run.
     void run_ex(std::string_view line, CommandContext& context);
+    // A `:` command that is the program's, handed on from take() once it
+    // reads as Vim reads it; what doesn't is said.
+    void hand_on(ExCommand command);
     // :s, :g and :v, :normal and :sort over lines `first` to `last`.
     void run_substitute(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_global(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
@@ -352,6 +363,8 @@ private:
     std::optional<Typing> typing_;
     // The pattern typed as it is typed, when it reads.
     std::optional<Pattern> preview_;
+    // A `:` command for the program, until take() hands it on.
+    std::optional<ExCommand> handed_;
     // The searches typed and the lines typed after `:`, the latest last.
     std::vector<std::string> history_;
     std::vector<std::string> commands_;
