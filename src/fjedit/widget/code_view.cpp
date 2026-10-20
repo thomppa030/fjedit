@@ -496,13 +496,25 @@ constexpr double NEXT_KEYS_DELAY = 0.5;
 // order they came, with any that waited. Keys that begin a longer map or a
 // longer binding wait for the rest, timeoutlen at most, then go as they
 // stand. A character a command waits for (an `f`'s) is never a map's or a
-// binding's. `acting` makes what Vim acts through; `command` runs a map's
+// binding's. The keys typed are kept for a macro being recorded; a macro
+// played goes into the maps' typeahead, a frame's worth at a time, Ctrl-C
+// stopping it; a command that failed lets go of what a macro or a map had
+// yet to play. `acting` makes what Vim acts through; `command` runs a map's
 // <Cmd> line.
 template <typename Acting, typename Run, typename Take, typename Command>
 void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Acting&& acting, Run&& run, Take&& take,
                    Command&& command) {
     const double now = ui.time();
     const double wait = static_cast<double>(view.vim->settings().timeout_ms) / 1000.0;
+    // A key to Vim. A macro it plays goes in ahead of the keys yet to be
+    // played; a command that failed lets go of what was yet to be played.
+    const vim::MapPlayer* playing = nullptr;
+    const auto to_vim = [&](const Chord& key) {
+        take(key);
+        const std::vector<Chord> played = view.vim->take_played();
+        if (view.vim->failed()) view.maps.drop_played();
+        if (!played.empty() && playing != nullptr) view.maps.play_ahead(played, now, *playing);
+    };
     // The binding the keys pending make: run, unless a longer one begins
     // with them and the wait isn't over; no binding, they go to Vim.
     const auto bound = [&](bool timed_out) {
@@ -522,23 +534,37 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ac
             run(name);
             return;
         }
-        for (const Chord& waited : std::exchange(view.pending, {})) take(waited);
+        for (const Chord& waited : std::exchange(view.pending, {})) to_vim(waited);
     };
     const vim::MapPlayer player{
         .mode = [&] { return view.vim->map_mode(); },
         .wants_character = [&] { return view.pending.empty() && view.vim->wants_character(); },
         .key =
             [&](const Chord& key) {
-                if (view.pending.empty() && view.vim->wants_character()) return take(key);
+                if (view.pending.empty() && view.vim->wants_character()) return to_vim(key);
                 view.pending.push_back(key);
                 view.pending_since = now;
                 bound(false);
             },
-        .command = [&](std::string_view line) { command(line); },
+        .command =
+            [&](std::string_view line) {
+                command(line);
+                if (view.vim->failed()) view.maps.drop_played();
+            },
         .error = [&](std::string_view error) { view.vim->say({.text = std::string(error), .error = true}); },
+        .typed = [&](std::span<const Chord> keys) { view.vim->record(keys); },
     };
+    playing = &player;
     view.maps.wait_for(wait);
+    // What a long macro left for this frame plays first.
+    if (view.maps.more()) view.maps.play_on(now, player);
     for (const Chord& key : vim_keys(ui.keystrokes())) {
+        // Ctrl-C stops a macro still playing, as in Vim.
+        if (view.maps.more() && key.text.empty() && key.key == ftk::ui::Key::C &&
+            key.modifiers == ftk::ui::Modifiers{.ctrl = true}) {
+            view.maps.drop_played();
+            continue;
+        }
         // Over the keys that can come next, Esc lets those waiting go.
         if (view.showing_next_keys && key.text.empty() && key.key == ftk::ui::Key::Escape &&
             key.modifiers == ftk::ui::Modifiers{}) {
@@ -549,6 +575,7 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ac
         }
         view.maps.take(key, now, player);
     }
+    if (view.maps.more()) ui.request_frame_at(now);
     // Keys that waited half a second show what can come next, and wait from
     // then on for the next key, as which-key holds them: in normal, visual
     // and operator-pending modes, where which-key shows. Typing in insert

@@ -56,6 +56,14 @@ public:
     /// `}`).
     void deleted(char name, Yanked yanked, Clipboard* clipboard, bool numbered = false);
 
+    /// Whether a macro can be recorded into `name` (`q`): `a`–`z`, `A`–`Z`
+    /// adding to theirs, `0`–`9` and `"`.
+    [[nodiscard]] static bool recordable(char name);
+
+    /// A macro recorded into `name`: its keys as Vim's notation writes them.
+    /// The unnamed register keeps what it holds, unless `name` is it.
+    void record(char name, std::string keys);
+
     /// clipboard=unnamedplus: the unnamed register is the system's
     /// clipboard as well, what a yank or a delete with none named puts going
     /// there too, and a put with none named taking what the clipboard holds.

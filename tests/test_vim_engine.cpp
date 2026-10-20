@@ -6,8 +6,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <deque>
 #include <optional>
+#include <span>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -37,12 +40,26 @@ struct Vim {
                 .clipboard = &view.clipboard, .folds = &view.folds, .text = {}, .in_view = &sight};
     }
 
+    // Keys typed, as the view gives them to Vim: each kept for a macro being
+    // recorded, a macro played going in ahead of the rest, and what a macro
+    // had yet to play let go when a command fails.
     void keys(std::string_view typed) {
         const std::optional<std::vector<Chord>> chords = vim::parse_notation(typed);
         REQUIRE(chords);
-        for (const Chord& key : *chords) {
+        // Each key to come, and whether it was typed.
+        std::deque<std::pair<Chord, bool>> ahead;
+        for (const Chord& key : *chords) ahead.emplace_back(key, true);
+        while (!ahead.empty()) {
+            const auto [key, was_typed] = ahead.front();
+            ahead.pop_front();
+            if (was_typed) engine.record(std::span(&key, 1));
             CommandContext acting = context();
             std::optional<vim::Asked> asked = engine.take(key, acting);
+            const std::vector<Chord> played = engine.take_played();
+            if (engine.failed()) {
+                while (!ahead.empty() && !ahead.front().second) ahead.pop_front();
+            }
+            for (auto at = played.rbegin(); at != played.rend(); ++at) ahead.emplace_front(*at, false);
             if (!asked) continue;
             if (const auto* command = std::get_if<vim::ExCommand>(&*asked)) {
                 handed.push_back(*command);
@@ -1886,4 +1903,89 @@ TEST_CASE("A file's mark is handed up when set, gone to when this file has it, a
     v.keys("d'B");
     CHECK(v.marks.size() == 2);
     CHECK(v.view.buffer().text() == "a\nb");
+}
+
+TEST_CASE("q records the keys typed into a register, @ plays them, @@ the last again, a count that many times",
+          "[vim][macros]") {
+    Vim v("|one\ntwo\nthree\nfour\nfive");
+    v.keys("qa");
+    CHECK(v.engine.recording() == 'a');
+    v.keys("0i- <Esc>jq");
+    CHECK_FALSE(v.engine.recording());
+    // In Vim's notation, the q that stopped it left out.
+    CHECK(v.engine.registers().get('a', nullptr)->text() == "0i-<Space><Esc>j");
+    CHECK(v.shown() == "- one\nt|wo\nthree\nfour\nfive");
+    v.keys("@a");
+    CHECK(v.shown() == "- one\n- two\nt|hree\nfour\nfive");
+    v.keys("@@");
+    CHECK(v.view.buffer().text() == "- one\n- two\n- three\nfour\nfive");
+    // A count plays it so many times, until a command fails: j at the last
+    // line.
+    v.keys("5@a");
+    CHECK(v.view.buffer().text() == "- one\n- two\n- three\n- four\n- five");
+    // A capital adds to the register.
+    v.keys("qAkq");
+    CHECK(v.engine.registers().get('a', nullptr)->text() == "0i-<Space><Esc>jk");
+    // The unnamed register keeps what it held.
+    CHECK_FALSE(v.engine.registers().get('"', nullptr));
+
+    Vim none("|a");
+    none.keys("@@");
+    CHECK(none.engine.message().text == "E748: No previously used register");
+    none.keys("@z");
+    CHECK(none.engine.failed());
+    none.keys("q!");
+    CHECK_FALSE(none.engine.recording());
+    CHECK(none.engine.failed());
+}
+
+TEST_CASE("A macro that plays itself goes on until a command in it fails", "[vim][macros]") {
+    Vim v("|a\nb\nc");
+    // qbq empties b first, so the @b recorded plays nothing yet.
+    v.keys("qbqqbA;<Esc>j@bq");
+    CHECK(v.engine.registers().get('b', nullptr)->text() == "A;<Esc>j@b");
+    v.keys("@b");
+    CHECK(v.view.buffer().text() == "a;\nb;\nc;");
+}
+
+TEST_CASE("Motions that can't go and keys that make no command fail, as Vim beeps", "[vim][macros]") {
+    Vim v("ab|c\nd");
+    v.keys("l");
+    CHECK(v.engine.failed());
+    v.keys("h");
+    CHECK_FALSE(v.engine.failed());
+    v.keys("jj");
+    CHECK(v.engine.failed());
+    v.keys("fz");
+    CHECK(v.engine.failed());
+    v.keys("dfz");
+    CHECK(v.engine.failed());
+    v.keys("zq");
+    CHECK(v.engine.failed());
+    v.keys("\"zp");
+    CHECK(v.engine.failed());
+    CHECK(v.engine.message().text == "E353: Nothing in register z");
+    // x on an empty line does nothing, and fails nothing.
+    Vim empty("|");
+    empty.keys("x");
+    CHECK_FALSE(empty.engine.failed());
+}
+
+TEST_CASE("Ctrl-O q stops a recording from insert mode, the Ctrl-O left out; :normal plays macros",
+          "[vim][macros]") {
+    Vim v("|ab");
+    v.keys("qcix<C-o>q");
+    CHECK_FALSE(v.engine.recording());
+    CHECK(v.engine.mode() == vim::Mode::Insert);
+    v.keys("<Esc>");
+    CHECK(v.engine.registers().get('c', nullptr)->text() == "ix");
+
+    Vim g("|a1\nb\na2\na3");
+    g.keys("qdA!<Esc>q");
+    g.keys(":g/a/normal @d<CR>");
+    CHECK(g.view.buffer().text() == "a1!!\nb\na2!\na3!");
+    // A command that fails lets go of the rest of :normal's keys there.
+    Vim n("|a\nb");
+    n.keys(":%normal jix<CR>");
+    CHECK(n.view.buffer().text() == "a\nxb");
 }

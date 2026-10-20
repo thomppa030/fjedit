@@ -60,6 +60,19 @@ bool Registers::valid(char name) {
            clipboard_name(name);
 }
 
+bool Registers::recordable(char name) {
+    return name == '"' || lower(name) || upper(name) || digit(name);
+}
+
+void Registers::record(char name, std::string keys) {
+    Yanked recorded{.pieces = {std::move(keys)}, .linewise = false};
+    if (name == '"') {
+        unnamed_ = std::move(recorded);
+        return;
+    }
+    put_in(name, recorded, nullptr);
+}
+
 std::optional<Yanked> Registers::get(char name, const Clipboard* clipboard) const {
     if (upper(name)) name = static_cast<char>(name - 'A' + 'a');
     // With the clipboard for it, what the clipboard holds: what was yanked

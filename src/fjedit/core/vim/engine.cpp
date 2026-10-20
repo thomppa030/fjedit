@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <format>
 #include <limits>
 #include <span>
@@ -24,6 +25,10 @@ using ftk::ui::Key;
 
 // Counts stop growing here, long before they could overflow.
 constexpr std::size_t COUNT_MAX = 99999;
+
+// The most keys a macro plays with its count, which keeps a large count of
+// a long macro from filling the memory.
+constexpr std::size_t PLAYED_MAX = 1000000;
 
 // The goal along the line that keeps a caret at the end of every line it
 // moves up or down to, as `$` leaves it.
@@ -122,8 +127,9 @@ std::string argument_of(const Chord& key) {
     return {};
 }
 
-// A motion or a command from `keys[i]` on.
-Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) {
+// A motion or a command from `keys[i]` on. While a macro is `recording`, q
+// takes no register's name: it stops the recording.
+Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command, bool recording) {
     const Chord& key = keys[i];
     // Ctrl-W begins a window command, which any key ends.
     if (pressed(key, Key::W, {.ctrl = true})) {
@@ -132,9 +138,9 @@ Parsed parse_name(std::span<const Chord> keys, std::size_t i, Command& command) 
         return ends_at(keys, i + 2);
     }
     const bool prefix = key.text == "g" || key.text == "z";
-    const bool takes_character = key.text == "f" || key.text == "t" || key.text == "F" || key.text == "T" ||
-                                 key.text == "'" || key.text == "`" ||
-                                 ((key.text == "r" || key.text == "m") && command.op.empty());
+    const bool takes_character =
+        key.text == "f" || key.text == "t" || key.text == "F" || key.text == "T" || key.text == "'" || key.text == "`" ||
+        ((key.text == "r" || key.text == "m" || key.text == "@" || (key.text == "q" && !recording)) && command.op.empty());
     if (!prefix && !takes_character) {
         command.name = notation(key);
         return ends_at(keys, i + 1);
@@ -174,7 +180,7 @@ std::optional<Parsed> read_register_and_count(std::span<const Chord> keys, std::
 
 // What `keys`, typed so far in visual mode, come to: an operator acts at
 // once, on the selections, and a text object needs no operator before it.
-Parsed parse_visual(std::span<const Chord> keys, Command& command) {
+Parsed parse_visual(std::span<const Chord> keys, Command& command, bool recording) {
     std::size_t i = 0;
     if (const std::optional<Parsed> unfinished = read_register_and_count(keys, i, command)) return *unfinished;
     if (keys[i].text == "i" || keys[i].text == "a") {
@@ -183,11 +189,11 @@ Parsed parse_visual(std::span<const Chord> keys, Command& command) {
         command.name = keys[i].text + keys[i + 1].text;
         return ends_at(keys, i + 2);
     }
-    return parse_name(keys, i, command);
+    return parse_name(keys, i, command, recording);
 }
 
 // What `keys`, typed so far, come to.
-Parsed parse(std::span<const Chord> keys, Command& command) {
+Parsed parse(std::span<const Chord> keys, Command& command, bool recording) {
     std::size_t i = 0;
     if (const std::optional<Parsed> unfinished = read_register_and_count(keys, i, command)) return *unfinished;
 
@@ -203,7 +209,7 @@ Parsed parse(std::span<const Chord> keys, Command& command) {
             i += 2;
         }
     }
-    if (command.op.empty()) return parse_name(keys, i, command);
+    if (command.op.empty()) return parse_name(keys, i, command, recording);
 
     read_count(keys, i, command.op_count);
     if (i == keys.size()) return Parsed::Waiting;
@@ -227,7 +233,7 @@ Parsed parse(std::span<const Chord> keys, Command& command) {
         command.name = keys[i].text + keys[i + 1].text;
         return ends_at(keys, i + 2);
     }
-    return parse_name(keys, i, command);
+    return parse_name(keys, i, command, recording);
 }
 
 // Where a motion took a caret, the goal along the line it keeps for going
@@ -463,6 +469,39 @@ ftk::Result<Position> mark_at(const CommandContext& c, std::string_view name, co
     return *at;
 }
 
+// Whether the motion `name` fails, as Vim beeps, when it leaves the caret
+// where it was: h and l at a line's ends, w and e at the text's end, b at
+// its start, { and } past the first and the last paragraph.
+bool fails_in_place(std::string_view name) {
+    static constexpr std::string_view NAMES[] = {"h", "l", "<Left>", "<Right>", "<Space>", "<BS>", "w",  "W",
+                                                 "b", "B", "e",      "E",       "ge",      "gE",   "{",  "}"};
+    return std::ranges::contains(NAMES, name);
+}
+
+// The keys a register's text plays as a macro: Vim's notation, as a macro
+// is recorded in, each line break Enter. A line that isn't notation (a
+// modifier on no name) is its characters typed.
+std::vector<Chord> macro_keys(std::string_view text) {
+    std::vector<Chord> keys;
+    std::size_t at = 0;
+    while (true) {
+        const std::size_t end = std::min(text.find('\n', at), text.size());
+        const std::string_view line = text.substr(at, end - at);
+        if (const std::optional<std::vector<Chord>> read = parse_notation(line)) {
+            keys.insert(keys.end(), read->begin(), read->end());
+        } else {
+            for (std::size_t next = 0; next < line.size();) {
+                const std::size_t from = next;
+                (void)ftk::utf8::next(line, next);
+                keys.push_back(Chord::typed(line.substr(from, next - from)));
+            }
+        }
+        if (end == text.size()) return keys;
+        keys.push_back({.key = Key::Enter, .modifiers = {}, .text = {}});
+        at = end + 1;
+    }
+}
+
 // Whether the motion `name` is a jump, as Vim has them: where it went from
 // is kept for '' to go back to.
 bool jumps(std::string_view name) {
@@ -608,12 +647,15 @@ Operator operator_named(std::string_view op) {
     return Operator::ToggleCase;
 }
 
+// What an operator did: nothing, its motion or text object finding nothing
+// to act on at any caret; its work; or a change that began insert mode.
+enum class Operated : uint8_t { Nothing, Done, Inserting };
+
 // The operator `command` names over what it names at every caret: the
 // operator doubled takes lines, from the caret's; a text object what it
 // takes around the caret; a motion what it passes over. The counts before
-// and after the operator multiply. True when a change has begun insert
-// mode.
-bool run_operator(const Command& command, CommandContext& c, Registers& registers, detail::Remembered& remembered) {
+// and after the operator multiply.
+Operated run_operator(const Command& command, CommandContext& c, Registers& registers, detail::Remembered& remembered) {
     const Buffer& buffer = c.document.buffer();
     const bool counted = command.count || command.op_count;
     const std::size_t n = std::min(command.count.value_or(1) * command.op_count.value_or(1), COUNT_MAX);
@@ -648,14 +690,15 @@ bool run_operator(const Command& command, CommandContext& c, Registers& register
     }
     c.document.history().close();
     if (!any) {
-        if (op != Operator::Change || !empty) return false;
+        if (!empty) return Operated::Nothing;
+        if (op != Operator::Change) return Operated::Done;
         c.document.history().hold();
-        return true;
+        return Operated::Inserting;
     }
     // The motions Vim always puts a delete's text in register 1 for.
     const bool numbered = command.name == "%" || command.name == "{" || command.name == "}";
     operate(op, ranges, command.reg, c, registers, 1, numbered);
-    return op == Operator::Change;
+    return op == Operator::Change ? Operated::Inserting : Operated::Done;
 }
 
 // Whether the keys type text in `mode`.
@@ -908,12 +951,14 @@ std::optional<Asked> Engine::take(const Chord& key, CommandContext& context) {
     const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_) || mode_ == Mode::Command);
     remembered_.message = {};
     remembered_.settings = settings_->pattern;
+    failed_ = false;
     // A change begins with a key outside insert mode, and goes on through
     // the insert it begins.
     const uint64_t version = context.document.version();
     if (!typing(mode_)) change_began_ = version;
     dispatch(key, context);
     if (!quiet_ && context.document.version() != version) mark_changed(change_began_, context);
+    if (remembered_.message.error) failed_ = true;
     // A change is whole once no insert goes on with it.
     if (making_ && !typing(mode_)) last_change_ = std::exchange(making_, std::nullopt);
     if (for_one_command && typing(mode_)) {
@@ -1323,6 +1368,59 @@ void Engine::hand_on(ExCommand command) {
     // None for a window fjedit doesn't have: nothing, as when Vim has none
     // there.
     if (*read) asked_ = std::move(**read);
+}
+
+void Engine::record(std::span<const Chord> typed) {
+    if (!recording_) return;
+    recorded_.insert(recorded_.end(), typed.begin(), typed.end());
+    typed_last_ = typed.size();
+}
+
+void Engine::record_or_stop(std::string_view name) {
+    if (recording_) {
+        // The keys typed for this q aren't the macro's; nor, from insert
+        // mode, the Ctrl-O before them.
+        recorded_.resize(recorded_.size() - std::min(typed_last_, recorded_.size()));
+        if (one_command_ && !recorded_.empty() && pressed(recorded_.back(), Key::O, {.ctrl = true})) recorded_.pop_back();
+        std::string keys;
+        for (const Chord& key : recorded_) keys += notation(key);
+        registers_->record(*recording_, std::move(keys));
+        recording_.reset();
+        recorded_.clear();
+        return;
+    }
+    const char reg = name.size() == 1 ? name[0] : '\0';
+    if (!Registers::recordable(reg)) {
+        failed_ = true;
+        return;
+    }
+    recording_ = reg;
+    recorded_.clear();
+    typed_last_ = 0;
+}
+
+void Engine::play(std::string_view name, std::size_t count, CommandContext& c) {
+    char reg = name.size() == 1 ? name[0] : '\0';
+    if (reg == '@') {
+        if (!last_played_) {
+            remembered_.message = {.text = "E748: No previously used register", .error = true};
+            return;
+        }
+        reg = *last_played_;
+    }
+    const std::optional<Yanked> held =
+        reg != '_' && Registers::valid(reg) ? registers_->get(reg, c.clipboard) : std::nullopt;
+    if (!held) {
+        failed_ = true;
+        return;
+    }
+    last_played_ = reg;
+    const std::vector<Chord> keys = macro_keys(held->text());
+    if (keys.size() * count > PLAYED_MAX) {
+        remembered_.message = {.text = std::format("Too many keys to play: {} times {}", count, keys.size()), .error = true};
+        return;
+    }
+    for (std::size_t i = 0; i < count; ++i) played_.insert(played_.end(), keys.begin(), keys.end());
 }
 
 void Engine::set_mark(std::string_view name, Position at, CommandContext& c) {
@@ -1796,12 +1894,32 @@ void Engine::run_normal(const ExCommand& command, std::size_t first, std::size_t
     }
     // At each line of its range from the line's start, or where the caret
     // is without one; a command left unfinished is given up, and insert or
-    // visual mode left. All of it one step.
+    // visual mode left. A macro its keys play goes in ahead of the rest of
+    // them; a command that fails lets go of the rest at that line, as Vim's
+    // beep does. All of it one step.
     const bool ranged = command.range.from || command.range.whole;
     const std::size_t steps = c.document.history().done();
+    std::size_t played = 0;
     for (std::size_t line = first; line <= last && line < c.document.buffer().line_count(); ++line) {
         if (ranged) c.selections = Selections(Selection::at({line, 0}));
-        for (const Chord& key : keys) dispatch(key, c);
+        std::deque<Chord> ahead(keys.begin(), keys.end());
+        while (!ahead.empty()) {
+            const Chord key = ahead.front();
+            ahead.pop_front();
+            Message said = std::exchange(remembered_.message, {});
+            failed_ = false;
+            dispatch(key, c);
+            const bool failed = failed_ || remembered_.message.error;
+            if (remembered_.message.text.empty()) remembered_.message = std::move(said);
+            if (failed) break;
+            const std::vector<Chord> macro = std::exchange(played_, {});
+            played += macro.size();
+            if (played > PLAYED_MAX) {
+                remembered_.message = {.text = std::format("Too many keys to play: over {}", PLAYED_MAX), .error = true};
+                break;
+            }
+            ahead.insert(ahead.begin(), macro.begin(), macro.end());
+        }
         keys_.clear();
         operator_waits_ = false;
         register_next_ = false;
@@ -2201,9 +2319,11 @@ MapModes Engine::map_mode() const {
 
 std::optional<Asked> Engine::run_line(std::string_view line, CommandContext& context) {
     remembered_.settings = settings_->pattern;
+    failed_ = false;
     const uint64_t version = context.document.version();
     run_ex(line, context);
     if (context.document.version() != version) mark_changed(version, context);
+    if (remembered_.message.error) failed_ = true;
     return std::exchange(asked_, std::nullopt);
 }
 
@@ -2227,20 +2347,25 @@ std::string Engine::pending() const {
 bool Engine::wants_character() const {
     if (register_next_) return true;
     if (mode_ == Mode::Insert || mode_ == Mode::Replace || keys_.empty()) return false;
-    static constexpr std::string_view TAKING[] = {"f", "t", "F", "T", "r", "m", "'", "`", "\""};
+    static constexpr std::string_view TAKING[] = {"f", "t", "F", "T", "r", "m", "'", "`", "q", "@", "\""};
     if (!std::ranges::contains(TAKING, std::string_view(keys_.back().text))) return false;
     Command command;
-    return (visual(mode_) ? parse_visual(keys_, command) : parse(keys_, command)) == Parsed::Waiting;
+    const bool recording = recording_.has_value();
+    return (visual(mode_) ? parse_visual(keys_, command, recording) : parse(keys_, command, recording)) ==
+           Parsed::Waiting;
 }
 
 void Engine::take_normal(const Chord& key, CommandContext& c) {
     keys_.push_back(key);
     Command command;
-    const Parsed parsed = parse(keys_, command);
+    const Parsed parsed = parse(keys_, command, recording_.has_value());
     operator_waits_ = parsed == Parsed::Waiting && !command.op.empty();
     if (parsed == Parsed::Waiting) return;
     keys_.clear();
-    if (parsed == Parsed::Invalid) return;
+    if (parsed == Parsed::Invalid) {
+        failed_ = true;
+        return;
+    }
     // The command line, whose search is the motion: the keys before it (a
     // register, a count, an operator) come again with the search.
     if (command.name == "/" || command.name == "?") {
@@ -2272,10 +2397,12 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     // leaves the last change as the one `.` makes.
     const auto operate_on = [&](const Command& acting) {
         const auto version = c.document.version();
-        if (run_operator(acting, c, *registers_, remembered_)) {
+        const Operated operated = run_operator(acting, c, *registers_, remembered_);
+        if (operated == Operated::Inserting) {
             mode_ = Mode::Insert;
             return;
         }
+        if (operated == Operated::Nothing) failed_ = true;
         if (c.document.version() == version) making_.reset();
         settle(c);
     };
@@ -2312,15 +2439,17 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     if (name == "p" || name == "P") {
         if (const std::optional<Yanked> yanked = registers_->get(command.reg, c.clipboard)) {
             change([&] { put(*yanked, name == "p", n, c); });
+        } else {
+            remembered_.message = {.text = std::format("E353: Nothing in register {}", command.reg), .error = true};
         }
         return;
     }
     if (name == "J") return change([&] { join_lines(n, c); });
-    if (name == "r") return change([&] { (void)replace_characters(command.argument, n, c); });
+    if (name == "r") return change([&] { failed_ = !replace_characters(command.argument, n, c); });
     if (name == "~") return change([&] { toggle_case_characters(n, c); });
     if (name == "<C-a>" || name == "<C-x>") {
         const auto amount = static_cast<long long>(n);
-        return change([&] { (void)add_to_number(name == "<C-a>" ? amount : -amount, c); });
+        return change([&] { failed_ = !add_to_number(name == "<C-a>" ? amount : -amount, c); });
     }
 
     // Into insert mode with each caret where `place` puts it; what is typed
@@ -2413,6 +2542,9 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         return;
     }
 
+    // q records a macro, @ plays one.
+    if (name == "q") return record_or_stop(command.argument);
+    if (name == "@") return play(command.argument, n, c);
     // m sets a mark at the primary caret.
     if (name == "m") return set_mark(command.argument, c.selections.primary().caret, c);
     // A file's mark in another file: the program goes there.
@@ -2433,12 +2565,16 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
             moved.push_back(selection);
         }
     }
-    if (!any) return;
+    if (!any) {
+        failed_ = true;
+        return;
+    }
     // A jump keeps where it went from, for '' to go back to.
     if (jumps(name)) remembered_.context = detail::Kept{.at = from, .version = c.document.version()};
     c.selections.set(std::move(moved), c.selections.primary_index());
     c.document.history().close();
     settle(c);
+    if (fails_in_place(name) && c.selections.primary().caret == from) failed_ = true;
 }
 
 void Engine::repeat_insert(CommandContext& c) {
@@ -2703,10 +2839,13 @@ void Engine::leave_visual(CommandContext& context) {
 void Engine::take_visual(const Chord& key, CommandContext& c) {
     keys_.push_back(key);
     Command command;
-    const Parsed parsed = parse_visual(keys_, command);
+    const Parsed parsed = parse_visual(keys_, command, recording_.has_value());
     if (parsed == Parsed::Waiting) return;
     keys_.clear();
-    if (parsed == Parsed::Invalid) return;
+    if (parsed == Parsed::Invalid) {
+        failed_ = true;
+        return;
+    }
     const Buffer& buffer = c.document.buffer();
     const std::string_view name = command.name;
     const std::size_t n = command.count.value_or(1);
@@ -2760,6 +2899,7 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
         }
         return show_visual(c);
     }
+    if (name == "q") return record_or_stop(command.argument);
     // m sets a mark at the primary selection's caret end.
     if (name == "m") {
         if (visual_.empty()) return;
@@ -2800,9 +2940,15 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
             any = true;
         }
     }
-    if (!any) return;
+    if (!any) {
+        failed_ = true;
+        return;
+    }
     if (jumps(name) && from) remembered_.context = detail::Kept{.at = *from, .version = c.document.version()};
     show_visual(c);
+    const std::optional<Position> to =
+        visual_.empty() ? std::nullopt : std::optional(visual_[std::min(c.selections.primary_index(), visual_.size() - 1)].caret);
+    if (fails_in_place(name) && to == from) failed_ = true;
 }
 
 bool Engine::act_on_visual(std::string_view name, std::string_view argument, std::size_t count, char reg,

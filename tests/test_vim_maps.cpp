@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,12 +16,14 @@ using namespace fjedit::vim;
 namespace {
 
 // Maps from a keys.vim, and what they played: each key in Vim's notation,
-// a <Cmd> line after a `:`, an error after a `!`.
+// a <Cmd> line after a `:`, an error after a `!`; and the keys typed as the
+// maps took them, each time they did.
 struct Played {
     Maps maps;
     MapModes mode{MapModes::Normal};
     bool wants{false};
     std::vector<std::string> out;
+    std::vector<std::string> told;
     // What a key played does to the mode, as the engine would.
     std::function<void(const Chord&)> on_key = [](const Chord&) {};
 
@@ -40,7 +43,13 @@ struct Played {
                         on_key(key);
                     },
                 .command = [this](std::string_view line) { out.push_back(":" + std::string(line)); },
-                .error = [this](std::string_view error) { out.push_back("!" + std::string(error)); }};
+                .error = [this](std::string_view error) { out.push_back("!" + std::string(error)); },
+                .typed =
+                    [this](std::span<const Chord> keys) {
+                        std::string written;
+                        for (const Chord& key : keys) written += notation(key);
+                        told.push_back(std::move(written));
+                    }};
     }
 
     void type(std::string_view keys, double now = 0.0) {
@@ -127,4 +136,48 @@ TEST_CASE("A map's <Cmd> lines run between its keys, in order", "[vim][maps]") {
     Played p("nnoremap <leader>s <Cmd>w<CR>ihi<Esc><Cmd>noh<CR>\n");
     p.type("<Space>s");
     CHECK(p.taken() == Out{":w", "i", "h", "i", "<Esc>", ":noh"});
+}
+
+TEST_CASE("The keys typed are told as the maps take them, a map's together; a macro plays ahead through the maps",
+          "[vim][maps][macros]") {
+    Played p("nnoremap <leader>s ihi<Esc>\nnmap a b\n");
+    p.type("x<Space>sa");
+    CHECK(p.told == Out{"x", "<Space>s", "a"});
+    p.told.clear();
+    (void)p.taken();
+    // Played when @ is: ahead of the z typed after it, through the maps,
+    // and none of it told as typed.
+    p.on_key = [&](const Chord& key) {
+        if (key.text == "@") p.maps.play_ahead(*parse_notation("a<Space>s"), 0.0, p.player());
+    };
+    p.type("@z");
+    CHECK(p.taken() == Out{"@", "b", "i", "h", "i", "<Esc>", "z"});
+    CHECK(p.told == Out{"@", "z"});
+    // A command failing lets go of what the macro had yet to play, not of
+    // what was typed.
+    p.on_key = [&](const Chord& key) {
+        if (key.text == "@") p.maps.play_ahead(*parse_notation("xyz"), 0.0, p.player());
+        if (key.text == "y") p.maps.drop_played();
+    };
+    p.type("@w");
+    CHECK(p.taken() == Out{"@", "x", "y", "w"});
+}
+
+TEST_CASE("A frame plays so many of a macro's keys, the rest in the frames after", "[vim][maps][macros]") {
+    Played p("");
+    p.on_key = [&](const Chord& key) {
+        if (key.text == "@") p.maps.play_ahead(std::vector<Chord>(5000, Chord::typed("x")), 0.0, p.player());
+    };
+    p.type("@");
+    CHECK(p.taken().size() == 2000);
+    REQUIRE(p.maps.more());
+    p.maps.play_on(0.0, p.player());
+    CHECK(p.taken().size() == 2000);
+    p.maps.play_on(0.0, p.player());
+    CHECK(p.taken().size() == 1001);
+    CHECK_FALSE(p.maps.more());
+    // Let go, the rest plays nowhere.
+    p.type("@");
+    p.maps.drop_played();
+    CHECK_FALSE(p.maps.more());
 }

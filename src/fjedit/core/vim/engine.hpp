@@ -302,6 +302,26 @@ public:
     /// or a register's name after `"`: a key no binding may take.
     [[nodiscard]] bool wants_character() const;
 
+    /// The register a macro is being recorded into (`qa`, until `q`); none
+    /// while none is.
+    [[nodiscard]] std::optional<char> recording() const { return recording_; }
+
+    /// Keys typed while a macro is recorded, as the maps take them in one go
+    /// (a key, or the keys of a map) before any map makes them other keys:
+    /// kept for the macro, as Vim records what is typed. Those that stop the
+    /// recording are left out of it.
+    void record(std::span<const Chord> typed);
+
+    /// The keys a macro played (`@a`) types, which go in ahead of any typed
+    /// after it and through the maps and bindings as typed keys do; taken
+    /// once asked for.
+    [[nodiscard]] std::vector<Chord> take_played() { return std::exchange(played_, {}); }
+
+    /// Whether the last key's command failed, where Vim beeps and lets go
+    /// of what it had yet to type: a motion that couldn't go, keys that make
+    /// no command, an error said. A macro playing stops there.
+    [[nodiscard]] bool failed() const { return failed_; }
+
     /// Drops a command half typed, as a binding run instead of it does. A
     /// binding run as Ctrl-O's one command is that command: the mode goes
     /// back to the one Ctrl-O left.
@@ -440,6 +460,12 @@ private:
     // A `:` command that is the program's, handed on from take() once it
     // reads as Vim reads it; what doesn't is said.
     void hand_on(ExCommand command);
+    // q: a macro recorded into the register `name`; while one is, the
+    // recording stopped and kept in its register.
+    void record_or_stop(std::string_view name);
+    // @: the macro in the register `name` (@ for the one played last)
+    // played `count` times.
+    void play(std::string_view name, std::size_t count, CommandContext& context);
     // `m`: the mark `name` set at `at`; a file's handed up as well, for the
     // program to take from any other file. A name no mark is set by is said.
     void set_mark(std::string_view name, Position at, CommandContext& context);
@@ -610,6 +636,16 @@ private:
     // ends (3i), each time on a line it opens (3o).
     std::size_t insert_repeats_{0};
     bool insert_opens_lines_{false};
+    // The register a macro is recorded into, the keys typed for it so far,
+    // and how many were typed last: those that stop it, when they made a q.
+    std::optional<char> recording_;
+    std::vector<Chord> recorded_;
+    std::size_t typed_last_{0};
+    // The register played last, which @@ plays again; the keys a macro
+    // plays, until the view takes them; and whether the last key failed.
+    std::optional<char> last_played_;
+    std::vector<Chord> played_;
+    bool failed_{false};
 };
 
 } // namespace fjedit::vim

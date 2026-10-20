@@ -1562,6 +1562,21 @@ void use_maps(WithVim& v, std::string_view keys_vim) {
 
 } // namespace
 
+TEST_CASE("With Vim on, a macro keeps the keys typed, before the maps, and plays them through the maps",
+          "[code_view][vim][macros]") {
+    WithVim v("one\ntwo\nthree\nfour");
+    use_maps(v, "nnoremap Q A;<Esc>j\n");
+    v.e.h.type("0qaQq");
+    v.e.h.step();
+    CHECK(v.e.view.vim->registers().get('a', nullptr)->text() == "Q");
+    CHECK(v.e.text() == "one;\ntwo\nthree\nfour");
+    // Q is the map's again each time, until j can't go at the last line.
+    v.e.h.type("9@a");
+    v.e.h.step();
+    CHECK(v.e.text() == "one;\ntwo;\nthree;\nfour;");
+    CHECK_FALSE(v.e.view.maps.more());
+}
+
 TEST_CASE("With Vim on, keys go through keys.vim's maps before Vim, <Cmd> lines handed up", "[code_view][vim][maps]") {
     WithVim v("one two");
     use_maps(v, "inoremap jk <Esc>\nnnoremap <leader>w <Cmd>w<CR>\nnnoremap Q 0dw\n");

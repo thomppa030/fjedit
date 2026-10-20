@@ -986,6 +986,9 @@ void Program::draw_status() {
             const vim::Engine& engine = *tab->view->vim;
             const ModeShown mode = mode_shown(engine.mode());
             ui::status_pill(nullptr, mode.name, mode.tone);
+            if (const std::optional<char> recording = engine.recording()) {
+                ui::status_item(nullptr, std::format("recording @{}", *recording));
+            }
             std::string keys = engine.pending();
             for (const Chord& key : tab->view->pending) keys += vim::notation(key);
             for (const Chord& key : tab->view->maps.waiting()) keys += vim::notation(key);

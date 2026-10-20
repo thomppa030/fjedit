@@ -12,11 +12,31 @@ namespace {
 // maxmapdepth stops it.
 constexpr int MAX_DEPTH = 1000;
 
+// The most keys a frame plays; a long macro goes on in the frames after.
+constexpr std::size_t FRAME_KEYS = 2000;
+
 } // namespace
 
 void Maps::take(const Chord& key, double now, const MapPlayer& player) {
-    typeahead_.push_back({.key = key, .remap = true, .command = {}});
+    typeahead_.push_back({.key = key, .remap = true, .typed = true, .command = {}});
     play(player, false, now);
+}
+
+void Maps::play_ahead(std::span<const Chord> keys, double now, const MapPlayer& player) {
+    // Ahead of the keys held for a longer map too, which came after.
+    typeahead_.insert(typeahead_.begin(), std::make_move_iterator(held_.begin()), std::make_move_iterator(held_.end()));
+    held_.clear();
+    deadline_.reset();
+    std::vector<Queued> ahead;
+    for (const Chord& key : keys) ahead.push_back({.key = key, .remap = true, .typed = false, .command = {}});
+    typeahead_.insert(typeahead_.begin(), std::make_move_iterator(ahead.begin()), std::make_move_iterator(ahead.end()));
+    if (!playing_) play(player, false, now);
+}
+
+void Maps::drop_played() {
+    std::erase_if(held_, [](const Queued& held) { return !held.typed; });
+    while (!typeahead_.empty() && !typeahead_.front().typed) typeahead_.pop_front();
+    if (held_.empty()) deadline_.reset();
 }
 
 void Maps::time_out(const MapPlayer& player) {
@@ -41,13 +61,25 @@ std::vector<const Mapping*> Maps::longer(MapModes mode, const std::vector<Chord>
 }
 
 void Maps::play(const MapPlayer& player, bool timed_out, double now) {
+    playing_ = true;
+    play_keys(player, timed_out, now);
+    playing_ = false;
+}
+
+void Maps::play_keys(const MapPlayer& player, bool timed_out, double now) {
     static const std::vector<Mapping> NONE;
     const std::vector<Mapping>& maps = maps_ ? *maps_ : NONE;
+    // The keys typed that the maps take, for a macro being recorded.
+    const auto typed = [&](std::span<const Chord> keys) {
+        if (player.typed && !keys.empty()) player.typed(keys);
+    };
     int depth = 0;
+    std::size_t played = 0;
     while (true) {
         if (held_.empty()) {
             deadline_.reset();
-            if (typeahead_.empty()) return;
+            if (typeahead_.empty() || played == FRAME_KEYS) return;
+            ++played;
             Queued next = std::move(typeahead_.front());
             typeahead_.pop_front();
             if (next.command) {
@@ -56,6 +88,7 @@ void Maps::play(const MapPlayer& player, bool timed_out, double now) {
             }
             // A key no map may take goes on as it is.
             if (!next.remap || maps.empty() || player.wants_character()) {
+                if (next.typed) typed(std::span(&next.key, 1));
                 player.key(next.key);
                 continue;
             }
@@ -91,7 +124,12 @@ void Maps::play(const MapPlayer& player, bool timed_out, double now) {
             }
         }
         if (exact != nullptr) {
+            std::vector<Chord> typed_keys;
+            for (const Queued& held : held_) {
+                if (held.typed) typed_keys.push_back(held.key);
+            }
             held_.clear();
+            typed(typed_keys);
             if (++depth > MAX_DEPTH) {
                 player.error("E223: recursive mapping");
                 typeahead_.clear();
@@ -103,10 +141,12 @@ void Maps::play(const MapPlayer& player, bool timed_out, double now) {
             std::vector<Queued> does;
             for (const MapStep& step : exact->does) {
                 if (step.is_command) {
-                    does.push_back({.key = {}, .remap = false, .command = step.command});
+                    does.push_back({.key = {}, .remap = false, .typed = false, .command = step.command});
                     continue;
                 }
-                for (const Chord& key : step.keys) does.push_back({.key = key, .remap = exact->recursive, .command = {}});
+                for (const Chord& key : step.keys) {
+                    does.push_back({.key = key, .remap = exact->recursive, .typed = false, .command = {}});
+                }
             }
             const bool begins_with_itself =
                 does.size() >= exact->keys.size() &&
@@ -122,6 +162,7 @@ void Maps::play(const MapPlayer& player, bool timed_out, double now) {
         typeahead_.insert(typeahead_.begin(), std::make_move_iterator(std::next(held_.begin())),
                           std::make_move_iterator(held_.end()));
         held_.clear();
+        if (first.typed) typed(std::span(&first.key, 1));
         player.key(first.key);
     }
 }
