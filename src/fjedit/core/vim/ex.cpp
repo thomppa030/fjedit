@@ -1,6 +1,9 @@
 #include "fjedit/core/vim/ex.hpp"
 
+#include "fjedit/core/vim/registers.hpp"
+
 #include <algorithm>
+#include <charconv>
 #include <format>
 
 namespace fjedit::vim {
@@ -156,6 +159,199 @@ ftk::Result<ExCommand> parse_ex(std::string_view line) {
 
 std::span<const std::string_view> ex_commands() {
     return COMMANDS;
+}
+
+Delimited split_pattern(std::string_view text, char delimiter) {
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const char c = text[at];
+        if (c == '\\') {
+            at += 2;
+        } else if (c == '[') {
+            // A collection, its ] first taken as itself; without one, the [
+            // is itself.
+            std::size_t end = at + 1;
+            if (end < text.size() && text[end] == '^') ++end;
+            if (end < text.size() && text[end] == ']') ++end;
+            while (end < text.size() && text[end] != ']') end += text[end] == '\\' ? 2 : 1;
+            at = end < text.size() ? end + 1 : at + 1;
+        } else if (c == delimiter) {
+            return {.pattern = text.substr(0, at), .rest = text.substr(at + 1), .ended = true};
+        } else {
+            ++at;
+        }
+    }
+    return {.pattern = text, .rest = {}, .ended = false};
+}
+
+bool pattern_delimiter(char c) {
+    return !(letter(c) || digit(c) || c == ' ' || c == '\\' || c == '"' || c == '|' || c == '&');
+}
+
+ftk::Result<std::optional<std::size_t>> read_count(std::string_view argument) {
+    while (!argument.empty() && argument.front() == ' ') argument.remove_prefix(1);
+    if (argument.empty()) return std::optional<std::size_t>{};
+    if (!std::ranges::all_of(argument, digit)) return ftk::make_error(std::format("E488: Trailing characters: {}", argument));
+    std::size_t at = 0;
+    const std::size_t n = number(argument, at);
+    if (n == 0) return ftk::make_error("E939: Positive count required");
+    return std::optional<std::size_t>{n};
+}
+
+ftk::Result<RegisterCount> read_register_count(std::string_view argument) {
+    RegisterCount out;
+    if (!argument.empty() && !digit(argument.front()) && Registers::valid(argument.front())) {
+        out.reg = argument.front();
+        argument.remove_prefix(1);
+    }
+    ftk::Result<std::optional<std::size_t>> count = read_count(argument);
+    if (!count) return std::unexpected(count.error());
+    out.count = *count;
+    return out;
+}
+
+ftk::Result<Shift> read_shift(char shift, std::string_view argument) {
+    Shift out;
+    while (!argument.empty() && argument.front() == shift) {
+        ++out.levels;
+        argument.remove_prefix(1);
+    }
+    ftk::Result<std::optional<std::size_t>> count = read_count(argument);
+    if (!count) return std::unexpected(count.error());
+    out.count = *count;
+    return out;
+}
+
+ftk::Result<ExAddress> read_target(std::string_view argument) {
+    ftk::Result<ExCommand> target = parse_ex(argument);
+    if (!target || !target->range.from || target->range.to || target->range.whole || !target->name.empty()) {
+        return ftk::make_error("E14: Invalid address");
+    }
+    return std::move(*target->range.from);
+}
+
+ftk::Result<SubstituteArgument> read_substitute(std::string_view argument) {
+    SubstituteArgument out;
+    std::string_view flags = argument;
+    if (!argument.empty() && pattern_delimiter(argument.front())) {
+        const char delimiter = argument.front();
+        const Delimited written = split_pattern(argument.substr(1), delimiter);
+        // The replacement, to the next delimiter not escaped.
+        const std::string_view rest = written.rest;
+        std::size_t end = 0;
+        while (end < rest.size() && rest[end] != delimiter) end += rest[end] == '\\' ? 2 : 1;
+        end = std::min(end, rest.size());
+        out.written = SubstituteArgument::Written{.pattern = std::string(written.pattern),
+                                                  .with = std::string(rest.substr(0, end))};
+        flags = end < rest.size() ? rest.substr(end + 1) : std::string_view{};
+    }
+    while (!flags.empty() && flags.front() != ' ' && !digit(flags.front())) {
+        switch (flags.front()) {
+            case '&': out.every = SubstituteArgument::Every::AsLast; break;
+            case 'g': out.every = SubstituteArgument::Every::Yes; break;
+            case 'i': out.match_case = false; break;
+            case 'I': out.match_case = true; break;
+            case 'e': out.quiet = true; break;
+            default: return ftk::make_error(std::format("E488: Trailing characters: {}", flags));
+        }
+        flags.remove_prefix(1);
+    }
+    ftk::Result<std::optional<std::size_t>> count = read_count(flags);
+    if (!count) return std::unexpected(count.error());
+    out.count = *count;
+    return out;
+}
+
+ftk::Result<GlobalArgument> read_global(std::string_view argument) {
+    if (argument.empty() || !pattern_delimiter(argument.front())) return ftk::make_error("E476: Invalid command");
+    const Delimited written = split_pattern(argument.substr(1), argument.front());
+    return GlobalArgument{.pattern = std::string(written.pattern), .command = std::string(written.rest)};
+}
+
+ftk::Result<SetItem> read_set_item(std::string_view item) {
+    struct Named {
+        std::string_view whole;
+        std::string_view short_name;
+        SetOption option;
+        bool on_off;
+    };
+    static constexpr Named OPTIONS[] = {
+        {"number", "nu", SetOption::Number, true},          {"relativenumber", "rnu", SetOption::RelativeNumber, true},
+        {"ignorecase", "ic", SetOption::IgnoreCase, true},  {"smartcase", "scs", SetOption::SmartCase, true},
+        {"hlsearch", "hls", SetOption::HlSearch, true},     {"expandtab", "et", SetOption::ExpandTab, true},
+        {"shiftwidth", "sw", SetOption::ShiftWidth, false}, {"tabstop", "ts", SetOption::TabStop, false},
+        {"scrolloff", "so", SetOption::ScrollOff, false},
+    };
+    std::string_view name = item;
+    std::optional<SetItem::Action> action;
+    std::optional<std::string_view> value;
+    if (const std::size_t equals = name.find('='); equals != std::string_view::npos) {
+        value = name.substr(equals + 1);
+        name = name.substr(0, equals);
+    } else if (name.ends_with('?')) {
+        action = SetItem::Action::Ask;
+        name.remove_suffix(1);
+    } else if (name.ends_with('!')) {
+        action = SetItem::Action::Toggle;
+        name.remove_suffix(1);
+    }
+    const auto find = [&](std::string_view written) {
+        return std::ranges::find_if(OPTIONS, [&](const Named& o) { return o.whole == written || o.short_name == written; });
+    };
+    auto found = find(name);
+    if (found == std::end(OPTIONS) && !value && !action) {
+        if (name.starts_with("no") && find(name.substr(2)) != std::end(OPTIONS)) {
+            found = find(name.substr(2));
+            action = SetItem::Action::Off;
+        } else if (name.starts_with("inv") && find(name.substr(3)) != std::end(OPTIONS)) {
+            found = find(name.substr(3));
+            action = SetItem::Action::Toggle;
+        }
+    }
+    if (found == std::end(OPTIONS)) return ftk::make_error(std::format("E518: Unknown option: {}", item));
+    SetItem out{.option = found->option, .name = found->whole, .on_off = found->on_off, .action = SetItem::Action::On,
+                .value = 0};
+    if (found->on_off) {
+        if (value) return ftk::make_error(std::format("E474: Invalid argument: {}", item));
+        out.action = action.value_or(SetItem::Action::On);
+        return out;
+    }
+    // A number: shown when asked for or named alone, set after =.
+    if (action == SetItem::Action::Off || action == SetItem::Action::Toggle) {
+        return ftk::make_error(std::format("E474: Invalid argument: {}", item));
+    }
+    if (!value) {
+        out.action = SetItem::Action::Ask;
+        return out;
+    }
+    if (value->empty() || !std::ranges::all_of(*value, digit) ||
+        std::from_chars(value->data(), value->data() + value->size(), out.value).ec != std::errc{}) {
+        return ftk::make_error(std::format("E521: Number required after =: {}", item));
+    }
+    if (out.value == 0 && out.option != SetOption::ScrollOff) {
+        return ftk::make_error(std::format("E487: Argument must be positive: {}", item));
+    }
+    out.action = SetItem::Action::Value;
+    return out;
+}
+
+ftk::Result<SortArgument> read_sort(std::string_view argument) {
+    SortArgument out;
+    for (const char flag : argument) {
+        if (flag == ' ') continue;
+        if (flag == 'i') {
+            out.fold_case = true;
+        } else if (flag == 'n') {
+            out.by_number = true;
+        } else if (flag == 'u') {
+            out.unique = true;
+        } else if (flag == '/') {
+            return ftk::make_error("Not supported yet: :sort with a pattern");
+        } else {
+            return ftk::make_error(std::format("E474: Invalid argument: {}", argument));
+        }
+    }
+    return out;
 }
 
 } // namespace fjedit::vim

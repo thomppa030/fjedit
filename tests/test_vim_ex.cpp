@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
 #include <string>
 
 using namespace fjedit::vim;
@@ -94,4 +95,97 @@ TEST_CASE("A name the line doesn't know is refused as Vim words it", "[vim][ex]"
     CHECK_FALSE(parse_ex("so"));
     CHECK_FALSE(parse_ex("nor"));
     CHECK_FALSE(parse_ex("#"));
+}
+
+TEST_CASE("A pattern ends at its delimiter, not one escaped or in a collection", "[vim][ex]") {
+    const Delimited plain = split_pattern("gust/wind/g", '/');
+    CHECK(plain.pattern == "gust");
+    CHECK(plain.rest == "wind/g");
+    CHECK(plain.ended);
+    CHECK(split_pattern("a\\/b/c", '/').pattern == "a\\/b");
+    CHECK(split_pattern("[/]x/y", '/').pattern == "[/]x");
+    const Delimited open = split_pattern("gu", '/');
+    CHECK(open.pattern == "gu");
+    CHECK_FALSE(open.ended);
+    CHECK(pattern_delimiter('#'));
+    CHECK_FALSE(pattern_delimiter('a'));
+    CHECK_FALSE(pattern_delimiter('"'));
+}
+
+TEST_CASE("Counts, registers, shifts and targets after a name read as Vim reads them", "[vim][ex]") {
+    CHECK(read_count("")->has_value() == false);
+    CHECK(read_count(" 3") == std::optional<std::size_t>{3});
+    CHECK(read_count("x").error() == "E488: Trailing characters: x");
+    CHECK(read_count("0").error() == "E939: Positive count required");
+    const auto into_a = read_register_count("a 2");
+    REQUIRE(into_a);
+    CHECK(into_a->reg == 'a');
+    CHECK(into_a->count == std::optional<std::size_t>{2});
+    CHECK(read_register_count("3")->reg == '"');
+    const auto shift = read_shift('>', ">> 4");
+    REQUIRE(shift);
+    CHECK(shift->levels == 3);
+    CHECK(shift->count == std::optional<std::size_t>{4});
+    CHECK(read_target("$") == at(Kind::Last));
+    CHECK(read_target("0") == line(0));
+    CHECK(read_target("1,2").error() == "E14: Invalid address");
+    CHECK(read_target("d").error() == "E14: Invalid address");
+}
+
+TEST_CASE(":s's argument: pattern, replacement, flags in order, and a count", "[vim][ex]") {
+    const auto every = read_substitute("/gust/wind/gi 2");
+    REQUIRE(every);
+    REQUIRE(every->written);
+    CHECK(every->written->pattern == "gust");
+    CHECK(every->written->with == "wind");
+    CHECK(every->every == SubstituteArgument::Every::Yes);
+    CHECK(every->match_case == std::optional<bool>{false});
+    CHECK(every->count == std::optional<std::size_t>{2});
+    // Typed as far as the pattern: no replacement yet.
+    const auto typing = read_substitute("#a#");
+    REQUIRE(typing);
+    CHECK(typing->written->pattern == "a");
+    CHECK(typing->written->with.empty());
+    // Flags alone go on with the last; the later of g and & wins.
+    const auto again = read_substitute("g&");
+    REQUIRE(again);
+    CHECK_FALSE(again->written);
+    CHECK(again->every == SubstituteArgument::Every::AsLast);
+    CHECK(read_substitute("/a/b/x").error() == "E488: Trailing characters: x");
+}
+
+TEST_CASE(":g's, :set's and :sort's arguments read as Vim reads them", "[vim][ex]") {
+    const auto global = read_global("/TODO/d");
+    REQUIRE(global);
+    CHECK(global->pattern == "TODO");
+    CHECK(global->command == "d");
+    CHECK(read_global("TODO").error() == "E476: Invalid command");
+
+    const auto off = read_set_item("noic");
+    REQUIRE(off);
+    CHECK(off->option == SetOption::IgnoreCase);
+    CHECK(off->name == "ignorecase");
+    CHECK(off->action == SetItem::Action::Off);
+    CHECK(read_set_item("hls!")->action == SetItem::Action::Toggle);
+    CHECK(read_set_item("invrnu")->action == SetItem::Action::Toggle);
+    CHECK(read_set_item("so")->action == SetItem::Action::Ask);
+    const auto width = read_set_item("sw=2");
+    REQUIRE(width);
+    CHECK(width->action == SetItem::Action::Value);
+    CHECK(width->value == 2);
+    CHECK(read_set_item("so=0")->value == 0);
+    CHECK(read_set_item("foo").error() == "E518: Unknown option: foo");
+    CHECK(read_set_item("ic=1").error() == "E474: Invalid argument: ic=1");
+    CHECK(read_set_item("nosw").error() == "E474: Invalid argument: nosw");
+    CHECK(read_set_item("sw!").error() == "E474: Invalid argument: sw!");
+    CHECK(read_set_item("so=x").error() == "E521: Number required after =: so=x");
+    CHECK(read_set_item("sw=0").error() == "E487: Argument must be positive: sw=0");
+
+    const auto sort = read_sort("n u");
+    REQUIRE(sort);
+    CHECK(sort->by_number);
+    CHECK(sort->unique);
+    CHECK_FALSE(sort->fold_case);
+    CHECK(read_sort("/x/").error() == "Not supported yet: :sort with a pattern");
+    CHECK(read_sort("q").error() == "E474: Invalid argument: q");
 }

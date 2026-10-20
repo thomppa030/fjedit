@@ -294,11 +294,17 @@ private:
     void run_sort(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_set(const ExCommand& command, CommandContext& context);
     // The line `address` names, counted from 1 (0 for above the first), the
-    // caret's line `current` counted from 0; an error worded as Vim's.
-    ftk::Result<std::size_t> line_at(const ExAddress& address, std::size_t current, CommandContext& context);
+    // caret's line `current` counted from 0; an error worded as Vim's. A
+    // pattern's search is made into `searched`, which an empty pattern after
+    // it on the line goes on with, and which becomes the last search once
+    // the line runs.
+    ftk::Result<std::size_t> line_at(const ExAddress& address, std::size_t current, const CommandContext& context,
+                                     std::optional<Search>& searched) const;
     // The first and last lines `range` names, counted from 0: the caret's
     // line where it names none, or the whole text with `whole`.
-    ftk::Result<std::pair<std::size_t, std::size_t>> lines_of(const ExRange& range, bool whole, CommandContext& context);
+    ftk::Result<std::pair<std::size_t, std::size_t>> lines_of(const ExRange& range, bool whole,
+                                                              const CommandContext& context,
+                                                              std::optional<Search>& searched) const;
     void take_command(const Chord& key, CommandContext& context);
     // The pattern typed searched for as it is typed: its matches shown and,
     // from normal mode, the one it goes to selected.
