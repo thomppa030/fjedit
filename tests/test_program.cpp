@@ -358,6 +358,9 @@ TEST_CASE("Splitting opens the file in front again beside it, one document betwe
     run.h.step(2);
     REQUIRE(run.program->groups() == 1);
     REQUIRE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+    // The group left has the keyboard.
+    run.h.type("y");
+    REQUIRE(run.document("coin.cpp").buffer().text() == "yxint a;\n");
 }
 
 namespace {

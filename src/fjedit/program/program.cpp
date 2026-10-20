@@ -441,6 +441,9 @@ void Program::close_tab(Group& group, std::size_t index) {
         const auto gone = static_cast<std::size_t>(&group - groups_.data());
         groups_.erase(groups_.begin() + static_cast<std::ptrdiff_t>(gone));
         if (active_ >= gone && active_ > 0) --active_;
+        // The view that had the keyboard went with the group: it goes to the
+        // group in front now.
+        if (Tab* front = front_tab()) front->view->focus = true;
     }
 }
 
