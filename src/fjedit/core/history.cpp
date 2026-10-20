@@ -1,5 +1,7 @@
 #include "fjedit/core/history.hpp"
 
+#include <cstddef>
+#include <iterator>
 #include <utility>
 
 namespace fjedit {
@@ -56,6 +58,31 @@ std::optional<History::Move> History::take_back(std::size_t steps) {
     done_ = steps;
     end_step();
     return move;
+}
+
+void History::join(std::size_t steps) {
+    if (done_ <= steps + 1) return;
+    Step& joined = steps_[steps];
+    for (std::size_t i = steps + 1; i < done_; ++i) {
+        Step& step = steps_[i];
+        joined.made.insert(joined.made.end(), std::make_move_iterator(step.made.begin()),
+                           std::make_move_iterator(step.made.end()));
+        joined.undo.insert(joined.undo.end(), std::make_move_iterator(step.undo.begin()),
+                           std::make_move_iterator(step.undo.end()));
+        joined.after = std::move(step.after);
+    }
+    joined.kind = EditKind::Other;
+    // A save between the steps joined can't be come back to; one after them
+    // moves down with them.
+    const std::size_t gone = done_ - steps - 1;
+    if (saved_ != NOWHERE && saved_ > steps && saved_ < done_) {
+        saved_ = NOWHERE;
+    } else if (saved_ != NOWHERE && saved_ >= done_) {
+        saved_ -= gone;
+    }
+    steps_.erase(steps_.begin() + static_cast<std::ptrdiff_t>(steps + 1), steps_.begin() + static_cast<std::ptrdiff_t>(done_));
+    done_ = steps + 1;
+    end_step();
 }
 
 void History::mark_saved() {

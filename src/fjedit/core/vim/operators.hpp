@@ -10,6 +10,7 @@
 
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/vim/motions.hpp"
+#include "fjedit/core/vim/pattern.hpp"
 #include "fjedit/core/vim/registers.hpp"
 #include "fjedit/core/vim/text_objects.hpp"
 
@@ -126,6 +127,25 @@ void move_lines(std::size_t first, std::size_t last, std::size_t below, CommandC
 /// `:t` and `:co`: the same lines copied there, the caret on the last line
 /// copied.
 void copy_lines(std::size_t first, std::size_t last, std::size_t below, CommandContext& context);
+
+/// How much `:s` replaced, and on how many lines.
+struct Substituted {
+    std::size_t replaced{0};
+    std::size_t lines{0};
+};
+
+/// `:s`: in lines `first` to `last`, what `pattern` matches (a match that
+/// takes no text too, as `^` and `$`) replaced by `with`, written as
+/// expand_replacement() reads it with `previous` for ~: the first match on
+/// each line, or each with `every`. One step of the history; the caret at
+/// the first non-blank of the last line changed.
+Substituted substitute(std::size_t first, std::size_t last, const Pattern& pattern, std::string_view with,
+                       std::string_view previous, bool every, CommandContext& context);
+
+/// `:sort` and the like: lines `first` to `last` written over by `lines`,
+/// as one step, the caret at the first's first non-blank; nothing when they
+/// are the same.
+void replace_lines(std::size_t first, std::size_t last, std::span<const std::string> lines, CommandContext& context);
 
 /// `r` in visual mode: every character `ranges` take, but line breaks,
 /// replaced by `with`, as one step; each caret at its range's start.

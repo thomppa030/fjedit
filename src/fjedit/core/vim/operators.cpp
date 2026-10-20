@@ -609,33 +609,71 @@ void shift_caret_lines(bool right, CommandContext& context) {
 
 void move_lines(std::size_t first, std::size_t last, std::size_t below, CommandContext& context) {
     const Buffer& buffer = context.document.buffer();
+    const std::size_t count = buffer.line_count();
     // Where they go is before line `below` as it is now.
     if (below >= first && below <= last + 1) return;
-    // The lines from the first touched to the last, written again in their
-    // new order.
-    const std::size_t low = std::min(first, below);
-    const std::size_t high = std::max(last + 1, below) - 1;
-    std::vector<std::string_view> lines;
-    const auto take = [&](std::size_t from, std::size_t to) {
-        for (std::size_t line = from; line < to; ++line) lines.push_back(buffer.line(line));
-    };
-    if (below < first) {
-        take(first, last + 1);
-        take(below, first);
-    } else {
-        take(last + 1, below);
-        take(first, last + 1);
+    std::string block;
+    for (std::size_t line = first; line <= last; ++line) {
+        if (line > first) block += '\n';
+        block += buffer.line(line);
     }
+    // Taken out and put in again, so the lines around them keep their own
+    // places (the lines Vim's :g has marked); the last lines go with the
+    // break before them.
+    const Change out = last + 1 < count
+                           ? Change{.span = {{first, 0}, {last + 1, 0}}, .text = ""}
+                           : Change{.span = {{first - 1, buffer.line(first - 1).size()}, {last, buffer.line(last).size()}},
+                                    .text = ""};
+    const Position end{count - 1, buffer.line(count - 1).size()};
+    const Change in = below < count ? Change{.span = {{below, 0}, {below, 0}}, .text = block + "\n"}
+                                    : Change{.span = {end, end}, .text = "\n" + block};
+    // Put in before taken out where both begin at one place.
+    std::vector<Change> changes = below < first ? std::vector<Change>{in, out} : std::vector<Change>{out, in};
+    const std::size_t caret_line = below < first ? below + (last - first) : below - 1;
+    commit(context, ordered(std::move(changes)), [&](const Edit&) {
+        return std::vector<Selection>{Selection::at(first_non_blank(context.document.buffer(), caret_line))};
+    });
+}
+
+Substituted substitute(std::size_t first, std::size_t last, const Pattern& pattern, std::string_view with,
+                       std::string_view previous, bool every, CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
+    FindOptions options = pattern.options;
+    options.empty = true;
+    Pattern matching = pattern;
+    matching.options = options;
+    Substituted out;
+    std::vector<Change> changes;
+    std::optional<std::size_t> line_done;
+    for (const Span& match : find_in_lines(buffer, pattern.regex, first, last + 1, options)) {
+        if (!every && line_done == match.from.line) continue;
+        const std::optional<std::vector<std::string>> taken = captured(buffer, match, matching);
+        if (!taken) continue;
+        changes.push_back({.span = match, .text = expand_replacement(with, *taken, previous)});
+        ++out.replaced;
+        if (line_done != match.from.line) ++out.lines;
+        line_done = match.from.line;
+    }
+    if (changes.empty()) return out;
+    commit(context, ordered(std::move(changes)), [&](const Edit& made) {
+        const std::size_t line = spans_after(made).back().from.line;
+        return std::vector<Selection>{Selection::at(first_non_blank(context.document.buffer(), line))};
+    });
+    return out;
+}
+
+void replace_lines(std::size_t first, std::size_t last, std::span<const std::string> lines, CommandContext& context) {
+    const Buffer& buffer = context.document.buffer();
     std::string text;
     for (std::size_t i = 0; i < lines.size(); ++i) {
         if (i > 0) text += '\n';
         text += lines[i];
     }
-    const std::size_t caret_line = below < first ? below + (last - first) : below - 1;
+    if (text == buffer.text({{first, 0}, {last, buffer.line(last).size()}})) return;
     Edit edit;
-    edit.changes.push_back({.span = {{low, 0}, {high, buffer.line(high).size()}}, .text = std::move(text)});
+    edit.changes.push_back({.span = {{first, 0}, {last, buffer.line(last).size()}}, .text = std::move(text)});
     commit(context, std::move(edit), [&](const Edit&) {
-        return std::vector<Selection>{Selection::at(first_non_blank(context.document.buffer(), caret_line))};
+        return std::vector<Selection>{Selection::at(first_non_blank(context.document.buffer(), first))};
     });
 }
 

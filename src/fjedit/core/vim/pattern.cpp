@@ -380,9 +380,7 @@ std::optional<std::vector<std::string>> captured(const Buffer& buffer, Span matc
     return taken;
 }
 
-std::string expand_replacement(std::string_view with, std::span<const std::string> taken, std::string_view previous) {
-    // A ~ first: the previous substitute's text, where no backslash is
-    // before it.
+std::string with_previous(std::string_view with, std::string_view previous) {
     std::string text;
     for (std::size_t i = 0; i < with.size(); ++i) {
         if (with[i] == '\\' && i + 1 < with.size()) {
@@ -394,6 +392,12 @@ std::string expand_replacement(std::string_view with, std::span<const std::strin
             text += with[i];
         }
     }
+    return text;
+}
+
+std::string expand_replacement(std::string_view with, std::span<const std::string> taken, std::string_view previous) {
+    // A ~ first: the previous substitute's text.
+    const std::string text = with_previous(with, previous);
 
     // The case \u or \l gives the next letter, and \U or \L every one.
     enum class Case : uint8_t { As, Upper, Lower };

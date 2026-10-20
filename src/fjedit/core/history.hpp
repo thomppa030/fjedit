@@ -97,6 +97,11 @@ public:
     /// no step was done after them.
     std::optional<Move> take_back(std::size_t steps);
 
+    /// Makes the steps done after the first `steps` (done() when a command
+    /// began) one step, undone and redone together: what one command made
+    /// through others, such as Vim's :g and :normal.
+    void join(std::size_t steps);
+
     /// Notes that the text as it is now is what its file holds, and ends the
     /// open step.
     void mark_saved();

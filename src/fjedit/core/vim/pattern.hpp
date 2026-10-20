@@ -63,4 +63,9 @@ struct Pattern {
 [[nodiscard]] std::string expand_replacement(std::string_view with, std::span<const std::string> taken,
                                              std::string_view previous = {});
 
+/// `with`, a `:s` replacement, each ~ in it without a backslash before it
+/// given `previous`, the previous `:s`'s: what Vim keeps as the replacement
+/// a ~ later stands for.
+[[nodiscard]] std::string with_previous(std::string_view with, std::string_view previous);
+
 } // namespace fjedit::vim

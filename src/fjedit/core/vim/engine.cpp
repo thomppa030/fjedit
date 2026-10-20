@@ -661,6 +661,53 @@ Typed split_search(std::string_view text, char kind) {
     return {.pattern = text, .offset = {}, .ended = false};
 }
 
+// What follows an ex command's name or flags: nothing, or a count, which
+// makes its lines `first` to `last` that many from the last on, of the
+// text's `lines`. False, an error in `told`, for anything else.
+bool take_count(std::string_view argument, std::size_t& first, std::size_t& last, std::size_t lines, Message& told) {
+    while (!argument.empty() && argument.front() == ' ') argument.remove_prefix(1);
+    if (argument.empty()) return true;
+    if (argument.find_first_not_of("0123456789") != std::string_view::npos) {
+        told = {.text = std::format("E488: Trailing characters: {}", argument), .error = true};
+        return false;
+    }
+    std::size_t n = 0;
+    for (const char digit : argument) n = std::min<std::size_t>(n * 10 + static_cast<std::size_t>(digit - '0'), lines);
+    if (n == 0) {
+        told = {.text = "E939: Positive count required", .error = true};
+        return false;
+    }
+    first = last;
+    last = std::min(last + n - 1, lines - 1);
+    return true;
+}
+
+// Which lines :g has marked, carried through `edit`: the lines a change
+// takes away lose their marks and those it puts in have none. A change of
+// whole lines (a line's start to a line's start, its text whole lines) takes
+// those lines; any other the lines after its first that it reaches into.
+void carry_marks(std::vector<bool>& marks, const Edit& edit) {
+    for (auto change = edit.changes.rbegin(); change != edit.changes.rend(); ++change) {
+        const Span span = change->span;
+        const auto breaks = static_cast<std::size_t>(std::ranges::count(change->text, '\n'));
+        const bool whole =
+            span.from.byte == 0 && span.to.byte == 0 && (change->text.empty() || change->text.ends_with('\n'));
+        const std::size_t taken_from = whole ? span.from.line : span.from.line + 1;
+        const std::size_t taken = span.to.line - span.from.line;
+        const auto at = static_cast<std::ptrdiff_t>(std::min(taken_from, marks.size()));
+        const auto end = static_cast<std::ptrdiff_t>(std::min(taken_from + taken, marks.size()));
+        marks.erase(marks.begin() + at, marks.begin() + end);
+        marks.insert(marks.begin() + at, breaks, false);
+    }
+}
+
+// A delimiter for :s and :g: anything but a letter, a digit, a blank, a
+// backslash, ", | and &.
+bool delimiter(char c) {
+    return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '\\' ||
+             c == '"' || c == '|' || c == '&');
+}
+
 // The keys of `command` before what it names: its register, its counts as
 // one, its operator.
 std::vector<Chord> keys_before(const Command& command) {
@@ -987,7 +1034,8 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
     }
     const ExCommand& command = *read;
     const std::string& name = command.name;
-    const ftk::Result<std::pair<std::size_t, std::size_t>> lines = lines_of(command.range, false, c);
+    const bool whole = name == "global" || name == "vglobal" || name == "sort";
+    const ftk::Result<std::pair<std::size_t, std::size_t>> lines = lines_of(command.range, whole, c);
     if (!lines) {
         remembered_.message = {.text = lines.error(), .error = true};
         return;
@@ -998,28 +1046,17 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
     const auto say = [&](std::size_t n, std::string_view what) {
         if (n > 2) remembered_.message = {.text = std::format("{} {}", n, what), .error = false};
     };
-    // What follows a name: a count, the lines from its range's last on.
     const auto counted = [&](std::string_view argument) {
-        while (!argument.empty() && argument.front() == ' ') argument.remove_prefix(1);
-        if (argument.empty()) return true;
-        if (argument.find_first_not_of("0123456789") != std::string_view::npos) {
-            remembered_.message = {.text = std::format("E488: Trailing characters: {}", argument), .error = true};
-            return false;
-        }
-        std::size_t n = 0;
-        for (const char digit : argument) n = std::min<std::size_t>(n * 10 + static_cast<std::size_t>(digit - '0'), count);
-        if (n == 0) {
-            remembered_.message = {.text = "E939: Positive count required", .error = true};
-            return false;
-        }
-        first = last;
-        last = std::min(last + n - 1, count - 1);
-        return true;
+        return take_count(argument, first, last, count, remembered_.message);
     };
     // Vim's line acts at one caret, the primary's.
     c.selections = Selections(Selection::at(c.selections.primary().caret));
     c.document.history().close();
 
+    if (name == "substitute") return run_substitute(command, first, last, c);
+    if (name == "global" || name == "vglobal") return run_global(command, first, last, c);
+    if (name == "normal") return run_normal(command, first, last, c);
+    if (name == "sort") return run_sort(command, first, last, c);
     if (name.empty()) {
         // A range alone goes to its last line.
         c.selections = Selections(Selection::at(first_non_blank(c.document.buffer(), last)));
@@ -1085,6 +1122,240 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
         return;
     }
     remembered_.message = {.text = std::format("Not supported yet: :{}", name), .error = true};
+}
+
+void Engine::run_substitute(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {
+    const std::size_t count = c.document.buffer().line_count();
+    std::string_view argument = command.argument;
+    Substitute made;
+    std::string_view flags;
+    if (argument.empty() || !delimiter(argument.front())) {
+        // :s alone, or with flags, goes on with the last.
+        if (!substitute_) {
+            remembered_.message = {.text = "E35: No previous regular expression", .error = true};
+            return;
+        }
+        made = *substitute_;
+        made.every = false;
+        flags = argument;
+    } else {
+        const Typed written = split_search(argument.substr(1), argument.front());
+        // The replacement, to the next delimiter not escaped.
+        const std::string_view rest = written.offset;
+        std::size_t end = 0;
+        while (end < rest.size() && rest[end] != argument.front()) end += rest[end] == '\\' ? 2 : 1;
+        end = std::min(end, rest.size());
+        made.pattern = written.pattern;
+        made.with = rest.substr(0, end);
+        flags = end < rest.size() ? rest.substr(end + 1) : std::string_view{};
+        // An empty pattern is the last search's.
+        if (made.pattern.empty()) {
+            if (!remembered_.search) {
+                remembered_.message = {.text = "E35: No previous regular expression", .error = true};
+                return;
+            }
+            made.pattern = remembered_.search->text;
+        }
+    }
+    // Its flags: & the last's, g every match, i and I the case, e no error
+    // when nothing matches.
+    std::optional<bool> match_case;
+    bool quiet = false;
+    while (!flags.empty() && flags.front() != ' ' && (flags.front() < '0' || flags.front() > '9')) {
+        switch (flags.front()) {
+            case '&': made.every = substitute_ && substitute_->every; break;
+            case 'g': made.every = true; break;
+            case 'i': match_case = false; break;
+            case 'I': match_case = true; break;
+            case 'e': quiet = true; break;
+            default: remembered_.message = {.text = std::format("E488: Trailing characters: {}", flags), .error = true}; return;
+        }
+        flags.remove_prefix(1);
+    }
+    if (!take_count(flags, first, last, count, remembered_.message)) return;
+    ftk::Result<Pattern> read = read_pattern(made.pattern, remembered_.settings);
+    if (!read) {
+        remembered_.message = {.text = read.error(), .error = true};
+        return;
+    }
+    if (match_case) read->options.match_case = *match_case;
+    // Its pattern is the last search, and it the last :s, its replacement
+    // kept with the last's put in for ~.
+    remembered_.search = Search{.text = made.pattern, .pattern = *read, .forward = true};
+    remembered_.shown = true;
+    made.with = with_previous(made.with, substitute_ ? substitute_->with : std::string());
+    substitute_ = made;
+    const Substituted done = substitute(first, last, *read, made.with, {}, made.every, c);
+    if (done.replaced == 0) {
+        if (!quiet) remembered_.message = {.text = std::format("E486: Pattern not found: {}", made.pattern), .error = true};
+        return;
+    }
+    if (done.replaced > 2) {
+        remembered_.message = {.text = std::format("{} substitutions on {} line{}", done.replaced, done.lines,
+                                                   done.lines == 1 ? "" : "s"),
+                               .error = false};
+    }
+    settle(c);
+}
+
+void Engine::run_global(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {
+    if (in_global_) {
+        remembered_.message = {.text = "E147: Cannot do :global recursive", .error = true};
+        return;
+    }
+    // :v and :g! mark the lines that don't match.
+    const bool matching = (command.name == "global") != command.bang;
+    if (command.argument.empty() || !delimiter(command.argument.front())) {
+        remembered_.message = {.text = "E476: Invalid command", .error = true};
+        return;
+    }
+    const Typed written = split_search(std::string_view(command.argument).substr(1), command.argument.front());
+    std::string pattern(written.pattern);
+    if (pattern.empty()) {
+        if (!remembered_.search) {
+            remembered_.message = {.text = "E35: No previous regular expression", .error = true};
+            return;
+        }
+        pattern = remembered_.search->text;
+    }
+    ftk::Result<Pattern> read = read_pattern(pattern, remembered_.settings);
+    if (!read) {
+        remembered_.message = {.text = read.error(), .error = true};
+        return;
+    }
+    remembered_.search = Search{.text = pattern, .pattern = *read, .forward = true};
+    remembered_.shown = true;
+
+    // The lines marked first, a line matching where its pattern matches
+    // anything, though nothing more than its start or end.
+    const Buffer& buffer = c.document.buffer();
+    FindOptions options = read->options;
+    options.empty = true;
+    std::vector<bool> marks(buffer.line_count(), false);
+    for (std::size_t line = first; line <= last; ++line) marks[line] = !matching;
+    for (const Span& found : find_in_lines(buffer, read->regex, first, last + 1, options)) marks[found.from.line] = matching;
+    if (std::ranges::find(marks, true) == marks.end()) {
+        remembered_.message = {.text = std::format("E486: Pattern not found: {}", pattern), .error = true};
+        return;
+    }
+    const std::string run(written.offset);
+    if (run.empty()) return;
+
+    // Its command at each marked line in turn, the lines carried through
+    // what each does, all of it one step.
+    const std::size_t steps = c.document.history().done();
+    const std::size_t lines_before = buffer.line_count();
+    in_global_ = true;
+    for (auto marked = std::ranges::find(marks, true); marked != marks.end(); marked = std::ranges::find(marks, true)) {
+        *marked = false;
+        const auto line = static_cast<std::size_t>(marked - marks.begin());
+        c.selections = Selections(Selection::at({line, 0}));
+        const uint64_t version = c.document.version();
+        run_ex(run, c);
+        if (const auto since = c.document.edits_since(version)) {
+            for (const Edit& made : *since) carry_marks(marks, made);
+        }
+        marks.resize(c.document.buffer().line_count(), false);
+    }
+    in_global_ = false;
+    c.document.history().join(steps);
+    const std::size_t lines_after = c.document.buffer().line_count();
+    if (lines_after + 2 < lines_before) {
+        remembered_.message = {.text = std::format("{} fewer lines", lines_before - lines_after), .error = false};
+    } else if (lines_before + 2 < lines_after) {
+        remembered_.message = {.text = std::format("{} more lines", lines_after - lines_before), .error = false};
+    }
+    settle(c);
+}
+
+void Engine::run_normal(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {
+    if (command.argument.empty()) {
+        remembered_.message = {.text = "E471: Argument required", .error = true};
+        return;
+    }
+    // Its keys are what they type, a character each.
+    std::vector<Chord> keys;
+    const std::string_view typed = command.argument;
+    for (std::size_t at = 0; at < typed.size();) {
+        const std::size_t from = at;
+        (void)ftk::utf8::next(typed, at);
+        keys.push_back(Chord::typed(typed.substr(from, at - from)));
+    }
+    // At each line of its range from the line's start, or where the caret
+    // is without one; a command left unfinished is given up, and insert or
+    // visual mode left. All of it one step.
+    const bool ranged = command.range.from || command.range.whole;
+    const std::size_t steps = c.document.history().done();
+    for (std::size_t line = first; line <= last && line < c.document.buffer().line_count(); ++line) {
+        if (ranged) c.selections = Selections(Selection::at({line, 0}));
+        for (const Chord& key : keys) dispatch(key, c);
+        keys_.clear();
+        operator_waits_ = false;
+        register_next_ = false;
+        if (mode_ != Mode::Normal) dispatch(Chord{.key = Key::Escape, .modifiers = {}, .text = {}}, c);
+    }
+    c.document.history().join(steps);
+}
+
+void Engine::run_sort(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {
+    // Its flags: i the case let go, n by each line's first number, u each
+    // line once; ! the other way round.
+    bool fold_case = false;
+    bool by_number = false;
+    bool unique = false;
+    for (const char flag : command.argument) {
+        if (flag == ' ') continue;
+        if (flag == 'i') {
+            fold_case = true;
+        } else if (flag == 'n') {
+            by_number = true;
+        } else if (flag == 'u') {
+            unique = true;
+        } else if (flag == '/') {
+            remembered_.message = {.text = "Not supported yet: :sort with a pattern", .error = true};
+            return;
+        } else {
+            remembered_.message = {.text = std::format("E474: Invalid argument: {}", command.argument), .error = true};
+            return;
+        }
+    }
+    const Buffer& buffer = c.document.buffer();
+    std::vector<std::string> lines;
+    for (std::size_t line = first; line <= last; ++line) lines.emplace_back(buffer.line(line));
+    const auto lower = [](std::string text) {
+        for (char& ch : text) {
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        }
+        return text;
+    };
+    // A line's first number, with a - before it; none sorts first.
+    const auto number = [](std::string_view text) -> std::optional<long long> {
+        const std::size_t at = text.find_first_of("0123456789");
+        if (at == std::string_view::npos) return std::nullopt;
+        long long value = 0;
+        std::size_t end = at;
+        while (end < text.size() && text[end] >= '0' && text[end] <= '9' && value < 100000000000000000LL) {
+            value = value * 10 + (text[end] - '0');
+            ++end;
+        }
+        return at > 0 && text[at - 1] == '-' ? -value : value;
+    };
+    const auto before = [&](const std::string& a, const std::string& b) {
+        if (by_number) return number(a) < number(b);
+        return fold_case ? lower(a) < lower(b) : a < b;
+    };
+    if (command.bang) {
+        std::ranges::stable_sort(lines, [&](const std::string& a, const std::string& b) { return before(b, a); });
+    } else {
+        std::ranges::stable_sort(lines, before);
+    }
+    if (unique) {
+        const auto same = [&](const std::string& a, const std::string& b) { return !before(a, b) && !before(b, a); };
+        const auto [gone, end] = std::ranges::unique(lines, same);
+        lines.erase(gone, end);
+    }
+    replace_lines(first, last, lines, c);
+    settle(c);
 }
 
 void Engine::cancel(CommandContext& context) {
@@ -1460,6 +1731,10 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         remembered_.shown = false;
         return;
     }
+    // & makes the last :s again on the caret's line, g& on every line with
+    // its flags.
+    if (name == "&") return run_ex("s", c);
+    if (name == "g&") return run_ex("%s//~/&", c);
     // The view scrolled, the carets with it.
     if (std::optional<std::vector<Selection>> scrolled = scroll_view(c, name, command.count, c.selections.all(), half_page_)) {
         c.selections.set(std::move(*scrolled), c.selections.primary_index());

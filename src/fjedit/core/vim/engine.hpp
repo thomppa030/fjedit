@@ -253,6 +253,11 @@ private:
                             std::string text = {});
     // A line typed after `:` run.
     void run_ex(std::string_view line, CommandContext& context);
+    // :s, :g and :v, :normal and :sort over lines `first` to `last`.
+    void run_substitute(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
+    void run_global(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
+    void run_normal(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
+    void run_sort(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     // The line `address` names, counted from 1 (0 for above the first), the
     // caret's line `current` counted from 0; an error worded as Vim's.
     ftk::Result<std::size_t> line_at(const ExAddress& address, std::size_t current, CommandContext& context);
@@ -325,6 +330,16 @@ private:
     // The searches typed and the lines typed after `:`, the latest last.
     std::vector<std::string> history_;
     std::vector<std::string> commands_;
+    // The last :s, which `:s` alone, `&`, `g&` and ~ go on with: its pattern
+    // as typed, its replacement, and whether it replaced every match.
+    struct Substitute {
+        std::string pattern;
+        std::string with;
+        bool every{false};
+    };
+    std::optional<Substitute> substitute_;
+    // A :g is running its command on the lines it marked.
+    bool in_global_{false};
     // How many rows Ctrl-D and Ctrl-U move once a count has said; half the
     // view until then.
     std::size_t half_page_{0};

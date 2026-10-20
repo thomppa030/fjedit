@@ -122,24 +122,29 @@ std::optional<std::regex> compiled(std::string_view pattern, bool match_case) {
     }
 }
 
-// Every match of `expression` in `line` whose `group` takes text, in order.
+// Every match of `expression` in `line` whose group `options` names took
+// part, and took text unless `options` lets matches take none, in order.
 template <typename Found>
-void each_match(std::string_view line, const std::regex& expression, std::size_t group, Found&& found) {
+void each_match(std::string_view line, const std::regex& expression, const FindOptions& options, Found&& found) {
     using Matches = std::regex_iterator<std::string_view::const_iterator>;
+    const auto group = static_cast<int>(options.group);
     for (Matches it(line.begin(), line.end(), expression), end; it != end; ++it) {
-        if (group >= it->size() || it->length(static_cast<int>(group)) == 0) continue;
+        if (options.group >= it->size() || !(*it)[group].matched) continue;
+        if (it->length(group) == 0 && !options.empty) continue;
         found(*it);
     }
 }
 
-// The match of `expression` on `match`'s line whose `group` begins where
-// `match` does, found again from the line's start so anchors and what is
-// around it read as they did when it was found; `use` is given it.
+// The match of `expression` on `match`'s line whose group `options` names
+// begins where `match` does, found again from the line's start so anchors
+// and what is around it read as they did when it was found; `use` is given
+// it.
 template <typename Use>
-bool rematch(const Buffer& buffer, Span match, const std::regex& expression, std::size_t group, Use&& use) {
+bool rematch(const Buffer& buffer, Span match, const std::regex& expression, const FindOptions& options, Use&& use) {
     bool done = false;
-    each_match(buffer.line(match.from.line), expression, group, [&](const auto& found) {
-        if (done || static_cast<std::size_t>(found.position(static_cast<int>(group))) != match.from.byte) return;
+    const auto group = static_cast<int>(options.group);
+    each_match(buffer.line(match.from.line), expression, options, [&](const auto& found) {
+        if (done || static_cast<std::size_t>(found.position(group)) != match.from.byte) return;
         use(found);
         done = true;
     });
@@ -161,7 +166,7 @@ std::vector<Span> regex_in_lines(const Buffer& buffer, std::string_view pattern,
     for (std::size_t line = first_line; line < end_line; ++line) {
         const std::string_view text = buffer.line(line);
         const auto group = static_cast<int>(options.group);
-        each_match(text, *expression, options.group, [&](const auto& match) {
+        each_match(text, *expression, options, [&](const auto& match) {
             const auto from = static_cast<std::size_t>(match.position(group));
             const std::size_t to = from + static_cast<std::size_t>(match.length(group));
             if (options.whole_word && !whole_word_at(text, from, to)) return;
@@ -259,7 +264,7 @@ std::string replacement(const Buffer& buffer, Span match, std::string_view needl
     const std::optional<std::regex> expression = compiled(needle, options.match_case);
     if (!expression) return std::string(with);
     std::string out(with);
-    (void)rematch(buffer, match, *expression, options.group,
+    (void)rematch(buffer, match, *expression, options,
                   [&](const auto& found) { out = found.format(std::string(with)); });
     return out;
 }
@@ -269,7 +274,7 @@ std::optional<std::vector<std::string>> captured(const Buffer& buffer, Span matc
     const std::optional<std::regex> expression = compiled(needle, options.match_case);
     if (!expression) return std::nullopt;
     std::vector<std::string> groups;
-    const bool found = rematch(buffer, match, *expression, options.group, [&](const auto& matched) {
+    const bool found = rematch(buffer, match, *expression, options, [&](const auto& matched) {
         for (std::size_t i = 0; i < matched.size(); ++i) groups.push_back(matched.str(static_cast<int>(i)));
     });
     if (!found) return std::nullopt;

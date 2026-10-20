@@ -24,6 +24,15 @@ TEST_CASE("A regular expression's match can be one of its groups; what each grou
     REQUIRE_FALSE(captured(buffer, {{0, 0}, {0, 3}}, "(\\w)=(\\d+)", regex));
 }
 
+TEST_CASE("A regular expression's matches that take no text count when asked to", "[find]") {
+    const Buffer buffer("ab\ncd");
+    const FindOptions none{.match_case = true, .whole_word = false, .regex = true, .group = 0, .empty = false};
+    const FindOptions empty{.match_case = true, .whole_word = false, .regex = true, .group = 0, .empty = true};
+    REQUIRE(find_all(buffer, "^", none).empty());
+    REQUIRE(find_all(buffer, "^", empty) == std::vector<Span>{{{0, 0}, {0, 0}}, {{1, 0}, {1, 0}}});
+    REQUIRE(find_all(buffer, "$", empty) == std::vector<Span>{{{0, 2}, {0, 2}}, {{1, 2}, {1, 2}}});
+}
+
 TEST_CASE("Matches don't overlap: the search goes on from a match's end", "[find]") {
     REQUIRE(find_all(Buffer("aaaa"), "aa") == std::vector<Span>{{{0, 0}, {0, 2}}, {{0, 2}, {0, 4}}});
     REQUIRE(find_all(Buffer("aaa"), "aa") == std::vector<Span>{{{0, 0}, {0, 2}}});

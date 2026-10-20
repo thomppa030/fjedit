@@ -27,8 +27,11 @@ struct FindOptions {
     bool regex{false};
     /// For a regular expression: the group whose text is the match, 0 for
     /// all the expression takes. A match whose group takes no text doesn't
-    /// count.
+    /// count, unless `empty`.
     std::size_t group{0};
+    /// For a regular expression: matches that take no text count too, as
+    /// Vim's `:s/^/# /` needs.
+    bool empty{false};
 };
 
 /// Every place `needle` occurs, in order and apart: after a match, the

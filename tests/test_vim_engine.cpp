@@ -1194,6 +1194,123 @@ TEST_CASE("A count before : and a visual selection give the line its range; a pa
     CHECK(found.view.selections.primary().caret == Position{2, 0});
 }
 
+TEST_CASE(":s replaces the first match on each line of its range, or every one with g", "[vim][ex]") {
+    Vim v("|spin Spin spin\nspin");
+    v.keys(":s/spin/X/<CR>");
+    CHECK(v.view.buffer().text() == "X Spin spin\nspin");
+    v.keys(":s/spin/X/g<CR>");
+    CHECK(v.view.buffer().text() == "X Spin X\nspin");
+    v.keys(":%s/spin/Y/gi<CR>");
+    CHECK(v.view.buffer().text() == "X Y X\nY");
+    // One step of the history, the caret on the last line changed.
+    CHECK(v.view.selections.primary().caret == Position{1, 0});
+    v.keys("u");
+    CHECK(v.view.buffer().text() == "X Spin X\nspin");
+}
+
+TEST_CASE(":s puts in groups, the match and the last replacement; an empty pattern is the last search's",
+          "[vim][ex]") {
+    Vim groups("|ab ab");
+    groups.keys(":s/\\(a\\)\\(b\\)/\\2\\1/g<CR>");
+    CHECK(groups.view.buffer().text() == "ba ba");
+    Vim last("|x x");
+    last.keys("/x<CR>:s//[&]/g<CR>");
+    CHECK(last.view.buffer().text() == "[x] [x]");
+    Vim previous("|a b");
+    previous.keys(":s/a/1/<CR>:s/b/~2/<CR>");
+    CHECK(previous.view.buffer().text() == "1 12");
+    // ^ and $ match where they stand, taking nothing.
+    Vim ends("|a\nb");
+    ends.keys(":%s/^/# /<CR>:%s/$/;/<CR>");
+    CHECK(ends.view.buffer().text() == "# a;\n# b;");
+}
+
+TEST_CASE("& and g& make the last :s again; :s says what it did and what it didn't find", "[vim][ex]") {
+    Vim v("|aaa\naaa");
+    v.keys(":s/a/b/<CR>&");
+    CHECK(v.view.buffer().text() == "bba\naaa");
+    v.keys("j&");
+    CHECK(v.view.buffer().text() == "bba\nbaa");
+    v.keys("g&");
+    CHECK(v.view.buffer().text() == "bbb\nbba");
+    v.keys(":s/z/y/<CR>");
+    CHECK(v.engine.message().text == "E486: Pattern not found: z");
+    v.keys(":s/z/y/e<CR>");
+    CHECK(v.engine.message().text.empty());
+    Vim many("|a a a a");
+    many.keys(":s/a/b/g<CR>");
+    CHECK(many.engine.message().text == "4 substitutions on 1 line");
+}
+
+TEST_CASE(":g runs a command at each line its pattern matches, :v at each it doesn't, as one step", "[vim][ex]") {
+    Vim g("|a1\nb\na2\nc");
+    g.keys(":g/a/d<CR>");
+    CHECK(g.view.buffer().text() == "b\nc");
+    g.keys("u");
+    CHECK(g.view.buffer().text() == "a1\nb\na2\nc");
+    Vim v("|a1\nb\na2\nc");
+    v.keys(":v/a/d<CR>");
+    CHECK(v.view.buffer().text() == "a1\na2");
+    Vim empty("|a\n\nb\n");
+    empty.keys(":g/^$/d<CR>");
+    CHECK(empty.view.buffer().text() == "a\nb");
+    Vim none("|a");
+    none.keys(":g/zz/d<CR>");
+    CHECK(none.engine.message().text == "E486: Pattern not found: zz");
+}
+
+TEST_CASE(":g follows its lines as they move: reversed with m0, gathered at the end with m$", "[vim][ex]") {
+    Vim reverse("|1\n2\n3");
+    reverse.keys(":g/^/m0<CR>");
+    CHECK(reverse.view.buffer().text() == "3\n2\n1");
+    Vim gather("|x1\ny\nx2\nz");
+    gather.keys(":g/x/m$<CR>");
+    CHECK(gather.view.buffer().text() == "y\nz\nx1\nx2");
+    Vim substitute("|a1\nb1\na1");
+    substitute.keys(":g/a/s/1/X/<CR>");
+    CHECK(substitute.view.buffer().text() == "aX\nb1\naX");
+    Vim normal("|a\nb\na");
+    normal.keys(":g/a/norm A;<CR>");
+    CHECK(normal.view.buffer().text() == "a;\nb\na;");
+}
+
+TEST_CASE(":norm types its keys at each line of its range, or at the caret, as one step", "[vim][ex]") {
+    Vim v("|a\nb\nc");
+    v.keys(":%norm A!<CR>");
+    CHECK(v.view.buffer().text() == "a!\nb!\nc!");
+    v.keys("u");
+    CHECK(v.view.buffer().text() == "a\nb\nc");
+    Vim caret("x|y");
+    caret.keys(":norm iz<CR>");
+    CHECK(caret.view.buffer().text() == "xzy");
+    // A command left unfinished does nothing.
+    caret.keys(":norm d<CR>");
+    CHECK(caret.view.buffer().text() == "xzy");
+    CHECK(caret.engine.mode() == vim::Mode::Normal);
+}
+
+TEST_CASE(":sort orders lines, the case let go with i, by number with n, once each with u, backwards with !",
+          "[vim][ex]") {
+    Vim v("|c\na\nb\na");
+    v.keys(":sort<CR>");
+    CHECK(v.view.buffer().text() == "a\na\nb\nc");
+    Vim unique("|c\na\nb\na");
+    unique.keys(":sort u<CR>");
+    CHECK(unique.view.buffer().text() == "a\nb\nc");
+    Vim back("|c\na\nb\na");
+    back.keys(":sort!<CR>");
+    CHECK(back.view.buffer().text() == "c\nb\na\na");
+    Vim numbers("|x10\nx9\ny");
+    numbers.keys(":sort n<CR>");
+    CHECK(numbers.view.buffer().text() == "y\nx9\nx10");
+    Vim folded("|b\nA\na\nB");
+    folded.keys(":sort i<CR>");
+    CHECK(folded.view.buffer().text() == "A\na\nb\nB");
+    Vim part("|d\nc\nb\na");
+    part.keys(":2,3sort<CR>");
+    CHECK(part.view.buffer().text() == "d\nb\nc\na");
+}
+
 TEST_CASE("The : line says what is wrong as Vim does, keeps what was typed, and :noh hides the matches",
           "[vim][ex]") {
     Vim v("|a\nb");

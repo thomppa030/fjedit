@@ -188,6 +188,27 @@ TEST_CASE("Steps taken back are forgotten: nothing redoes them, and undo goes on
     CHECK(doc.buffer.text().empty());
 }
 
+TEST_CASE("Steps joined are undone and redone as one", "[history]") {
+    Doc doc("");
+    doc.type("kept");
+    doc.history.close();
+    const std::size_t before = doc.history.done();
+    doc.type(" one");
+    doc.history.close();
+    doc.type(" two");
+    doc.history.close();
+    doc.backspace();
+    doc.history.join(before);
+    CHECK(doc.history.done() == before + 1);
+    doc.undo();
+    CHECK(doc.buffer.text() == "kept");
+    doc.redo();
+    CHECK(doc.buffer.text() == "kept one tw");
+    // Nothing to join after one step.
+    doc.history.join(before);
+    CHECK(doc.history.done() == before + 1);
+}
+
 TEST_CASE("Undo and redo with nothing to do change nothing", "[history]") {
     Doc doc("text");
     REQUIRE_FALSE(doc.history.undo().has_value());
