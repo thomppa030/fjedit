@@ -1564,6 +1564,24 @@ TEST_CASE("Tab goes round the commands a name typed can become, and back to it; 
     v.keys("<Esc>");
 }
 
+TEST_CASE("Ctrl-J and Ctrl-K step the : line's rows as Tab does; with none, Ctrl-J is Enter", "[vim][ex]") {
+    Vim v("|a\nb");
+    const auto line = [&] { return v.engine.command_line()->text; };
+    v.keys(":w<C-j>");
+    CHECK(line() == "wall");
+    v.keys("<C-j>");
+    CHECK(line() == "wincmd");
+    v.keys("<C-k>");
+    CHECK(line() == "wall");
+    v.keys("<Esc>");
+    // No rows: Ctrl-K does nothing, and Ctrl-J runs the line.
+    v.keys(":2<C-k>");
+    CHECK(line() == "2");
+    v.keys("<C-j>");
+    CHECK(v.engine.command_line() == nullptr);
+    CHECK(v.shown() == "a\n|b");
+}
+
 TEST_CASE("Tab goes round the paths after :e; one alone goes in, a folder's entries listing next", "[vim][ex]") {
     Vim v("|a");
     // A folder of the program's, as it would list it.

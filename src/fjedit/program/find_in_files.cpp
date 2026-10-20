@@ -172,7 +172,7 @@ void FindInFiles::close(FindInFilesAsk& ask) {
 }
 
 FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem::path& folder, const Keymap& keys,
-                                 float text_size) {
+                                 float text_size, bool vim) {
     FindInFilesAsk ask;
     if (!open_) return ask;
     ui::core::Context& context = ui::core::current();
@@ -287,14 +287,20 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
         }
 
         // What the keys do here.
-        ui::text("Enter opens at the match   Up Down move through them   Esc closes", theme::text_secondary());
+        ui::text(vim ? "Enter opens at the match   Up Down, Ctrl J Ctrl K move through them   Esc closes"
+                     : "Enter opens at the match   Up Down move through them   Esc closes",
+                 theme::text_secondary());
     }
 
-    // Up and Down go through the matches while the search has the keyboard.
+    // Up and Down go through the matches while the search has the keyboard;
+    // with Vim's keys, Ctrl-J and Ctrl-K too.
     if (!preview_focused && !hits_.empty()) {
         const std::size_t before = selected_;
-        if (context.key_repeated(ui::Key::Down) && selected_ + 1 < hits_.size()) ++selected_;
-        if (context.key_repeated(ui::Key::Up) && selected_ > 0) --selected_;
+        const bool ctrl = vim && context.modifiers().ctrl;
+        const bool down = context.key_repeated(ui::Key::Down) || (ctrl && context.key_repeated(ui::Key::J));
+        const bool up = context.key_repeated(ui::Key::Up) || (ctrl && context.key_repeated(ui::Key::K));
+        if (down && selected_ + 1 < hits_.size()) ++selected_;
+        if (up && selected_ > 0) --selected_;
         if (selected_ != before) {
             preview(hits_[selected_]);
             reveal_ = true;

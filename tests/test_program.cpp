@@ -406,6 +406,22 @@ TEST_CASE("Find in files draws the matches in view, and Down brings the one pick
     REQUIRE(run.h.find("match 0", Role::TreeItem) == nullptr);
 }
 
+TEST_CASE("With Vim on, Ctrl-J and Ctrl-K move through find in files' matches", "[program][find_in_files][vim]") {
+    Running run({{"a.cpp", "spin\n"}, {"b.cpp", "spin\n"}});
+    run.program->preferences().vim = true;
+    run.h.press(Key::F, CTRL_SHIFT);
+    run.h.type("spin");
+    wait_for_hits(run);
+    REQUIRE(run.program->find_in_files().hits().size() == 2);
+    run.h.press(Key::J, CTRL);
+    run.h.press(Key::K, CTRL);
+    run.h.press(Key::J, CTRL);
+    run.h.step();
+    run.h.press(Key::Enter);
+    run.h.step(2);
+    CHECK(run.program->front() == run.program->workspace().name(run.folder.path / "b.cpp"));
+}
+
 TEST_CASE("Find in files searches open files with their unsaved changes", "[program][find_in_files]") {
     Running run({{"a.cpp", "int a;\n"}});
     run.press_row("a.cpp");

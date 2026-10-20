@@ -907,8 +907,14 @@ void Engine::begin_command_line(char kind, std::vector<Chord> before, bool opera
 void Engine::take_command(const Chord& key, CommandContext& c) {
     Typing& line = *typing_;
     std::string& text = line.line.text;
-    // Whatever but Tab and Shift-Tab ends a round of names where it is.
-    const bool tab = pressed(key, Key::Tab) || pressed(key, Key::Tab, {.shift = true});
+    // Ctrl-J and Ctrl-K step the rows under the line as Tab and Shift-Tab
+    // do, while there are any; otherwise Ctrl-J is Enter, as in Vim.
+    const bool ctrl_j = pressed(key, Key::J, {.ctrl = true});
+    const bool ctrl_k = pressed(key, Key::K, {.ctrl = true});
+    const bool rows = (ctrl_j || ctrl_k) && (name_choices() || path_choices());
+    if (ctrl_j && !rows) return leave_command_line(true, c);
+    // Whatever but these ends a round of names or paths where it is.
+    const bool tab = pressed(key, Key::Tab) || pressed(key, Key::Tab, {.shift = true}) || rows;
     if (!tab) {
         line.naming_from.reset();
         line.named.reset();
@@ -962,7 +968,7 @@ void Engine::take_command(const Chord& key, CommandContext& c) {
         // one before; past either end, what was typed.
         if (line.line.kind != ':') return;
         const std::string from = line.naming_from ? *line.naming_from : text;
-        const bool forward = named == "<Tab>";
+        const bool forward = named == "<Tab>" || ctrl_j;
         const auto round = [&](std::size_t count) -> std::optional<std::size_t> {
             if (!line.named) return forward ? std::size_t{0} : count - 1;
             if (forward && *line.named + 1 < count) return *line.named + 1;

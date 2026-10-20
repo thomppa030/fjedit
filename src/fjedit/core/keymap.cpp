@@ -248,6 +248,9 @@ Keymap Keymap::standard() {
     keymap.bind(VIM_INSERT, {chord(Key::P, CTRL)}, "completion.open");
     keymap.bind(VIM_COMPLETING, {chord(Key::N, CTRL)}, "completion.next");
     keymap.bind(VIM_COMPLETING, {chord(Key::P, CTRL)}, "completion.previous");
+    // And Ctrl-J and Ctrl-K, as Neovim's completion is often set to.
+    keymap.bind(VIM_COMPLETING, {chord(Key::J, CTRL)}, "completion.next");
+    keymap.bind(VIM_COMPLETING, {chord(Key::K, CTRL)}, "completion.previous");
     return keymap;
 }
 

@@ -1569,6 +1569,25 @@ TEST_CASE("With Vim on, a drag selects in visual mode", "[code_view][vim]") {
     REQUIRE(v.e.view.vim->mode() == vim::Mode::Normal);
 }
 
+TEST_CASE("With Vim on, Ctrl-J and Ctrl-K step the completion list, as Ctrl-N and Ctrl-P do",
+          "[code_view][vim][completion]") {
+    Completing c;
+    c.e.view.vim.emplace();
+    c.e.h.type("ar");
+    c.e.h.step();
+    c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2")});
+    REQUIRE(listed(c.e) == std::vector<std::string>{"rotate", "roll"});
+    const std::string text = c.e.text();
+    REQUIRE(c.e.view.completing.selected == std::size_t{0});
+    c.e.h.press(Key::J, CTRL);
+    c.e.h.step();
+    CHECK(c.e.view.completing.selected == std::size_t{1});
+    c.e.h.press(Key::K, CTRL);
+    c.e.h.step();
+    CHECK(c.e.view.completing.selected == std::size_t{0});
+    CHECK(c.e.text() == text);
+}
+
 TEST_CASE("With Vim on, leaving insert mode takes the completion list with it", "[code_view][vim][completion]") {
     Completing c;
     c.e.view.vim.emplace();

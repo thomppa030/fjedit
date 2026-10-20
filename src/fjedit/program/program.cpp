@@ -644,7 +644,7 @@ void Program::draw() {
         const std::filesystem::path folder = shown ? shown->parent_path() : workspace_.root();
         const float tabs = dialog_at_.y - code_min.y;
         take_find_in_files(find_in_files_.draw({.min = {code_min.x, code_min.y + tabs}, .max = code_max}, folder, keymap_,
-                                               static_cast<float>(preferences_.text_size)));
+                                               static_cast<float>(preferences_.text_size), preferences_.vim));
     }
     if (const std::optional<Location> going = std::exchange(going_, std::nullopt)) go_to(going->path, going->span);
     for (const vim::ExCommand& command : std::exchange(vim_commands_, {})) run_ex(command);
