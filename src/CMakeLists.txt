@@ -28,6 +28,7 @@ add_library(fjedit-core STATIC
     fjedit/core/vim/engine.cpp
     fjedit/core/vim/ex.cpp
     fjedit/core/vim/keys_file.cpp
+    fjedit/core/vim/maps.cpp
     fjedit/core/vim/motions.cpp
     fjedit/core/vim/notation.cpp
     fjedit/core/vim/operators.cpp

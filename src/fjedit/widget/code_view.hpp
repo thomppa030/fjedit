@@ -16,6 +16,7 @@
 #include "fjedit/core/language_service.hpp"
 #include "fjedit/core/selections.hpp"
 #include "fjedit/core/vim/engine.hpp"
+#include "fjedit/core/vim/maps.hpp"
 #include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/find.hpp"
 #include "fjedit/widget/go_to_line.hpp"
@@ -75,13 +76,18 @@ struct EditorView {
     /// How far the text is scrolled, in layout units: down past the top of
     /// the first row, and along past the start of every line.
     glm::vec2 scroll{0.0f};
-    /// The keys pressed so far of a binding that takes several, and the mode
-    /// keys are looked up in.
+    /// The keys pressed so far of a binding that takes several, since when
+    /// they wait for the rest (with Vim on, timeoutlen at most), and the
+    /// mode keys are looked up in.
     std::vector<Chord> pending;
+    double pending_since{0.0};
     std::string mode{Keymap::EDITING};
     /// Vim on this view: its modes, and the keys read in them (sheet 47).
     /// None for the standard keys.
     std::optional<vim::Engine> vim;
+    /// keys.vim's maps in play on this view, the keys typed going through
+    /// them before the keymap's bindings and Vim.
+    vim::Maps maps;
     /// What the one drawing the view knows of its files that Vim's `:` line
     /// says (the file's name, whether closing loses changes), set before it
     /// draws the view.

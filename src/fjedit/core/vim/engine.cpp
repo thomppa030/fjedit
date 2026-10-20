@@ -793,6 +793,7 @@ std::string_view setting_words(SetOption option) {
         case SetOption::ShiftWidth:
         case SetOption::TabStop: return "the indent width";
         case SetOption::ScrollOff: return "the lines kept around the caret";
+        case SetOption::TimeoutLen: return "the wait for a longer map";
     }
     return {};
 }
@@ -1431,7 +1432,8 @@ Outcome Engine::read_line(std::string_view text, const CommandContext& c, const 
             if (set->action == SetItem::Action::Ask) {
                 parts.push_back(set->on_off ? std::format("show whether {} is on", words) : std::format("show {}", words));
             } else if (set->action == SetItem::Action::Value) {
-                parts.push_back(std::format("set {} to {}", words, set->value));
+                parts.push_back(std::format("set {} to {}{}", words, set->value,
+                                            set->option == SetOption::TimeoutLen ? " ms" : ""));
             } else {
                 const bool to = set->action == SetItem::Action::Toggle ? !setting_on(set->option, c)
                                                                        : set->action == SetItem::Action::On;
@@ -1722,6 +1724,7 @@ void Engine::run_set(const ExCommand& command, CommandContext& c) {
     const auto on = [&](Option option) { return setting_on(option, c); };
     const auto number = [&](Option option) -> std::size_t {
         if (option == Option::ScrollOff) return settings.around_caret.value_or(settings.around_caret_shown);
+        if (option == Option::TimeoutLen) return settings.timeout_ms;
         return c.document.indent().width;
     };
     // Each setting written: on, off, the other way, asked, or given a number.
@@ -1769,6 +1772,8 @@ void Engine::run_set(const ExCommand& command, CommandContext& c) {
         if (option == Option::ScrollOff) {
             settings.around_caret = read->value;
             settings.around_caret_shown = read->value;
+        } else if (option == Option::TimeoutLen) {
+            settings.timeout_ms = read->value;
         } else {
             c.document.set_indent({.tabs = c.document.indent().tabs, .width = read->value});
         }
@@ -2030,6 +2035,19 @@ CaretShape Engine::caret_shape() const {
     if (mode_ == Mode::Insert || mode_ == Mode::Command) return CaretShape::Bar;
     if (mode_ == Mode::Replace) return CaretShape::Underline;
     return operator_waits_ ? CaretShape::HalfBlock : CaretShape::Block;
+}
+
+MapModes Engine::map_mode() const {
+    if (mode_ == Mode::Command) return MapModes::Command;
+    if (typing(mode_)) return MapModes::Insert;
+    if (visual(mode_)) return MapModes::Visual;
+    return operator_waits_ ? MapModes::OperatorPending : MapModes::Normal;
+}
+
+std::optional<ExCommand> Engine::run_line(std::string_view line, CommandContext& context) {
+    remembered_.settings = settings_->pattern;
+    run_ex(line, context);
+    return std::exchange(handed_, std::nullopt);
 }
 
 std::vector<Position> Engine::cursors() const {

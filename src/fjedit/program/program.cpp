@@ -832,6 +832,7 @@ void Program::draw_status() {
             ui::status_pill(nullptr, mode.name, mode.tone);
             std::string keys = engine.pending();
             for (const Chord& key : tab->view->pending) keys += vim::notation(key);
+            for (const Chord& key : tab->view->maps.waiting()) keys += vim::notation(key);
             if (!keys.empty()) {
                 const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
                 ui::status_item(nullptr, keys);

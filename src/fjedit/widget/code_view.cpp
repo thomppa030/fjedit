@@ -483,37 +483,61 @@ std::vector<Chord> vim_keys(std::span<const core::Keystroke> strokes) {
     return keys;
 }
 
-// The frame's keys with Vim on: those the keymap binds in Vim's mode (the
-// completion list's first while it is open) run their commands, the start
-// of a longer binding waits for the next key, and the rest go to `take`,
-// for Vim, in the order they came, with any that waited. A character a
-// command waits for (an `f`'s) is never a binding's. `acting` makes what
-// Vim acts through.
-template <typename Acting, typename Run, typename Take>
-void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Acting&& acting, Run&& run,
-                   Take&& take) {
-    for (const Chord& key : vim_keys(ui.keystrokes())) {
-        if (view.pending.empty() && view.vim->wants_character()) {
-            take(key);
-            continue;
-        }
-        view.pending.push_back(key);
+// The frame's keys with Vim on (decision 7 of the Vim plan): through
+// keys.vim's maps first, each in the mode it is typed in; then those the
+// keymap binds in Vim's mode (the completion list's first while it is
+// open) run their commands, and the rest go to `take`, for Vim, in the
+// order they came, with any that waited. Keys that begin a longer map or a
+// longer binding wait for the rest, timeoutlen at most, then go as they
+// stand. A character a command waits for (an `f`'s) is never a map's or a
+// binding's. `acting` makes what Vim acts through; `command` runs a map's
+// <Cmd> line.
+template <typename Acting, typename Run, typename Take, typename Command>
+void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Acting&& acting, Run&& run, Take&& take,
+                   Command&& command) {
+    const double now = ui.time();
+    const double wait = static_cast<double>(view.vim->settings().timeout_ms) / 1000.0;
+    // The binding the keys pending make: run, unless a longer one begins
+    // with them and the wait isn't over; no binding, they go to Vim.
+    const auto bound = [&](bool timed_out) {
         KeyMatch match = keymap.find(vim::keymap_mode(view.vim->mode()), view.pending);
         if (view.completing.open) {
             const KeyMatch completing = keymap.find(Keymap::VIM_COMPLETING, view.pending);
             if (completing.command) match = completing;
             match.waiting = match.waiting || completing.waiting;
         }
+        if (match.waiting && !timed_out) return;
         if (match.command) {
-            const std::string command(*match.command);
+            const std::string name(*match.command);
             view.pending.clear();
             CommandContext context = acting();
             view.vim->cancel(context);
-            run(command);
-        } else if (!match.waiting) {
-            for (const Chord& waited : std::exchange(view.pending, {})) take(waited);
+            run(name);
+            return;
         }
-    }
+        for (const Chord& waited : std::exchange(view.pending, {})) take(waited);
+    };
+    const vim::MapPlayer player{
+        .mode = [&] { return view.vim->map_mode(); },
+        .wants_character = [&] { return view.pending.empty() && view.vim->wants_character(); },
+        .key =
+            [&](const Chord& key) {
+                if (view.pending.empty() && view.vim->wants_character()) return take(key);
+                view.pending.push_back(key);
+                view.pending_since = now;
+                bound(false);
+            },
+        .command = [&](std::string_view line) { command(line); },
+        .error = [&](std::string_view error) { view.vim->say({.text = std::string(error), .error = true}); },
+    };
+    view.maps.wait_for(wait);
+    for (const Chord& key : vim_keys(ui.keystrokes())) view.maps.take(key, now, player);
+    // Keys that waited as long as they may go as they stand: the maps' first,
+    // then the keymap's. A frame comes when the wait runs out.
+    if (view.maps.deadline() && now >= *view.maps.deadline()) view.maps.time_out(player);
+    if (!view.pending.empty() && now >= view.pending_since + wait) bound(true);
+    if (view.maps.deadline()) ui.request_frame_at(*view.maps.deadline());
+    if (!view.pending.empty()) ui.request_frame_at(view.pending_since + wait);
 }
 
 // A rename asked for at the caret (sheet 48): the service asked where the
@@ -1552,6 +1576,11 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                     view.completing = {};
                 } else if (inserting && !key.text.empty()) {
                     ask_completion();
+                }
+            }, [&](std::string_view line) {
+                CommandContext context = vim_context();
+                if (std::optional<vim::ExCommand> handed = view.vim->run_line(line, context)) {
+                    program_commands.push_back(std::move(*handed));
                 }
             });
             // Scrolled by Vim: its first row in sight where Vim put it.

@@ -1,4 +1,5 @@
 #include "fjedit/core/language.hpp"
+#include "fjedit/core/vim/notation.hpp"
 #include "fjedit/widget/code_view.hpp"
 #include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/minimap.hpp"
@@ -35,6 +36,7 @@ struct Editor {
     // What the view handed out, in whichever frame it did.
     std::optional<Location> went{};
     std::optional<Rename> renamed{};
+    std::vector<vim::ExCommand> handed{};
     // Steps of text size asked for, all frames together.
     int zoomed{0};
 
@@ -44,6 +46,7 @@ struct Editor {
             const CodeViewResult result = code_view("Code", document, view, keys, {.min = {0.0f, 0.0f}, .max = {800.0f, 600.0f}});
             if (result.go) went = result.go;
             if (result.rename) renamed = result.rename;
+            for (const vim::ExCommand& command : result.program_commands) handed.push_back(command);
             zoomed += result.zoom;
         });
         h.step(2);
@@ -1543,6 +1546,54 @@ TEST_CASE("With Vim on, the character an f waits for is never a binding's", "[co
     REQUIRE(v.e.caret() == Position{0, 1});
     v.e.h.type("x");
     REQUIRE(v.e.text().empty());
+}
+
+namespace {
+
+// keys.vim's maps for `v`'s view.
+void use_maps(WithVim& v, std::string_view keys_vim) {
+    const vim::KeysFile file = vim::read_keys_file(keys_vim);
+    REQUIRE(file.errors.empty());
+    v.e.view.maps.use(std::make_shared<const std::vector<vim::Mapping>>(file.maps));
+}
+
+} // namespace
+
+TEST_CASE("With Vim on, keys go through keys.vim's maps before Vim, <Cmd> lines handed up", "[code_view][vim][maps]") {
+    WithVim v("one two");
+    use_maps(v, "inoremap jk <Esc>\nnnoremap <leader>w <Cmd>w<CR>\nnnoremap Q 0dw\n");
+    v.e.h.type("ijk");
+    v.e.h.step();
+    CHECK(v.e.view.vim->mode() == vim::Mode::Normal);
+    CHECK(v.e.text() == "one two");
+    v.e.h.type("Q");
+    v.e.h.step();
+    CHECK(v.e.text() == "two");
+    v.e.h.type(" w");
+    v.e.h.step();
+    REQUIRE(v.e.handed.size() == 1);
+    CHECK(v.e.handed.front().name == "write");
+}
+
+TEST_CASE("With Vim on, keys that begin a longer map or binding wait timeoutlen, then go as they stand",
+          "[code_view][vim][maps]") {
+    WithVim v("abc");
+    use_maps(v, "nnoremap <leader>fg <Cmd>w<CR>\n");
+    v.e.h.type("0 ");
+    v.e.h.step();
+    // Space waits for the map; past the wait it is Vim's, a step right.
+    CHECK(v.e.caret() == Position{0, 0});
+    CHECK(v.e.view.maps.waiting() == *vim::parse_notation("<Space>"));
+    v.e.h.step(70);
+    CHECK(v.e.caret() == Position{0, 1});
+    // A binding of the keymap's waits the same way, as long as timeoutlen.
+    v.e.keys.bind(Keymap::VIM_NORMAL, *vim::parse_notation("<Space>x"), "edit.select_all");
+    v.e.view.vim->settings().timeout_ms = 200;
+    v.e.h.type(" ");
+    v.e.h.step(3);
+    CHECK(v.e.caret() == Position{0, 1});
+    v.e.h.step(40);
+    CHECK(v.e.caret() == Position{0, 2});
 }
 
 TEST_CASE("With Vim on, the caret is a block in normal mode, a bar in insert mode", "[code_view][vim]") {

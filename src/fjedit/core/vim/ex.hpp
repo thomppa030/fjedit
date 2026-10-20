@@ -184,6 +184,7 @@ enum class SetOption : uint8_t {
     ShiftWidth,
     TabStop,
     ScrollOff,
+    TimeoutLen,
 };
 
 /// One item of :set's argument ("rnu", "noic", "hls!", "so?", "sw=2"): the

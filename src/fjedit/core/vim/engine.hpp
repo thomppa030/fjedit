@@ -19,6 +19,7 @@
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/vim/ex.hpp"
+#include "fjedit/core/vim/keys_file.hpp"
 #include "fjedit/core/vim/motions.hpp"
 #include "fjedit/core/vim/pattern.hpp"
 #include "fjedit/core/vim/registers.hpp"
@@ -79,6 +80,9 @@ struct Settings {
     /// What the views show, Preferences' or `:set`'s.
     bool relative_numbers_shown{false};
     std::size_t around_caret_shown{0};
+    /// timeoutlen: how long keys that begin a longer map, or a longer
+    /// binding of the keymap's, wait for the rest, in milliseconds.
+    std::size_t timeout_ms{1000};
 };
 
 /// The last search: what it looks for as Vim and as the find read it, and
@@ -226,6 +230,15 @@ public:
 
     [[nodiscard]] Mode mode() const { return mode_; }
     [[nodiscard]] CaretShape caret_shape() const;
+
+    /// The mode the next key is typed in, as maps name the modes: operator
+    /// pending while an operator waits for what it acts on.
+    [[nodiscard]] MapModes map_mode() const;
+
+    /// `line` run as the `:` line runs it, without going into command
+    /// mode: a map's `<Cmd>` line. Returns a command that is the program's,
+    /// as take() does.
+    std::optional<ExCommand> run_line(std::string_view line, CommandContext& context);
 
     /// In visual mode, where each block caret is: on the character at the
     /// end of each selection that moves, one for a block. Empty in the other

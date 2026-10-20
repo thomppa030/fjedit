@@ -343,7 +343,7 @@ ftk::Result<SetItem> read_set_item(std::string_view item) {
         {"ignorecase", "ic", SetOption::IgnoreCase, true},  {"smartcase", "scs", SetOption::SmartCase, true},
         {"hlsearch", "hls", SetOption::HlSearch, true},     {"expandtab", "et", SetOption::ExpandTab, true},
         {"shiftwidth", "sw", SetOption::ShiftWidth, false}, {"tabstop", "ts", SetOption::TabStop, false},
-        {"scrolloff", "so", SetOption::ScrollOff, false},
+        {"scrolloff", "so", SetOption::ScrollOff, false},  {"timeoutlen", "tm", SetOption::TimeoutLen, false},
     };
     std::string_view name = item;
     std::optional<SetItem::Action> action;
@@ -391,7 +391,7 @@ ftk::Result<SetItem> read_set_item(std::string_view item) {
         std::from_chars(value->data(), value->data() + value->size(), out.value).ec != std::errc{}) {
         return ftk::make_error(std::format("E521: Number required after =: {}", item));
     }
-    if (out.value == 0 && out.option != SetOption::ScrollOff) {
+    if (out.value == 0 && out.option != SetOption::ScrollOff && out.option != SetOption::TimeoutLen) {
         return ftk::make_error(std::format("E487: Argument must be positive: {}", item));
     }
     out.action = SetItem::Action::Value;

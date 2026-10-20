@@ -1564,6 +1564,32 @@ TEST_CASE("Tab goes round the commands a name typed can become, and back to it; 
     v.keys("<Esc>");
 }
 
+TEST_CASE("The engine says the mode a map's keys are typed in, and runs a map's <Cmd> lines", "[vim][maps]") {
+    Vim v("|a\nb\nc");
+    CHECK(v.engine.map_mode() == vim::MapModes::Normal);
+    v.keys("d");
+    CHECK(v.engine.map_mode() == vim::MapModes::OperatorPending);
+    v.keys("<Esc>v");
+    CHECK(v.engine.map_mode() == vim::MapModes::Visual);
+    v.keys("<Esc>i");
+    CHECK(v.engine.map_mode() == vim::MapModes::Insert);
+    v.keys("<Esc>:");
+    CHECK(v.engine.map_mode() == vim::MapModes::Command);
+    v.keys("<Esc>");
+    // A <Cmd> line runs in the mode the engine is in, the program's handed up.
+    CommandContext acting = v.context();
+    CHECK_FALSE(v.engine.run_line("3", acting));
+    CHECK(v.shown() == "a\nb\n|c");
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    const std::optional<vim::ExCommand> write = v.engine.run_line("w", acting);
+    REQUIRE(write);
+    CHECK(write->name == "write");
+    // timeoutlen, in milliseconds.
+    v.keys(":set tm=300<CR>");
+    CHECK(v.engine.settings().timeout_ms == 300);
+    CHECK(reading(v, "set tm=500") == "Set the wait for a longer map to 500 ms");
+}
+
 TEST_CASE("Ctrl-J and Ctrl-K step the : line's rows as Tab does; with none, Ctrl-J is Enter", "[vim][ex]") {
     Vim v("|a\nb");
     const auto line = [&] { return v.engine.command_line()->text; };
