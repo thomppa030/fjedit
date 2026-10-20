@@ -14,6 +14,16 @@ TEST_CASE("Every place a word occurs, in order", "[find]") {
             std::vector<Span>{{{0, 0}, {0, 5}}, {{0, 13}, {0, 18}}, {{0, 21}, {0, 26}}, {{1, 0}, {1, 5}}});
 }
 
+TEST_CASE("A regular expression's match can be one of its groups; what each group took is told", "[find]") {
+    const Buffer buffer("foobar x=12");
+    const FindOptions group{.match_case = true, .whole_word = false, .regex = true, .group = 1};
+    REQUIRE(find_all(buffer, "foo(bar)", group) == std::vector<Span>{{{0, 3}, {0, 6}}});
+    REQUIRE(replacement(buffer, {{0, 3}, {0, 6}}, "foo(bar)", "[$1]", group) == "[bar]");
+    const FindOptions regex{.match_case = true, .whole_word = false, .regex = true, .group = 0};
+    REQUIRE(captured(buffer, {{0, 7}, {0, 11}}, "(\\w)=(\\d+)", regex) == std::vector<std::string>{"x=12", "x", "12"});
+    REQUIRE_FALSE(captured(buffer, {{0, 0}, {0, 3}}, "(\\w)=(\\d+)", regex));
+}
+
 TEST_CASE("Matches don't overlap: the search goes on from a match's end", "[find]") {
     REQUIRE(find_all(Buffer("aaaa"), "aa") == std::vector<Span>{{{0, 0}, {0, 2}}, {{0, 2}, {0, 4}}});
     REQUIRE(find_all(Buffer("aaa"), "aa") == std::vector<Span>{{{0, 0}, {0, 2}}});

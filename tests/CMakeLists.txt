@@ -38,6 +38,7 @@ add_executable(fjedit-tests
     test_syntax.cpp
     test_vim_engine.cpp
     test_vim_motions.cpp
+    test_vim_pattern.cpp
     test_vim_registers.cpp
     test_vim_text_objects.cpp
     test_workspace.cpp)

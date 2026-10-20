@@ -29,6 +29,7 @@ add_library(fjedit-core STATIC
     fjedit/core/vim/motions.cpp
     fjedit/core/vim/notation.cpp
     fjedit/core/vim/operators.cpp
+    fjedit/core/vim/pattern.cpp
     fjedit/core/vim/registers.cpp
     fjedit/core/vim/text_objects.cpp
     fjedit/core/vim/walk.cpp

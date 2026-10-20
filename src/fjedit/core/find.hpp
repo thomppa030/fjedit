@@ -25,6 +25,10 @@ struct FindOptions {
     /// one, matched within a line. Matches that take no text don't count,
     /// and an expression that doesn't parse (regex_valid()) finds nothing.
     bool regex{false};
+    /// For a regular expression: the group whose text is the match, 0 for
+    /// all the expression takes. A match whose group takes no text doesn't
+    /// count.
+    std::size_t group{0};
 };
 
 /// Every place `needle` occurs, in order and apart: after a match, the
@@ -50,6 +54,13 @@ struct FindOptions {
 /// whole match) put in from what the match captured.
 [[nodiscard]] std::string replacement(const Buffer& buffer, Span match, std::string_view needle,
                                       std::string_view with, FindOptions options = {});
+
+/// What each group of the regular expression `needle` took where it found
+/// `match` (find_all()): all the expression took first, then group by
+/// group, empty for one that took nothing. Nothing when `needle` finds no
+/// match there.
+[[nodiscard]] std::optional<std::vector<std::string>> captured(const Buffer& buffer, Span match, std::string_view needle,
+                                                               FindOptions options = {});
 
 /// The word at `at`: the run of word characters it is in or at either end
 /// of, preferring the one after it; empty when there is none.
