@@ -38,6 +38,7 @@ struct Editor {
     std::optional<Location> went{};
     std::optional<Rename> renamed{};
     std::vector<vim::ExCommand> handed{};
+    std::vector<vim::JumpFrom> jumped{};
     // Steps of text size asked for, all frames together.
     int zoomed{0};
 
@@ -49,6 +50,7 @@ struct Editor {
             if (result.rename) renamed = result.rename;
             for (const vim::Asked& asked : result.asked) {
                 if (const auto* command = std::get_if<vim::ExCommand>(&asked)) handed.push_back(*command);
+                if (const auto* jump = std::get_if<vim::JumpFrom>(&asked)) jumped.push_back(*jump);
             }
             zoomed += result.zoom;
         });
@@ -1337,6 +1339,26 @@ TEST_CASE("F12 asks where the name at the caret is defined, and selects it there
     a.e.h.step(2);
     REQUIRE(a.e.view.selections.primary().span() == Span{{3, 4}, {3, 5}});
     REQUIRE_FALSE(a.e.went.has_value());
+}
+
+TEST_CASE("With Vim on, a definition gone to in the same file is a jump from where the caret was",
+          "[code_view][definition][vim]") {
+    Asking a;
+    a.e.view.vim.emplace();
+    a.e.h.step();
+    const Position from = a.e.caret();
+    a.e.h.type("gd");
+    a.e.h.step();
+    REQUIRE(a.language.definitions.size() == 1);
+    FakeLanguage::answer(a.language.definitions.front(), std::vector<Location>{{"x.cpp", {{3, 4}, {3, 5}}}});
+    a.e.h.step(2);
+    CHECK(a.e.caret() == Position{3, 4});
+    REQUIRE(a.e.jumped.size() == 1);
+    CHECK(a.e.jumped.front().at == from);
+    // `` goes back to it.
+    a.e.h.type("``");
+    a.e.h.step();
+    CHECK(a.e.caret() == from);
 }
 
 TEST_CASE("A definition in another file is handed out for the program to open", "[code_view][definition]") {

@@ -945,7 +945,7 @@ std::optional<std::vector<Chord>> keys_for(std::string_view name, Mode mode) {
     return std::nullopt;
 }
 
-std::optional<Asked> Engine::take(const Chord& key, CommandContext& context) {
+std::vector<Asked> Engine::take(const Chord& key, CommandContext& context) {
     // A key of Ctrl-O's one command, which may go through visual mode and
     // the command line.
     const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_) || mode_ == Mode::Command);
@@ -967,7 +967,7 @@ std::optional<Asked> Engine::take(const Chord& key, CommandContext& context) {
     } else if (for_one_command && mode_ == Mode::Normal && keys_.empty()) {
         end_one_command(context);
     }
-    return std::exchange(asked_, std::nullopt);
+    return std::exchange(asked_, {});
 }
 
 void Engine::dispatch(const Chord& key, CommandContext& context) {
@@ -1307,7 +1307,7 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
     if (name == "sort") return run_sort(command, first, last, c);
     if (name.empty()) {
         // A range alone goes to its last line, a jump.
-        remembered_.context = detail::Kept{.at = c.selections.primary().caret, .version = c.document.version()};
+        jump_from(c.selections.primary().caret, c);
         c.selections = Selections(Selection::at(first_non_blank(c.document.buffer(), last)));
         return settle(c);
     }
@@ -1367,7 +1367,7 @@ void Engine::hand_on(ExCommand command) {
     }
     // None for a window fjedit doesn't have: nothing, as when Vim has none
     // there.
-    if (*read) asked_ = std::move(**read);
+    if (*read) asked_.push_back(std::move(**read));
 }
 
 void Engine::record(std::span<const Chord> typed) {
@@ -1426,7 +1426,7 @@ void Engine::play(std::string_view name, std::size_t count, CommandContext& c) {
 void Engine::set_mark(std::string_view name, Position at, CommandContext& c) {
     const char mark = name.size() == 1 ? name[0] : '\0';
     if (mark == '\'' || mark == '`') {
-        remembered_.context = detail::Kept{.at = at, .version = c.document.version()};
+        jump_from(at, c);
         return;
     }
     if (!settable_mark(mark)) {
@@ -1434,7 +1434,7 @@ void Engine::set_mark(std::string_view name, Position at, CommandContext& c) {
         return;
     }
     c.document.set_mark(mark, at);
-    if (file_mark(mark)) asked_ = MarkSet{.name = mark};
+    if (file_mark(mark)) asked_.emplace_back(MarkSet{.name = mark});
 }
 
 void Engine::mark_changed(uint64_t version, CommandContext& c) {
@@ -1852,6 +1852,9 @@ void Engine::run_global(const ExCommand& command, std::size_t first, std::size_t
     const std::string& run = argument->command;
     if (run.empty()) return;
 
+    // One jump from where it began, as Vim keeps for a :g; none of the
+    // lines it goes to is one.
+    jump_from(c.selections.primary().caret, c);
     // Its command at each marked line in turn, the lines carried through
     // what each does, all of it one step.
     const std::size_t steps = c.document.history().done();
@@ -2317,14 +2320,24 @@ MapModes Engine::map_mode() const {
     return operator_waits_ ? MapModes::OperatorPending : MapModes::Normal;
 }
 
-std::optional<Asked> Engine::run_line(std::string_view line, CommandContext& context) {
+std::vector<Asked> Engine::run_line(std::string_view line, CommandContext& context) {
     remembered_.settings = settings_->pattern;
     failed_ = false;
     const uint64_t version = context.document.version();
     run_ex(line, context);
     if (context.document.version() != version) mark_changed(version, context);
     if (remembered_.message.error) failed_ = true;
-    return std::exchange(asked_, std::nullopt);
+    return std::exchange(asked_, {});
+}
+
+JumpFrom Engine::jumped(Position from, const Document& document) {
+    remembered_.context = detail::Kept{.at = from, .version = document.version()};
+    return {.at = from, .version = document.version()};
+}
+
+void Engine::jump_from(Position from, const CommandContext& c) {
+    if (in_global_) return;
+    asked_.emplace_back(jumped(from, c.document));
 }
 
 std::vector<Position> Engine::cursors() const {
@@ -2382,7 +2395,7 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     if (command.name.starts_with("<C-w>")) {
         if (!command.op.empty()) return;
         if (std::optional<ExCommand> window = window_command(std::string_view(command.name).substr(5))) {
-            asked_ = std::move(*window);
+            asked_.push_back(std::move(*window));
         }
         return;
     }
@@ -2542,6 +2555,12 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         return;
     }
 
+    // Ctrl-O and Ctrl-I step the jump list, which is the program's.
+    if (name == "<C-o>" || name == "<C-i>" || name == "<Tab>") {
+        const auto count = static_cast<long>(n);
+        asked_.emplace_back(JumpStep{.count = name == "<C-o>" ? -count : count});
+        return;
+    }
     // q records a macro, @ plays one.
     if (name == "q") return record_or_stop(command.argument);
     if (name == "@") return play(command.argument, n, c);
@@ -2550,7 +2569,7 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
     // A file's mark in another file: the program goes there.
     const bool to_mark = name == "'" || name == "`";
     if (to_mark && command.argument.size() == 1 && file_mark(command.argument[0]) && !c.document.mark(command.argument[0])) {
-        asked_ = MarkWanted{.name = command.argument[0], .exact = name == "`"};
+        asked_.emplace_back(MarkWanted{.name = command.argument[0], .exact = name == "`"});
         return;
     }
 
@@ -2570,7 +2589,7 @@ void Engine::take_normal(const Chord& key, CommandContext& c) {
         return;
     }
     // A jump keeps where it went from, for '' to go back to.
-    if (jumps(name)) remembered_.context = detail::Kept{.at = from, .version = c.document.version()};
+    if (jumps(name)) jump_from(from, c);
     c.selections.set(std::move(moved), c.selections.primary_index());
     c.document.history().close();
     settle(c);
@@ -2863,7 +2882,7 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
     if (name.starts_with("<C-w>")) {
         std::optional<ExCommand> window = window_command(name.substr(5));
         if (!window) return;
-        asked_ = std::move(*window);
+        asked_.push_back(std::move(*window));
         leave_visual(c);
         return;
     }
@@ -2944,7 +2963,7 @@ void Engine::take_visual(const Chord& key, CommandContext& c) {
         failed_ = true;
         return;
     }
-    if (jumps(name) && from) remembered_.context = detail::Kept{.at = *from, .version = c.document.version()};
+    if (jumps(name) && from) jump_from(*from, c);
     show_visual(c);
     const std::optional<Position> to =
         visual_.empty() ? std::nullopt : std::optional(visual_[std::min(c.selections.primary_index(), visual_.size() - 1)].caret);

@@ -290,17 +290,20 @@ std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path
 }
 
 void Program::let_go(const std::filesystem::path& path) {
-    // Its files' marks wait for it to open again.
+    // Its files' marks and the places jumped from in it wait for it to open
+    // again.
     if (const Document* document = workspace_.find(path)) {
         for (const auto& [name, at] : document->marks()) {
             if (name >= 'A' && name <= 'Z') closed_marks_[name] = {.path = workspace_.name(path), .at = at};
         }
+        for (Group& group : groups_) group.jumps.closed(workspace_.name(path), *document);
     }
     services_.close(path);
     workspace_.close(path);
 }
 
 void Program::go_to(const std::filesystem::path& path, Span span) {
+    keep_jump();
     open(path);
     Tab* tab = front_tab();
     const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
@@ -415,6 +418,7 @@ void Program::open(const std::filesystem::path& path) {
         (*document)->set_mark(kept->first, kept->second.at);
         kept = closed_marks_.erase(kept);
     }
+    for (Group& each : groups_) each.jumps.opened(named, (*document)->version());
     auto found = std::ranges::find(group.tabs, named, &Tab::path);
     if (found == group.tabs.end()) {
         group.tabs.push_back({.path = named, .view = make_view(named, **document)});
@@ -590,7 +594,9 @@ void Program::run_ex(const vim::ExCommand& command) {
         }
         quitting_ = true;
     } else if (name == "edit" && !command.argument.empty()) {
-        // A path from the folder open, as Vim's from the folder it works in.
+        // A path from the folder open, as Vim's from the folder it works in;
+        // a jump, as in Vim.
+        keep_jump();
         open(workspace_.root() / std::filesystem::path(command.argument));
     } else if (name == "edit") {
         // The file read again; with !, its changes dropped. Undone, they
@@ -602,6 +608,7 @@ void Program::run_ex(const vim::ExCommand& command) {
         }
         changed_.erase(path);
     } else if (name == "bnext" || name == "bprevious") {
+        keep_jump();
         (void)run(name == "bnext" ? "tab.next" : "tab.previous");
     } else if (name == "split" || name == "vsplit") {
         // The groups stand side by side, so both split beside.
@@ -618,7 +625,40 @@ void Program::run_ex(const vim::ExCommand& command) {
 void Program::answer_vim(const vim::Asked& asked) {
     if (const auto* command = std::get_if<vim::ExCommand>(&asked)) return run_ex(*command);
     if (const auto* set = std::get_if<vim::MarkSet>(&asked)) return keep_file_mark(set->name);
-    go_to_file_mark(std::get<vim::MarkWanted>(asked));
+    if (const auto* wanted = std::get_if<vim::MarkWanted>(&asked)) return go_to_file_mark(*wanted);
+    if (const auto* from = std::get_if<vim::JumpFrom>(&asked)) return keep_jump(*from);
+    step_jumps(std::get<vim::JumpStep>(asked).count);
+}
+
+void Program::keep_jump() {
+    const Tab* tab = front_tab();
+    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    if (document == nullptr) return;
+    keep_jump({.at = tab->view->selections.primary().caret, .version = document->version()});
+}
+
+void Program::keep_jump(const vim::JumpFrom& from) {
+    const Tab* tab = front_tab();
+    if (tab == nullptr) return;
+    groups_[active_].jumps.jumped({.path = tab->path, .at = from.at, .version = from.version});
+}
+
+void Program::step_jumps(long count) {
+    const Tab* tab = front_tab();
+    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    if (document == nullptr) return;
+    JumpList& jumps = groups_[active_].jumps;
+    jumps.catch_up(workspace_);
+    const JumpList::Place here{.path = tab->path, .at = tab->view->selections.primary().caret, .version = document->version()};
+    const std::optional<JumpList::Place> to = jumps.step(count, here);
+    if (!to) return;
+    if (to->path != tab->path) open(to->path);
+    Tab* now = front_tab();
+    const Document* there = now != nullptr ? workspace_.find(now->path) : nullptr;
+    // Not opened: what went wrong is noted.
+    if (there == nullptr || now->path != to->path) return;
+    now->view->selections = Selections(Selection::at(there->buffer().clamp(to->at)));
+    now->view->reveal = true;
 }
 
 void Program::keep_file_mark(char name) {
@@ -651,6 +691,7 @@ void Program::go_to_file_mark(const vim::MarkWanted& wanted) {
         }
         return;
     }
+    keep_jump();
     open(*holder);
     Tab* tab = front_tab();
     const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
@@ -699,7 +740,8 @@ void Program::split(std::size_t index) {
     const Tab& shown = from.tabs[from.front];
     Document* document = workspace_.find(shown.path);
     if (document == nullptr) return;
-    Group beside;
+    // Its jumps go with it, as Vim's :split copies a window's.
+    Group beside{.tabs = {}, .front = 0, .select = {}, .jumps = from.jumps};
     auto view = make_view(shown.path, *document);
     view->selections = shown.view->selections;
     view->scroll = shown.view->scroll;

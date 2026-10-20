@@ -26,10 +26,11 @@ struct Vim {
     vim::Engine engine;
     // The rows a view ten rows high has in sight.
     InView sight{.top = 0, .rows = 10, .around = 0};
-    // The `:` commands handed on for the program, in order, and the files'
-    // marks set and gone to.
+    // The `:` commands handed on for the program, in order; the files'
+    // marks set and gone to; and the jumps made and the jump list stepped.
     std::vector<vim::ExCommand> handed;
     std::vector<vim::Asked> marks;
+    std::vector<vim::Asked> jumps;
 
     explicit Vim(std::string_view marked) : view(marked) {}
 
@@ -54,18 +55,20 @@ struct Vim {
             ahead.pop_front();
             if (was_typed) engine.record(std::span(&key, 1));
             CommandContext acting = context();
-            std::optional<vim::Asked> asked = engine.take(key, acting);
+            for (vim::Asked& asked : engine.take(key, acting)) {
+                if (const auto* command = std::get_if<vim::ExCommand>(&asked)) {
+                    handed.push_back(*command);
+                } else if (std::holds_alternative<vim::MarkSet>(asked) || std::holds_alternative<vim::MarkWanted>(asked)) {
+                    marks.push_back(std::move(asked));
+                } else {
+                    jumps.push_back(std::move(asked));
+                }
+            }
             const std::vector<Chord> played = engine.take_played();
             if (engine.failed()) {
                 while (!ahead.empty() && !ahead.front().second) ahead.pop_front();
             }
             for (auto at = played.rbegin(); at != played.rend(); ++at) ahead.emplace_front(*at, false);
-            if (!asked) continue;
-            if (const auto* command = std::get_if<vim::ExCommand>(&*asked)) {
-                handed.push_back(*command);
-            } else {
-                marks.push_back(std::move(*asked));
-            }
         }
     }
 
@@ -1602,15 +1605,18 @@ TEST_CASE("The engine says the mode a map's keys are typed in, and runs a map's 
     v.keys("<Esc>:");
     CHECK(v.engine.map_mode() == vim::MapModes::Command);
     v.keys("<Esc>");
-    // A <Cmd> line runs in the mode the engine is in, the program's handed up.
+    // A <Cmd> line runs in the mode the engine is in, the program's handed
+    // up: a line gone to is a jump.
     CommandContext acting = v.context();
-    CHECK_FALSE(v.engine.run_line("3", acting));
+    const std::vector<vim::Asked> went = v.engine.run_line("3", acting);
+    REQUIRE(went.size() == 1);
+    CHECK(std::holds_alternative<vim::JumpFrom>(went.front()));
     CHECK(v.shown() == "a\nb\n|c");
     CHECK(v.engine.mode() == vim::Mode::Normal);
-    const std::optional<vim::Asked> write = v.engine.run_line("w", acting);
-    REQUIRE(write);
-    REQUIRE(std::holds_alternative<vim::ExCommand>(*write));
-    CHECK(std::get<vim::ExCommand>(*write).name == "write");
+    const std::vector<vim::Asked> write = v.engine.run_line("w", acting);
+    REQUIRE(write.size() == 1);
+    REQUIRE(std::holds_alternative<vim::ExCommand>(write.front()));
+    CHECK(std::get<vim::ExCommand>(write.front()).name == "write");
     // timeoutlen, in milliseconds.
     v.keys(":set tm=300<CR>");
     CHECK(v.engine.settings().timeout_ms == 300);
@@ -1903,6 +1909,31 @@ TEST_CASE("A file's mark is handed up when set, gone to when this file has it, a
     v.keys("d'B");
     CHECK(v.marks.size() == 2);
     CHECK(v.view.buffer().text() == "a\nb");
+}
+
+TEST_CASE("Jumps are handed up from where they went, a :g once; Ctrl-O, Ctrl-I and Tab step the program's list",
+          "[vim][jumps]") {
+    Vim v("|a\nb\nc\nd");
+    v.keys("Gjk");
+    REQUIRE(v.jumps.size() == 1);
+    const auto* from = std::get_if<vim::JumpFrom>(&v.jumps[0]);
+    REQUIRE(from != nullptr);
+    CHECK(from->at == Position{0, 0});
+    CHECK(from->version == v.view.document.version());
+    v.keys(":2<CR>m'");
+    REQUIRE(v.jumps.size() == 3);
+    v.keys("<C-o>3<C-o><C-i><Tab>");
+    REQUIRE(v.jumps.size() == 7);
+    CHECK(std::get<vim::JumpStep>(v.jumps[3]).count == -1);
+    CHECK(std::get<vim::JumpStep>(v.jumps[4]).count == -3);
+    CHECK(std::get<vim::JumpStep>(v.jumps[5]).count == 1);
+    CHECK(std::get<vim::JumpStep>(v.jumps[6]).count == 1);
+    // The caret stays: the program moves it.
+    CHECK(v.shown() == "a\n|b\nc\nd");
+    // A :g is one jump, the lines it goes to none.
+    v.jumps.clear();
+    v.keys(":g/./1<CR>");
+    CHECK(v.jumps.size() == 1);
 }
 
 TEST_CASE("q records the keys typed into a register, @ plays them, @@ the last again, a count that many times",

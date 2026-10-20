@@ -1627,9 +1627,11 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     // What a menu or a palette asked for, first.
     for (const std::string& command : std::exchange(view.queued, {})) run(command);
 
+    // What Vim asks of the program, in order.
+    std::vector<vim::Asked> vim_asked;
     // Answers that came: a format made as one step if the text is as it was
-    // asked about; a definition in this file selected, one in another
-    // handed out.
+    // asked about; a definition in this file selected, a jump with Vim on,
+    // one in another handed out.
     std::optional<Location> go;
     if (view.formatting && view.formatting->answered) {
         const std::optional<VersionedEdit> formatted = view.formatting->answer;
@@ -1644,6 +1646,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         if (!view.going->answer.empty()) {
             const Location& found = view.going->answer.front();
             if (found.path == view.path) {
+                if (view.vim) vim_asked.emplace_back(view.vim->jumped(view.selections.primary().caret, document));
                 view.selections = Selections({.anchor = buffer.clamp(found.span.from), .caret = buffer.clamp(found.span.to)});
             } else {
                 go = found;
@@ -1693,7 +1696,6 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         return true;
     };
 
-    std::vector<vim::Asked> asked;
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
@@ -1702,7 +1704,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                 if (ends_rename(key)) return;
                 const bool inserting = view.vim->mode() == vim::Mode::Insert;
                 CommandContext context = vim_context();
-                if (std::optional<vim::Asked> handed = view.vim->take(key, context)) asked.push_back(std::move(*handed));
+                for (vim::Asked& handed : view.vim->take(key, context)) vim_asked.push_back(std::move(handed));
                 // The completion list is insert mode's, and goes with it.
                 if (view.vim->mode() != vim::Mode::Insert) {
                     view.completing = {};
@@ -1711,7 +1713,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                 }
             }, [&](std::string_view line) {
                 CommandContext context = vim_context();
-                if (std::optional<vim::Asked> handed = view.vim->run_line(line, context)) asked.push_back(std::move(*handed));
+                for (vim::Asked& handed : view.vim->run_line(line, context)) vim_asked.push_back(std::move(handed));
             });
             // Scrolled by Vim: its first row in sight where Vim put it.
             if (in_view.top != first_row) view.scroll.y = static_cast<float>(in_view.top) * frame.line;
@@ -1897,7 +1899,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             .focused = focus.focused,
             .go = std::move(go),
             .rename = rename,
-            .asked = std::move(asked),
+            .asked = std::move(vim_asked),
             .zoom = zoom};
 }
 

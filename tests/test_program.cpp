@@ -1204,6 +1204,63 @@ TEST_CASE("Every command the program names it runs", "[program]") {
     for (const Program::Command& command : Program::commands()) CHECK(run.program->run(command.name));
 }
 
+TEST_CASE("With Vim on, Ctrl-O goes back through a group's jumps across files and Ctrl-I forward; a split copies them",
+          "[program][vim]") {
+    Running run({{"a.txt", "one\ntwo\nthree\nfour"}, {"b.txt", "b1\nb2"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "b.txt");
+    const auto text_of = [&](const std::filesystem::path& path) { return run.program->workspace().find(path)->buffer().text(); };
+    const auto keys = [&](std::string_view typed) {
+        run.h.type(typed);
+        run.h.step(2);
+    };
+    const auto ctrl_o = [&] {
+        run.h.press(Key::O, {.ctrl = true});
+        run.h.step(2);
+    };
+    const auto ctrl_i = [&] {
+        run.h.press(Key::Tab);
+        run.h.step(2);
+    };
+    // G from line 2, then :e from line 4 into b.txt.
+    keys("jG");
+    ex(run, "e b.txt");
+    REQUIRE(run.program->front() == b);
+    // Back where :e left a.txt (x takes the f of four), then where G left.
+    ctrl_o();
+    REQUIRE(run.program->front() == a);
+    keys("x");
+    CHECK(text_of(a) == "one\ntwo\nthree\nour");
+    keys("u");
+    ctrl_o();
+    keys("x");
+    CHECK(text_of(a) == "one\nwo\nthree\nfour");
+    keys("u");
+    // Forward again, to b.txt where the first Ctrl-O left it.
+    ctrl_i();
+    ctrl_i();
+    CHECK(run.program->front() == b);
+    // a.txt closed, Ctrl-O opens it again at the place.
+    ctrl_o();
+    REQUIRE(run.program->front() == a);
+    ex(run, "q");
+    REQUIRE(run.program->workspace().find(a) == nullptr);
+    ctrl_o();
+    REQUIRE(run.program->front() == a);
+    keys("x");
+    CHECK(text_of(a) == "one\nwo\nthree\nfour");
+    keys("u");
+    // A split goes on from the same list.
+    ex(run, "sp");
+    REQUIRE(run.program->groups() == 2);
+    ctrl_i();
+    keys("x");
+    CHECK(text_of(a) == "one\ntwo\nthree\nour");
+}
+
 TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in one file at a time", "[program][vim]") {
     Running run({{"a.txt", "one\n  two\n"}, {"b.txt", "b\n"}});
     run.program->preferences().vim = true;

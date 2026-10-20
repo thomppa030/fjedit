@@ -8,6 +8,7 @@
 //     fjedit::Program program(folder);
 //     app.run({.ui = [&](ftk::ui::core::Context&, glm::vec2) { program.draw(); }});
 
+#include "fjedit/core/jump_list.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/language_services.hpp"
 #include "fjedit/core/recovery.hpp"
@@ -142,12 +143,14 @@ private:
         std::unique_ptr<EditorView> view;
     };
 
-    // Tabs, and the one in front; and the one to bring forward when next
-    // drawn, as when a file is opened.
+    // Tabs, and the one in front; the one to bring forward when next
+    // drawn, as when a file is opened; and where Vim's jumps in it went
+    // from, as a Vim window keeps them.
     struct Group {
         std::vector<Tab> tabs;
         std::size_t front{0};
         std::optional<std::size_t> select;
+        JumpList jumps;
     };
 
     void draw_menus();
@@ -198,6 +201,13 @@ private:
     // A file's mark set in the file in front: taken from every other file,
     // open or let go, as a file's mark is in one file at a time.
     void keep_file_mark(char name);
+    // A jump from where the caret of the tab in front is, or from `from`
+    // in its file, kept in its group's jump list.
+    void keep_jump();
+    void keep_jump(const vim::JumpFrom& from);
+    // Ctrl-O and Ctrl-I: the jump list of the group in front stepped
+    // `count` places, its file opened in front when it is another.
+    void step_jumps(long count);
     // A file's mark the file in front hasn't: the file that has it opened
     // in front, its caret at the mark or on its line's first text, as
     // `wanted` says. Vim's E20 is said when no file has it.

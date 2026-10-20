@@ -9,6 +9,7 @@ add_library(fjedit-core STATIC
     fjedit/core/folds.cpp
     fjedit/core/git_ignore.cpp
     fjedit/core/history.cpp
+    fjedit/core/jump_list.cpp
     fjedit/core/keymap.cpp
     fjedit/core/language.cpp
     fjedit/core/language_services.cpp

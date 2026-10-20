@@ -5,12 +5,13 @@
 // gives them (a character typed, or a key that types none), and acts at
 // every caret through the CommandContext the view lends it. The view feeds
 // it, draws its carets in the shape the mode gives, and hands on what the
-// engine asks of the program: the `:` commands that are the program's, and
-// the marks that name a place in any file.
+// engine asks of the program: the `:` commands that are the program's, the
+// marks that name a place in any file, and the jumps, whose list goes across
+// files.
 //
 //     fjedit::vim::Engine vim;
 //     for (const fjedit::Chord& key : keys) {
-//         if (std::optional<fjedit::vim::Asked> asked = vim.take(key, context)) answer(*asked);
+//         for (const fjedit::vim::Asked& asked : vim.take(key, context)) answer(asked);
 //     }
 //
 // In normal mode each caret is an empty selection whose caret sits before
@@ -199,9 +200,28 @@ struct MarkWanted {
     bool operator==(const MarkWanted&) const = default;
 };
 
+/// A jump made from `at`, in the view's file as its text was at `version`:
+/// the program keeps it in its jump list, which Ctrl-O goes back through.
+struct JumpFrom {
+    Position at;
+    uint64_t version{0};
+
+    bool operator==(const JumpFrom&) const = default;
+};
+
+/// Ctrl-O, `count` places back through the jump list (a count below 0), or
+/// Ctrl-I and Tab forward: the program's to step, as its places go across
+/// files.
+struct JumpStep {
+    long count{-1};
+
+    bool operator==(const JumpStep&) const = default;
+};
+
 /// What the engine asks of the program: a `:` command that is the
-/// program's run, or a file's mark kept or gone to.
-using Asked = std::variant<ExCommand, MarkSet, MarkWanted>;
+/// program's run, a file's mark kept or gone to, a jump kept, or the jump
+/// list stepped.
+using Asked = std::variant<ExCommand, MarkSet, MarkWanted, JumpFrom, JumpStep>;
 
 namespace detail {
 
@@ -257,15 +277,16 @@ public:
         : registers_(std::move(registers)), settings_(std::move(settings)) {}
 
     /// Takes `key` in the mode it is in, acting at every selection of
-    /// `context`. Returns what the key asks of the program, when it ended a
-    /// command that is the program's: a `:` command, the file written, quit
-    /// or edited, the tabs stepped, or the groups split and gone between
-    /// (`:w`, `:q!`, `:e path`, `:bn`, `:sp`; `:wincmd w`, `h` or `l`); or a
-    /// file's mark set or gone to (MarkSet, MarkWanted). Ctrl-W's keys come
-    /// as the command Vim runs for them (Ctrl-W q as `:quit`). Each `:`
+    /// `context`. Returns what the key asks of the program, in order, when
+    /// it ended commands that are the program's: a `:` command, the file
+    /// written, quit or edited, the tabs stepped, or the groups split and
+    /// gone between (`:w`, `:q!`, `:e path`, `:bn`, `:sp`; `:wincmd w`, `h`
+    /// or `l`); a file's mark set or gone to (MarkSet, MarkWanted); a jump
+    /// made (JumpFrom); or the jump list stepped (JumpStep). Ctrl-W's keys
+    /// come as the command Vim runs for them (Ctrl-W q as `:quit`). Each `:`
     /// command is read as far as Vim reads it: a range, or an argument it
     /// takes none of, is said instead.
-    std::optional<Asked> take(const Chord& key, CommandContext& context);
+    std::vector<Asked> take(const Chord& key, CommandContext& context);
 
     /// The selections put where the mode keeps them, after something other
     /// than the keys moved them: in normal mode each caret on a character
@@ -286,7 +307,12 @@ public:
     /// `line` run as the `:` line runs it, without going into command
     /// mode: a map's `<Cmd>` line. Returns what it asks of the program, as
     /// take() does.
-    std::optional<Asked> run_line(std::string_view line, CommandContext& context);
+    std::vector<Asked> run_line(std::string_view line, CommandContext& context);
+
+    /// A jump made by other than Vim's keys from `from` in `document` (a
+    /// definition gone to): kept as Vim keeps where a jump went from, for ''
+    /// to go back to. The JumpFrom returned is for the program's jump list.
+    [[nodiscard]] JumpFrom jumped(Position from, const Document& document);
 
     /// In visual mode, where each block caret is: on the character at the
     /// end of each selection that moves, one for a block. Empty in the other
@@ -469,6 +495,9 @@ private:
     // `m`: the mark `name` set at `at`; a file's handed up as well, for the
     // program to take from any other file. A name no mark is set by is said.
     void set_mark(std::string_view name, Position at, CommandContext& context);
+    // A jump of Vim's keys from `from`: jumped(), and the program asked to
+    // keep it. Not while a :g runs, as in Vim.
+    void jump_from(Position from, const CommandContext& context);
     // `[` and `]` set at the first and the last character of what the edits
     // since `version` put in or took out: the last change, or the change
     // being made in an insert so far.
@@ -580,7 +609,7 @@ private:
     // The pattern typed as it is typed, when it reads.
     std::optional<Pattern> preview_;
     // What a key asks of the program, until take() hands it on.
-    std::optional<Asked> asked_;
+    std::vector<Asked> asked_;
     // The version of the text before the change being made began: the
     // edits since are what `[` and `]` mark.
     uint64_t change_began_{0};
