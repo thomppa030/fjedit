@@ -68,6 +68,10 @@ public:
     /// returns the selections it leaves; nothing when there is none.
     std::optional<Selections> undo();
     std::optional<Selections> redo();
+    /// Takes back the steps done after the first `steps` and forgets them
+    /// (History::take_back()), returning the selections from before them;
+    /// nothing when there are none.
+    std::optional<Selections> take_back(std::size_t steps);
 
     /// The edits made since the document was at `version`, in order; empty
     /// when it still is. Nothing when the document never was, or when its

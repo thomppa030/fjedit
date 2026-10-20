@@ -1,7 +1,6 @@
 #include "fjedit/program/program.hpp"
 
 #include "fjedit/core/commands.hpp"
-#include "fjedit/core/find.hpp"
 #include "fjedit/core/language.hpp"
 #include "fjedit/core/layout.hpp"
 #include "fjedit/core/text_file.hpp"
@@ -506,6 +505,8 @@ void Program::draw() {
     // What the language services found since, before anything shows it.
     services_.update();
     check_disk(ui::core::current().time());
+    // What was just done is said until the next key.
+    if (!ui::core::current().keystrokes().empty()) told_.clear();
     take_keys();
     draw_menus();
     const ui::WorkArea work = ui::work_area();
@@ -698,14 +699,11 @@ void Program::draw_group(Group& group, std::size_t index) {
                     std::clamp(preferences_.text_size + result.zoom, TEXT_SIZE_MIN, TEXT_SIZE_MAX);
                 ui::settings_changed();
             }
-            if (result.rename && tab.view->service != nullptr) {
-                const Span word = word_at(document->buffer(), *result.rename);
-                if (word.empty()) {
-                    note_ = "Nothing to rename there";
-                } else {
-                    renaming_ = Renaming{.path = tab.path, .at = word.from, .name = document->buffer().text(word),
-                                         .typed = {}, .prompting = false, .asked = {}};
-                }
+            // A rename typed in place: the service asked to make it in every
+            // file.
+            if (result.rename && services_.serves(tab.path)) {
+                renaming_ = Renaming{.rename = *result.rename,
+                                     .asked = services_.rename(tab.path, result.rename->at, result.rename->to)};
             }
             ui::reserve(room);
         }
@@ -763,6 +761,7 @@ void Program::draw_status() {
                             std::format("{}:{}", tab->path.filename().string(), first->span.from.line + 1));
         }
         if (!note_.empty()) ui::status_item(ui::icon::warning, note_);
+        if (!told_.empty()) ui::status_message(ui::StatusTone::Plain, told_);
         bar.right();
         const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
         if (document == nullptr) return;
@@ -804,35 +803,16 @@ void Program::draw_prompts() {
 }
 
 void Program::ask_rename() {
-    if (!renaming_) return;
-    Renaming& renaming = *renaming_;
-    if (!renaming.asked) {
-        if (!renaming.prompting) {
-            ui::open_dialog("##rename", {dialog_at_, 0.5f});
-            renaming.prompting = true;
-        }
-        const std::string title = "Rename " + renaming.name;
-        const ui::DialogAnswer answer = ui::prompt_dialog(
-            "##rename", {.title = title.c_str(), .hint = "Its new name", .confirm = "Rename"}, renaming.typed);
-        if (answer == ui::DialogAnswer::Cancel) {
-            renaming_.reset();
-        } else if (answer == ui::DialogAnswer::Confirm) {
-            if (!services_.serves(renaming.path)) {
-                renaming_.reset();
-                return;
-            }
-            renaming.asked = services_.rename(renaming.path, renaming.at, renaming.typed);
-        }
-        return;
-    }
-    if (!renaming.asked->answered) return;
-    const ftk::Result<WorkspaceEdit> edits = renaming.asked->answer;
+    if (!renaming_ || !renaming_->asked->answered) return;
+    const ftk::Result<WorkspaceEdit> edits = renaming_->asked->answer;
+    const Rename rename = renaming_->rename;
     renaming_.reset();
     if (!edits) {
         note_ = edits.error();
         return;
     }
     make_edits(*edits);
+    told_ = std::format("Renamed {} to {} in {} file{}", rename.from, rename.to, edits->size(), edits->size() == 1 ? "" : "s");
 }
 
 void Program::make_edits(const WorkspaceEdit& edits) {

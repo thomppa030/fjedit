@@ -175,6 +175,14 @@ public:
     /// A search made elsewhere (a view's find), which n and N go on with.
     void search_for(Search search);
 
+    /// Into insert mode at the selections as they are, for typing something
+    /// other than Vim's keys began (a name renamed where it stands);
+    /// end_insert() leaves it, each caret settled as normal mode keeps it.
+    /// Neither touches the history, and nothing typed between them is a
+    /// change `.` makes again.
+    void begin_insert();
+    void end_insert(CommandContext& context);
+
     /// What the last key had to say; empty text when nothing. The next key
     /// clears it.
     [[nodiscard]] const Message& message() const { return remembered_.message; }
@@ -336,6 +344,8 @@ private:
     // count types it again, nothing typed is.
     bool replaying_{false};
     bool repeating_insert_{false};
+    // Between begin_insert() and end_insert(), nothing typed is noted.
+    bool quiet_{false};
     // How many more times the insert types what was typed in it when it
     // ends (3i), each time on a line it opens (3o).
     std::size_t insert_repeats_{0};

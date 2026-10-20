@@ -27,6 +27,13 @@ std::optional<Selections> Document::undo() {
     return std::move(move->selections);
 }
 
+std::optional<Selections> Document::take_back(std::size_t steps) {
+    std::optional<History::Move> move = history_.take_back(steps);
+    if (!move) return std::nullopt;
+    for (const Edit& edit : move->edits) (void)apply(edit);
+    return std::move(move->selections);
+}
+
 std::optional<Selections> Document::redo() {
     std::optional<History::Move> move = history_.redo();
     if (!move) return std::nullopt;

@@ -69,6 +69,9 @@ public:
         held_ = true;
     }
 
+    /// How many steps are done: what take_back() takes the text back to.
+    [[nodiscard]] std::size_t done() const { return done_; }
+
     [[nodiscard]] bool can_undo() const { return done_ > 0; }
     [[nodiscard]] bool can_redo() const { return done_ < steps_.size(); }
 
@@ -86,6 +89,13 @@ public:
     /// Takes the last step undone forward again: its edits, and the
     /// selections from after it. Nothing when there is nothing to redo.
     std::optional<Move> redo();
+
+    /// Takes back every step done after the first `steps` (done() when the
+    /// change began), as undo() would, and forgets them, so nothing redoes
+    /// them: a change tried and given up, such as a name typed over in
+    /// place. The selections are those from before the first. Nothing when
+    /// no step was done after them.
+    std::optional<Move> take_back(std::size_t steps);
 
     /// Notes that the text as it is now is what its file holds, and ends the
     /// open step.

@@ -34,7 +34,7 @@ struct Editor {
     Keymap keys = Keymap::standard();
     // What the view handed out, in whichever frame it did.
     std::optional<Location> went{};
-    std::optional<Position> renamed{};
+    std::optional<Rename> renamed{};
     // Steps of text size asked for, all frames together.
     int zoomed{0};
 
@@ -1381,10 +1381,93 @@ TEST_CASE("Format makes the service's edit as one step, while the text is as it 
     REQUIRE(a.e.document.buffer().line(1) == "    x();y");
 }
 
-TEST_CASE("F2 hands out where a rename was asked for", "[code_view][rename]") {
-    Asking a;
-    a.e.h.press(Key::F2);
-    REQUIRE(a.e.renamed == Position{1, 8});
+namespace {
+
+// A name used twice, the caret in the first, a service to ask.
+struct Renaming {
+    FakeLanguage language;
+    Editor e{"int speed;\nint f() { return speed; }"};
+    const std::vector<Span> uses{{{0, 4}, {0, 9}}, {{1, 17}, {1, 22}}};
+
+    Renaming() {
+        e.view.service = &language;
+        e.view.path = "x.cpp";
+        e.h.click_at({PAST_END, row_y(0)});
+        e.h.step();
+    }
+
+    // F2 with the caret in the name, the service saying where it stands.
+    void begin() {
+        e.h.press(Key::Left);
+        e.h.press(Key::Left);
+        e.h.press(Key::F2);
+        e.h.step();
+        REQUIRE_FALSE(language.highlights.empty());
+        FakeLanguage::answer(language.highlights.back(), uses);
+        e.h.step();
+    }
+};
+
+} // namespace
+
+TEST_CASE("F2 renames in place: every use the service names is typed over at once", "[code_view][rename]") {
+    Renaming r;
+    r.begin();
+    CHECK(r.e.view.selections.size() == 2);
+    r.e.h.type("pace");
+    r.e.h.step();
+    CHECK(r.e.text() == "int pace;\nint f() { return pace; }");
+    // Enter takes the typing back and hands the rename out.
+    r.e.h.press(Key::Enter);
+    r.e.h.step();
+    CHECK(r.e.text() == "int speed;\nint f() { return speed; }");
+    REQUIRE(r.e.renamed.has_value());
+    CHECK(*r.e.renamed == Rename{.at = {0, 4}, .from = "speed", .to = "pace"});
+    // Nothing of the typing is left to undo or redo.
+    r.e.h.press(Key::Y, CTRL);
+    r.e.h.step();
+    CHECK(r.e.text() == "int speed;\nint f() { return speed; }");
+}
+
+TEST_CASE("Esc gives a rename in place up, and so does a caret going off the name", "[code_view][rename]") {
+    Renaming r;
+    r.begin();
+    r.e.h.type("pace");
+    r.e.h.press(Key::Escape);
+    r.e.h.step();
+    CHECK(r.e.text() == "int speed;\nint f() { return speed; }");
+    CHECK_FALSE(r.e.renamed.has_value());
+    CHECK(r.e.view.selections.size() == 1);
+    // A click on the second line: given up, the caret where it was put.
+    r.begin();
+    r.e.h.type("x");
+    r.e.h.click_at({PAST_END, row_y(1)});
+    r.e.h.step();
+    CHECK(r.e.text() == "int speed;\nint f() { return speed; }");
+    CHECK_FALSE(r.e.renamed.has_value());
+    CHECK(r.e.caret().line == 1);
+}
+
+TEST_CASE("With Vim on, grn renames in place in insert mode, leaving nothing for the dot", "[code_view][vim][rename]") {
+    Renaming r;
+    r.e.view.vim.emplace();
+    r.e.h.step();
+    r.e.h.type("h");
+    r.e.h.type("grn");
+    r.e.h.step();
+    REQUIRE(r.language.highlights.size() == 1);
+    FakeLanguage::answer(r.language.highlights.front(), r.uses);
+    r.e.h.step();
+    CHECK(r.e.view.vim->mode() == vim::Mode::Insert);
+    r.e.h.type("pace");
+    r.e.h.press(Key::Enter);
+    r.e.h.step();
+    CHECK(r.e.view.vim->mode() == vim::Mode::Normal);
+    REQUIRE(r.e.renamed.has_value());
+    CHECK(r.e.renamed->to == "pace");
+    r.e.h.type(".");
+    r.e.h.step();
+    CHECK(r.e.text() == "int speed;\nint f() { return speed; }");
 }
 
 namespace {

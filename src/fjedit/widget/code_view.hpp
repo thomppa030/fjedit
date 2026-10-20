@@ -138,6 +138,28 @@ struct EditorView {
         bool by_keys{false};
     };
     Hovering hovering{};
+    /// A name being renamed where it stands (sheet 48): where the service
+    /// says the symbol stands is asked, then its uses are typed over
+    /// together until Enter or Esc.
+    struct Renaming {
+        /// The name, where the rename was asked, and the selections then.
+        std::string name;
+        Position at{};
+        Selections before{};
+        /// How many steps the history had done when the typing began,
+        /// which taking it back returns to.
+        std::size_t steps{0};
+        /// Where the symbol stands, asked at the text's version `asked_at`.
+        Asked<std::vector<Span>> asked{};
+        uint64_t asked_at{0};
+        /// Once begun: the uses, where they are in the text at `version`,
+        /// and the one the rename was asked at.
+        std::vector<Span> uses{};
+        std::size_t primary{0};
+        uint64_t version{0};
+        bool begun{false};
+    };
+    std::optional<Renaming> renaming{};
     /// Its completion list, while one is open (sheet 39, P1).
     CompletionState completing{};
     /// Where what is named at the caret or a Ctrl click is defined, asked
@@ -174,6 +196,16 @@ struct EditorView {
 };
 
 /// What a code view did in a frame.
+/// A rename typed where the name stands: the name `from` at `at` to become
+/// `to`, everywhere it is used.
+struct Rename {
+    Position at;
+    std::string from;
+    std::string to;
+
+    bool operator==(const Rename&) const = default;
+};
+
 struct CodeViewResult {
     /// Its text changed.
     bool edited{false};
@@ -182,9 +214,9 @@ struct CodeViewResult {
     /// Where what was asked about is defined, in another file: for the one
     /// drawing the view to open there.
     std::optional<Location> go{};
-    /// Where a rename was asked for: the name there is for the one drawing
-    /// the view to ask a new name for, and rename everywhere.
-    std::optional<Position> rename{};
+    /// A rename typed in place and ended with Enter, its typing taken back:
+    /// for the one drawing the view to ask the service to make everywhere.
+    std::optional<Rename> rename{};
     /// Steps the text is asked to grow by, Ctrl and the wheel over the view,
     /// a notch a step; fewer than none to shrink. For the one drawing the
     /// view, which chooses its text size.

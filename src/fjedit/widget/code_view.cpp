@@ -415,9 +415,10 @@ KeyMatch match_keys(const Keymap& keymap, const EditorView& view) {
 // Text goes to `type`, unless it was typed with Ctrl alone, which makes it a
 // shortcut's (with Ctrl and Alt it is AltGr's, as Windows reports it). Keys
 // go through the keymap: a whole binding runs its command, the start of a
-// longer one waits for the next key.
-template <typename Run, typename Type>
-void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& run, Type&& type) {
+// longer one waits for the next key. A key `ends` takes first (one ending a
+// rename typed in place) goes nowhere else.
+template <typename Run, typename Type, typename Ends>
+void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& run, Type&& type, Ends&& ends) {
     for (const core::Keystroke& stroke : ui.keystrokes()) {
         const ftk::ui::Modifiers held = stroke.modifiers;
         if (stroke.kind == core::Keystroke::Kind::Text) {
@@ -425,6 +426,7 @@ void take_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Run&& 
             if (!shortcut) type(stroke.text);
             continue;
         }
+        if (view.pending.empty() && ends(Chord{.key = stroke.key, .modifiers = held, .text = {}})) continue;
         view.pending.push_back({.key = stroke.key, .modifiers = held});
         const KeyMatch match = match_keys(keymap, view);
         if (match.command) {
@@ -512,6 +514,124 @@ void take_vim_keys(core::Context& ui, const Keymap& keymap, EditorView& view, Ac
             for (const Chord& waited : std::exchange(view.pending, {})) take(waited);
         }
     }
+}
+
+// A rename asked for at the caret (sheet 48): the service asked where the
+// name there stands. Nothing without a service or a name.
+void start_rename(EditorView& view, const Document& document) {
+    if (view.service == nullptr || view.renaming) return;
+    const Position caret = view.selections.primary().caret;
+    const Span word = word_at(document.buffer(), caret);
+    if (word.empty()) return;
+    view.renaming = EditorView::Renaming{.name = document.buffer().text(word),
+                                         .at = word.from,
+                                         .before = view.selections,
+                                         .steps = 0,
+                                         .asked = view.service->occurrences(view.path, caret),
+                                         .asked_at = document.version(),
+                                         .uses = {},
+                                         .primary = 0,
+                                         .version = 0,
+                                         .begun = false};
+}
+
+// The uses of a rename typed in place, carried through what was typed
+// since: each takes in what is typed at its ends.
+void follow_uses(EditorView::Renaming& renaming, const Document& document) {
+    if (!renaming.begun || renaming.version == document.version()) return;
+    if (const auto since = document.edits_since(renaming.version)) {
+        for (Span& use : renaming.uses) {
+            for (const Edit& made : *since) {
+                use = {.from = map(made, use.from, Bias::Before), .to = map(made, use.to, Bias::After)};
+            }
+        }
+    }
+    renaming.version = document.version();
+}
+
+// A rename begun once the service says where the name stands: its uses
+// selected, to be typed over together as one step held open, with Vim in
+// insert mode; only the name at the caret where the service names none.
+// Given up when the name is gone from there.
+void begin_rename(EditorView& view, Document& document) {
+    EditorView::Renaming& renaming = *view.renaming;
+    const Buffer& buffer = document.buffer();
+    const auto since = document.edits_since(renaming.asked_at);
+    const auto carried = [&](Span span) {
+        if (since) {
+            for (const Edit& made : *since) {
+                span = {.from = map(made, span.from, Bias::After), .to = map(made, span.to, Bias::Before)};
+            }
+        }
+        return Span{.from = buffer.clamp(span.from), .to = buffer.clamp(span.to)};
+    };
+    const Span asked = carried({.from = renaming.at, .to = {renaming.at.line, renaming.at.byte + renaming.name.size()}});
+    if (buffer.text(asked) != renaming.name) {
+        view.renaming.reset();
+        return;
+    }
+    std::vector<Span> uses{asked};
+    if (renaming.asked && renaming.asked->answered) {
+        for (const Span& answered : renaming.asked->answer) {
+            const Span use = carried(answered);
+            if (use.from.line == use.to.line && buffer.text(use) == renaming.name) uses.push_back(use);
+        }
+    }
+    std::ranges::sort(uses, {}, &Span::from);
+    const auto [first, last] = std::ranges::unique(uses);
+    uses.erase(first, last);
+    const auto primary = static_cast<std::size_t>(std::ranges::find(uses, asked) - uses.begin());
+
+    document.history().close();
+    renaming.steps = document.history().done();
+    document.history().hold();
+    std::vector<Selection> selected;
+    for (const Span& use : uses) selected.push_back({.anchor = use.from, .caret = use.to, .goal = {}});
+    view.selections.set(std::move(selected), primary);
+    if (view.vim) view.vim->begin_insert();
+    renaming.uses = std::move(uses);
+    renaming.primary = primary;
+    renaming.version = document.version();
+    renaming.begun = true;
+}
+
+// The rename typed in place ended: its typing taken back and forgotten, the
+// selections as before it (with `keep`, where they are, carried back with
+// the text: a caret the mouse put elsewhere), Vim back in normal mode through
+// `context`. With `make`, the name typed, when it is new, for the service to
+// rename to.
+std::optional<Rename> end_rename(EditorView& view, Document& document, CommandContext& context, bool make,
+                                 bool keep = false) {
+    EditorView::Renaming renaming = std::move(*view.renaming);
+    view.renaming.reset();
+    if (!renaming.begun) return std::nullopt;
+    follow_uses(renaming, document);
+    const std::string typed = document.buffer().text(renaming.uses[renaming.primary]);
+    const Selections now = view.selections;
+    const uint64_t taking = document.version();
+    document.history().close();
+    (void)document.take_back(renaming.steps);
+    view.selections = renaming.before;
+    if (const auto since = document.edits_since(taking); keep && since) {
+        std::vector<Selection> carried;
+        for (Selection selection : now.all()) {
+            for (const Edit& made : *since) {
+                selection.anchor = map(made, selection.anchor, Bias::Before);
+                selection.caret = map(made, selection.caret, Bias::Before);
+            }
+            carried.push_back(selection);
+        }
+        view.selections.set(std::move(carried), now.primary_index());
+    }
+    if (view.vim) view.vim->end_insert(context);
+    if (!make || typed.empty() || typed == renaming.name) return std::nullopt;
+    return Rename{.at = renaming.at, .from = renaming.name, .to = typed};
+}
+
+// Whether `key` is Enter or Esc, held with nothing.
+bool enter_or_escape(const Chord& key) {
+    return key.text.empty() && key.modifiers == ftk::ui::Modifiers{} &&
+           (key.key == ftk::ui::Key::Enter || key.key == ftk::ui::Key::Escape);
 }
 
 // Selects `match`, as the find goes to it.
@@ -866,6 +986,8 @@ Shown shown(const Frame& frame, const EditorView& view, const Buffer& buffer) {
 // it borrows for its guides.
 constexpr std::size_t GUIDE_LOOK = 200;
 constexpr float DECORATION_ROUNDING = 2.0f;
+// How thick the line under a name renamed in place is (sheet 48).
+constexpr float RENAMED_UNDERLINE = 2.0f;
 
 // How many levels of indent line `line` is in: its leading spaces and tabs,
 // in levels of `width` cells. A blank line is as deep as the shallower of the
@@ -996,6 +1118,21 @@ void draw_matches(core::DrawList& dl, const Document& document, const EditorView
     }
 }
 
+// The uses of a name renamed in place (sheet 48): each washed, the name
+// typed underlined in the accent.
+void draw_renamed(core::DrawList& dl, const Document& document, const EditorView& view, const Frame& frame,
+                  const TextLayout& layout, const Shown& rows) {
+    const Buffer& buffer = document.buffer();
+    for (const Span& use : view.renaming->uses) {
+        const std::optional<std::size_t> index = rows.index_of(view.folds, use.from.line);
+        if (!index || use.to.line != use.from.line) continue;
+        const glm::vec2 min{frame.origin_x + layout.x_of(buffer, use.from), rows.y(*index)};
+        const glm::vec2 max{frame.origin_x + layout.x_of(buffer, use.to), rows.y(*index) + frame.line};
+        dl.rect_filled(min, max, theme::selection_secondary());
+        dl.rect_filled({min.x, max.y - RENAMED_UNDERLINE}, max, theme::accent());
+    }
+}
+
 void draw(core::Context& ui, const Document& document, const EditorView& view, const Frame& frame,
           const TextLayout& layout, const Faces& faces, bool focused, std::span<const Diagnostic> problems,
           const SemanticTokens* colours) {
@@ -1061,6 +1198,7 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
         draw_marks(dl, document, view, frame, layout, rows);
     }
     if (finding) draw_matches(dl, document, view, frame, layout, rows, false);
+    if (view.renaming && view.renaming->begun && !rows.lines.empty()) draw_renamed(dl, document, view, frame, layout, rows);
 
     // Selections, a line break taking a space's width. On a folded row, what
     // the fold hides is selected with its mark.
@@ -1309,14 +1447,14 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         // Vim makes it again with the rest of the insert, for `.`.
         if (completed && view.vim) view.vim->completed(completed->replaced, completed->text);
     };
-    std::optional<Position> rename;
+    std::optional<Rename> rename;
     auto run = [&](std::string_view command, std::string_view text = {}) {
         if (command == "completion.accept") {
             accept(std::nullopt);
             return;
         }
         if (command == "symbol.rename") {
-            if (view.service != nullptr) rename = view.selections.primary().caret;
+            start_rename(view, document);
             return;
         }
         if (is_view_command(command)) {
@@ -1361,7 +1499,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     // service names asks anew.
     const auto ask_completion = [&] {
         const Position caret = view.selections.primary().caret;
-        if (view.service != nullptr && view.selections.all().size() == 1) {
+        // A name typed in a rename is no word to complete.
+        if (view.service != nullptr && view.selections.all().size() == 1 && !view.renaming) {
             const auto asked = asks_completion(document.language(), view.service->completion_triggers(view.path),
                                                buffer.line(caret.line), caret.byte);
             if (asked && (asked->kind == CompletionTrigger::Kind::Character || !view.completing.open)) {
@@ -1383,11 +1522,25 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                               .clipboard = &clipboard, .folds = &view.folds, .text = {}, .in_view = &in_view};
     };
 
+    // A rename asked for begins once the service says where the name
+    // stands; Enter makes it, Esc gives it up, the completion list's own
+    // Enter aside.
+    if (view.renaming && !view.renaming->begun && (!view.renaming->asked || view.renaming->asked->answered)) {
+        begin_rename(view, document);
+    }
+    const auto ends_rename = [&](const Chord& key) {
+        if (!view.renaming || view.completing.open || !enter_or_escape(key)) return false;
+        CommandContext context = vim_context();
+        rename = end_rename(view, document, context, key.key == ftk::ui::Key::Enter);
+        return true;
+    };
+
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
         if (view.vim) {
             take_vim_keys(ui, keymap, view, vim_context, run, [&](const Chord& key) {
+                if (ends_rename(key)) return;
                 const bool inserting = view.vim->mode() == vim::Mode::Insert;
                 CommandContext context = vim_context();
                 if (const std::optional<std::string> asked = view.vim->take(key, context)) run(*asked);
@@ -1401,10 +1554,13 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             // Scrolled by Vim: its first row in sight where Vim put it.
             if (in_view.top != first_row) view.scroll.y = static_cast<float>(in_view.top) * frame.line;
         } else {
-            take_keys(ui, keymap, view, run, [&](std::string_view text) {
-                run("edit.type", text);
-                ask_completion();
-            });
+            take_keys(
+                ui, keymap, view, run,
+                [&](std::string_view text) {
+                    run("edit.type", text);
+                    ask_completion();
+                },
+                ends_rename);
         }
     }
 
@@ -1419,6 +1575,20 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     if (view.vim) {
         CommandContext context = vim_context();
         view.vim->settle(context, placed);
+    }
+    // A rename typed in place follows its uses; a caret off them, by the
+    // mouse or the keys, gives it up.
+    if (view.renaming && view.renaming->begun) {
+        follow_uses(*view.renaming, document);
+        const std::vector<Span>& uses = view.renaming->uses;
+        const bool on_uses = std::ranges::all_of(view.selections.all(), [&](const Selection& selection) {
+            const Span span = selection.span();
+            return std::ranges::any_of(uses, [&](const Span& use) { return use.from <= span.from && span.to <= use.to; });
+        });
+        if (!on_uses) {
+            CommandContext context = vim_context();
+            (void)end_rename(view, document, context, false, true);
+        }
     }
 
     const glm::vec2 scrolled = view.scroll;

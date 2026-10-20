@@ -167,6 +167,27 @@ TEST_CASE("An edit after an undo drops what could be redone", "[history]") {
     REQUIRE(doc.buffer.text() == "first");
 }
 
+TEST_CASE("Steps taken back are forgotten: nothing redoes them, and undo goes on from before them", "[history]") {
+    Doc doc("");
+    doc.type("kept");
+    doc.history.close();
+    const std::size_t before = doc.history.done();
+    doc.type(" tried");
+    doc.history.close();
+    doc.backspace();
+    auto taken = doc.history.take_back(before);
+    REQUIRE(taken);
+    for (const Edit& edit : taken->edits) (void)doc.buffer.apply(edit);
+    CHECK(doc.buffer.text() == "kept");
+    CHECK(taken->selections.primary().caret == Position{0, 4});
+    CHECK_FALSE(doc.history.can_redo());
+    CHECK(doc.history.done() == before);
+    // Nothing more to take back; undo takes back what came before.
+    CHECK_FALSE(doc.history.take_back(before));
+    doc.undo();
+    CHECK(doc.buffer.text().empty());
+}
+
 TEST_CASE("Undo and redo with nothing to do change nothing", "[history]") {
     Doc doc("text");
     REQUIRE_FALSE(doc.history.undo().has_value());

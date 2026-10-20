@@ -918,8 +918,32 @@ void Engine::completed(std::string_view replaced, std::string_view text) {
     note_typed(Chord::typed(text));
 }
 
+void Engine::begin_insert() {
+    keys_.clear();
+    operator_waits_ = false;
+    typing_.reset();
+    preview_.reset();
+    register_next_ = false;
+    making_.reset();
+    inserted_.clear();
+    insert_repeats_ = 0;
+    quiet_ = true;
+    mode_ = Mode::Insert;
+}
+
+void Engine::end_insert(CommandContext& context) {
+    quiet_ = false;
+    making_.reset();
+    inserted_.clear();
+    register_next_ = false;
+    block_insert_ = false;
+    overwritten_.clear();
+    mode_ = Mode::Normal;
+    settle(context);
+}
+
 void Engine::note_typed(Chord key) {
-    if (repeating_insert_) return;
+    if (repeating_insert_ || quiet_) return;
     if (!replaying_ && !making_) {
         making_ = Repeat{.reg = '"', .count = {}, .keys = {Chord::typed(mode_ == Mode::Replace ? "R" : "i")},
                          .typed = {}, .visual = {}};

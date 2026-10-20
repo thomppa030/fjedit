@@ -710,16 +710,23 @@ TEST_CASE("clangd, run by the program, finds the problems in a C++ file opened",
 }
 
 
-TEST_CASE("F2 asks for a new name, and the rename's edits are made in every file", "[program][language][rename]") {
+TEST_CASE("F2 renames in place, and the rename's edits are made in every file", "[program][language][rename]") {
     Running run({{"coin.cpp", "int speed;\nint f() { return speed; }\n"}, {"other.cpp", "extern int speed;\n"}}, {},
                 Running::Languages::Fake);
     run.press_row("coin.cpp");
     for (int i = 0; i < 5; ++i) run.h.press(Key::Right);
     run.h.press(Key::F2);
     run.h.step(2);
+    REQUIRE(run.language->highlights.size() == 1);
+    FakeLanguage::answer(run.language->highlights.front(), std::vector<Span>{{{0, 4}, {0, 9}}, {{1, 17}, {1, 22}}});
+    run.h.step(2);
     run.h.type("pace");
+    run.h.step();
+    REQUIRE(run.document("coin.cpp").buffer().text() == "int pace;\nint f() { return pace; }\n");
+    // Enter takes the typing back and asks the service.
     run.h.press(Key::Enter);
     run.h.step(2);
+    REQUIRE(run.document("coin.cpp").buffer().text() == "int speed;\nint f() { return speed; }\n");
     REQUIRE(run.language->renames.size() == 1);
     REQUIRE(run.language->new_names == std::vector<std::string>{"pace"});
     REQUIRE(run.language->renames.front().at == Position{0, 4});
@@ -770,15 +777,20 @@ TEST_CASE("fjls, run by the program beside clangd, finds the problems in a scrip
     REQUIRE(tinted());
 }
 
-TEST_CASE("Escape leaves the rename's prompt with nothing asked", "[program][language][rename]") {
+TEST_CASE("Escape gives a rename in place up with nothing asked", "[program][language][rename]") {
     Running run({{"coin.cpp", "int speed;\n"}}, {}, Running::Languages::Fake);
     run.press_row("coin.cpp");
     for (int i = 0; i < 5; ++i) run.h.press(Key::Right);
     run.h.press(Key::F2);
     run.h.step(2);
+    REQUIRE(run.language->highlights.size() == 1);
+    FakeLanguage::answer(run.language->highlights.front(), std::vector<Span>{{{0, 4}, {0, 9}}});
+    run.h.step(2);
+    run.h.type("pace");
     run.h.press(Key::Escape);
     run.h.step(2);
     REQUIRE(run.language->renames.empty());
+    REQUIRE(run.document("coin.cpp").buffer().text() == "int speed;\n");
     // The keyboard is the code's again.
     run.h.type("x");
     run.h.step();

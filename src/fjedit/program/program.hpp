@@ -235,19 +235,17 @@ private:
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;
-    // A rename asked for: where, and what is named there; the new name
-    // typed, whether its prompt is open, and the service's answer to come.
+    // A rename typed in place, asked of the services: the names and where,
+    // and the services' answer to come.
     struct Renaming {
-        std::filesystem::path path;
-        Position at;
-        std::string name;
-        std::string typed;
-        bool prompting{false};
+        Rename rename;
         Asked<ftk::Result<WorkspaceEdit>> asked;
     };
     std::optional<Renaming> renaming_;
     // What went wrong last, for the status bar.
     std::string note_;
+    // What was just done (a rename), for the status bar until the next key.
+    std::string told_;
 };
 
 } // namespace fjedit

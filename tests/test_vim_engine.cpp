@@ -981,6 +981,21 @@ TEST_CASE("zc, zo, za, zM and zR close and open the folds at the caret", "[vim][
     CHECK(v.view.folds.hidden(4));
 }
 
+TEST_CASE("Insert mode begun from outside notes nothing for the dot", "[vim][engine]") {
+    Vim v("|abc");
+    v.keys("x");
+    v.engine.begin_insert();
+    CHECK(v.engine.mode() == vim::Mode::Insert);
+    v.keys("zz");
+    CommandContext acting = v.context();
+    v.engine.end_insert(acting);
+    CHECK(v.engine.mode() == vim::Mode::Normal);
+    CHECK(v.shown() == "zz|bc");
+    // The dot makes the x again, not what was typed.
+    v.keys(".");
+    CHECK(v.shown() == "zz|c");
+}
+
 TEST_CASE("/ searches on from the caret; n and N go on with it round the text's ends", "[vim][search]") {
     Vim v("|foo bar foo\nfoo");
     const auto caret = [&] { return v.view.selections.primary().caret; };

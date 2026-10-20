@@ -44,6 +44,20 @@ std::optional<History::Move> History::redo() {
     return Move{.edits = step.made, .selections = step.after};
 }
 
+std::optional<History::Move> History::take_back(std::size_t steps) {
+    if (done_ <= steps) return std::nullopt;
+    Move move{.edits = {}, .selections = steps_[steps].before};
+    for (std::size_t i = done_; i-- > steps;) {
+        move.edits.insert(move.edits.end(), steps_[i].undo.rbegin(), steps_[i].undo.rend());
+    }
+    // A save among the steps forgotten can't be come back to.
+    if (saved_ != NOWHERE && saved_ > steps) saved_ = NOWHERE;
+    steps_.resize(steps);
+    done_ = steps;
+    end_step();
+    return move;
+}
+
 void History::mark_saved() {
     saved_ = done_;
     end_step();
