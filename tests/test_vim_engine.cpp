@@ -1311,6 +1311,45 @@ TEST_CASE(":sort orders lines, the case let go with i, by number with n, once ea
     CHECK(part.view.buffer().text() == "d\nb\nc\na");
 }
 
+TEST_CASE(":set turns Vim's settings on, off and round, says them when asked, and gives the view's for the session",
+          "[vim][ex]") {
+    Vim v("|a Spin");
+    v.keys("/spin<CR>");
+    CHECK(v.engine.message().text == "E486: Pattern not found: spin");
+    v.keys(":set ic<CR>/spin<CR>");
+    CHECK(v.view.selections.primary().caret == Position{0, 2});
+    v.keys(":set ic? scs?<CR>");
+    CHECK(v.engine.message().text == "  ignorecase  nosmartcase");
+    v.keys(":set noic<CR>:set invic<CR>:set ic?<CR>");
+    CHECK(v.engine.message().text == "  ignorecase");
+    v.keys(":set hls!<CR>");
+    CHECK_FALSE(v.engine.settings().hlsearch);
+    CHECK(v.engine.shown_search() == nullptr);
+    v.keys(":set rnu so=20<CR>");
+    CHECK(v.engine.settings().relative_numbers == std::optional<bool>{true});
+    CHECK(v.engine.settings().around_caret == std::optional<std::size_t>{20});
+    v.keys(":set so?<CR>");
+    CHECK(v.engine.message().text == "  scrolloff=20");
+}
+
+TEST_CASE(":set shiftwidth, tabstop and expandtab indent as they say; what it can't set it says", "[vim][ex]") {
+    Vim v("|a");
+    v.keys(":set sw=2 et<CR>>>");
+    CHECK(v.view.buffer().text() == "  a");
+    v.keys(":set noet ts=2<CR>>>");
+    CHECK(v.view.buffer().text() == "\t\ta");
+    v.keys(":set sw?<CR>");
+    CHECK(v.engine.message().text == "  shiftwidth=2");
+    v.keys(":set foo<CR>");
+    CHECK(v.engine.message().text == "E518: Unknown option: foo");
+    v.keys(":set so=x<CR>");
+    CHECK(v.engine.message().text == "E521: Number required after =: so=x");
+    v.keys(":set sw=0<CR>");
+    CHECK(v.engine.message().text == "E487: Argument must be positive: sw=0");
+    v.keys(":set nonu<CR>");
+    CHECK(v.engine.message().text == "Line numbers always show here");
+}
+
 TEST_CASE("The : line says what is wrong as Vim does, keeps what was typed, and :noh hides the matches",
           "[vim][ex]") {
     Vim v("|a\nb");

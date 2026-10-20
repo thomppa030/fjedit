@@ -62,6 +62,24 @@ enum class Mode : uint8_t {
 /// the command line's while it is typed, normal's otherwise.
 [[nodiscard]] std::string_view keymap_mode(Mode mode);
 
+/// What `:set` changes, shared by the engines of every view. Vim's own
+/// settings are kept here; the view's two, which Preferences keep, only as
+/// `:set` made them for the session, for the program to show over
+/// Preferences', with what the views show now for `:set` to say.
+struct Settings {
+    /// ignorecase and smartcase.
+    PatternSettings pattern;
+    /// hlsearch: the last search's matches stay shown.
+    bool hlsearch{true};
+    /// relativenumber and scrolloff as `:set` made them; nothing where it
+    /// didn't.
+    std::optional<bool> relative_numbers;
+    std::optional<std::size_t> around_caret;
+    /// What the views show, Preferences' or `:set`'s.
+    bool relative_numbers_shown{false};
+    std::size_t around_caret_shown{0};
+};
+
 /// The last search: what it looks for as Vim and as the find read it, and
 /// which way `n` goes.
 struct Search {
@@ -121,9 +139,11 @@ enum class CaretShape : uint8_t {
 class Engine {
 public:
     /// An engine in normal mode, keeping what is yanked and deleted in
-    /// `registers`, which the engines of other views may share.
-    explicit Engine(std::shared_ptr<Registers> registers = std::make_shared<Registers>())
-        : registers_(std::move(registers)) {}
+    /// `registers` and what `:set` changes in `settings`, which the engines
+    /// of other views may share.
+    explicit Engine(std::shared_ptr<Registers> registers = std::make_shared<Registers>(),
+                    std::shared_ptr<Settings> settings = std::make_shared<Settings>())
+        : registers_(std::move(registers)), settings_(std::move(settings)) {}
 
     /// Takes `key` in the mode it is in, acting at every selection of
     /// `context`. Returns a command it names for the view or the program to
@@ -192,6 +212,9 @@ public:
     /// What is yanked and deleted.
     [[nodiscard]] Registers& registers() { return *registers_; }
 
+    /// What `:set` changed.
+    [[nodiscard]] Settings& settings() { return *settings_; }
+
 private:
     // Where a visual selection begins and where its caret is, a character
     // each (a block's corners), and the goal along the line the caret keeps.
@@ -258,6 +281,7 @@ private:
     void run_global(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_normal(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
     void run_sort(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& context);
+    void run_set(const ExCommand& command, CommandContext& context);
     // The line `address` names, counted from 1 (0 for above the first), the
     // caret's line `current` counted from 0; an error worded as Vim's.
     ftk::Result<std::size_t> line_at(const ExAddress& address, std::size_t current, CommandContext& context);
@@ -301,6 +325,7 @@ private:
     static std::vector<VisualEnds> ends_of(const Buffer& buffer, const Selections& selections);
 
     std::shared_ptr<Registers> registers_;
+    std::shared_ptr<Settings> settings_;
     Mode mode_{Mode::Normal};
     // The keys of the normal-mode command typed so far, and whether they
     // are an operator waiting for what it acts on.

@@ -8,6 +8,7 @@
 #include "ftk/base/utf8.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <format>
 #include <limits>
@@ -762,6 +763,7 @@ std::optional<std::string> Engine::take(const Chord& key, CommandContext& contex
     // the command line.
     const bool for_one_command = one_command_ && (mode_ == Mode::Normal || visual(mode_) || mode_ == Mode::Command);
     remembered_.message = {};
+    remembered_.settings = settings_->pattern;
     dispatch(key, context);
     // A change is whole once no insert goes on with it.
     if (making_ && !typing(mode_)) last_change_ = std::exchange(making_, std::nullopt);
@@ -793,7 +795,7 @@ void Engine::dispatch(const Chord& key, CommandContext& context) {
 
 const Pattern* Engine::shown_search() const {
     if (typing_ && typing_->line.kind != ':') return preview_ ? &*preview_ : nullptr;
-    return remembered_.shown && remembered_.search ? &remembered_.search->pattern : nullptr;
+    return settings_->hlsearch && remembered_.shown && remembered_.search ? &remembered_.search->pattern : nullptr;
 }
 
 void Engine::search_for(Search search) {
@@ -1053,6 +1055,7 @@ void Engine::run_ex(std::string_view text, CommandContext& c) {
     c.selections = Selections(Selection::at(c.selections.primary().caret));
     c.document.history().close();
 
+    if (name == "set") return run_set(command, c);
     if (name == "substitute") return run_substitute(command, first, last, c);
     if (name == "global" || name == "vglobal") return run_global(command, first, last, c);
     if (name == "normal") return run_normal(command, first, last, c);
@@ -1295,6 +1298,131 @@ void Engine::run_normal(const ExCommand& command, std::size_t first, std::size_t
         if (mode_ != Mode::Normal) dispatch(Chord{.key = Key::Escape, .modifiers = {}, .text = {}}, c);
     }
     c.document.history().join(steps);
+}
+
+void Engine::run_set(const ExCommand& command, CommandContext& c) {
+    // The settings fjedit has, by Vim's whole and short names; whether each
+    // is on or off rather than a number.
+    enum class Option : uint8_t { Number, RelativeNumber, IgnoreCase, SmartCase, HlSearch, ExpandTab, ShiftWidth, TabStop, ScrollOff };
+    struct Named {
+        std::string_view whole;
+        std::string_view short_name;
+        Option option;
+        bool on_off;
+    };
+    static constexpr Named OPTIONS[] = {
+        {"number", "nu", Option::Number, true},          {"relativenumber", "rnu", Option::RelativeNumber, true},
+        {"ignorecase", "ic", Option::IgnoreCase, true},  {"smartcase", "scs", Option::SmartCase, true},
+        {"hlsearch", "hls", Option::HlSearch, true},     {"expandtab", "et", Option::ExpandTab, true},
+        {"shiftwidth", "sw", Option::ShiftWidth, false}, {"tabstop", "ts", Option::TabStop, false},
+        {"scrolloff", "so", Option::ScrollOff, false},
+    };
+    Settings& settings = *settings_;
+    const auto on = [&](Option option) {
+        switch (option) {
+            case Option::Number: return true;
+            case Option::RelativeNumber: return settings.relative_numbers.value_or(settings.relative_numbers_shown);
+            case Option::IgnoreCase: return settings.pattern.ignore_case;
+            case Option::SmartCase: return settings.pattern.smart_case;
+            case Option::HlSearch: return settings.hlsearch;
+            case Option::ExpandTab: return !c.document.indent().tabs;
+            default: return false;
+        }
+    };
+    const auto number = [&](Option option) -> std::size_t {
+        if (option == Option::ScrollOff) return settings.around_caret.value_or(settings.around_caret_shown);
+        return c.document.indent().width;
+    };
+    // Each setting written: on, off, the other way, asked, or given a number.
+    std::vector<std::string> said;
+    const auto refuse = [&](std::string text) { remembered_.message = {.text = std::move(text), .error = true}; };
+    std::string_view rest = command.argument;
+    while (!rest.empty()) {
+        const std::size_t blank = rest.find(' ');
+        const std::string_view item = rest.substr(0, blank);
+        rest = blank == std::string_view::npos ? std::string_view{} : rest.substr(blank + 1);
+        if (item.empty()) continue;
+        std::string_view name = item;
+        std::optional<bool> turn;
+        bool toggle = false;
+        bool asked = false;
+        std::optional<std::string_view> value;
+        if (const std::size_t equals = name.find('='); equals != std::string_view::npos) {
+            value = name.substr(equals + 1);
+            name = name.substr(0, equals);
+        } else if (name.ends_with('?')) {
+            asked = true;
+            name.remove_suffix(1);
+        } else if (name.ends_with('!')) {
+            toggle = true;
+            name.remove_suffix(1);
+        }
+        const auto find = [&](std::string_view written) {
+            return std::ranges::find_if(OPTIONS, [&](const Named& o) { return o.whole == written || o.short_name == written; });
+        };
+        auto found = find(name);
+        if (found == std::end(OPTIONS) && !value && !asked && !toggle) {
+            if (name.starts_with("no") && find(name.substr(2)) != std::end(OPTIONS)) {
+                found = find(name.substr(2));
+                turn = false;
+            } else if (name.starts_with("inv") && find(name.substr(3)) != std::end(OPTIONS)) {
+                found = find(name.substr(3));
+                toggle = true;
+            }
+        }
+        if (found == std::end(OPTIONS)) return refuse(std::format("E518: Unknown option: {}", item));
+        const Option option = found->option;
+        if (found->on_off) {
+            if (value) return refuse(std::format("E474: Invalid argument: {}", item));
+            if (asked) {
+                said.push_back(std::format("{}{}", on(option) ? "  " : "no", found->whole));
+                continue;
+            }
+            const bool to = toggle ? !on(option) : turn.value_or(true);
+            switch (option) {
+                case Option::Number:
+                    if (!to) return refuse("Line numbers always show here");
+                    break;
+                case Option::RelativeNumber:
+                    settings.relative_numbers = to;
+                    settings.relative_numbers_shown = to;
+                    break;
+                case Option::IgnoreCase: settings.pattern.ignore_case = to; break;
+                case Option::SmartCase: settings.pattern.smart_case = to; break;
+                case Option::HlSearch:
+                    settings.hlsearch = to;
+                    if (to) remembered_.shown = true;
+                    break;
+                case Option::ExpandTab: c.document.set_indent({.tabs = !to, .width = c.document.indent().width}); break;
+                default: break;
+            }
+            continue;
+        }
+        // A number: shown when asked for or named alone, set after =.
+        if (turn || toggle) return refuse(std::format("E474: Invalid argument: {}", item));
+        if (!value) {
+            said.push_back(std::format("  {}={}", found->whole, number(option)));
+            continue;
+        }
+        std::size_t n = 0;
+        if (value->empty() || value->find_first_not_of("0123456789") != std::string_view::npos ||
+            std::from_chars(value->data(), value->data() + value->size(), n).ec != std::errc{}) {
+            return refuse(std::format("E521: Number required after =: {}", item));
+        }
+        if (option == Option::ScrollOff) {
+            settings.around_caret = n;
+            settings.around_caret_shown = n;
+        } else {
+            if (n == 0) return refuse(std::format("E487: Argument must be positive: {}", item));
+            c.document.set_indent({.tabs = c.document.indent().tabs, .width = n});
+        }
+    }
+    remembered_.settings = settings.pattern;
+    if (!said.empty()) {
+        std::string text;
+        for (const std::string& one : said) text += (text.empty() ? "" : "  ") + one;
+        remembered_.message = {.text = std::move(text), .error = false};
+    }
 }
 
 void Engine::run_sort(const ExCommand& command, std::size_t first, std::size_t last, CommandContext& c) {

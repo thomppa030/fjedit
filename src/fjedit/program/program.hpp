@@ -100,6 +100,10 @@ public:
     /// is drawn; a window keeps them in its settings file through
     /// preferences_section().
     [[nodiscard]] Preferences& preferences() { return preferences_; }
+
+    /// What Vim's :set changed for the session, which every view's Vim
+    /// shares and the views show over Preferences.
+    [[nodiscard]] const vim::Settings& vim_settings() const { return *vim_settings_; }
     [[nodiscard]] const PreferencesWindow& preferences_window() const { return preferences_window_; }
 
     /// The keymap mode the program's own keys are bound in.
@@ -198,8 +202,10 @@ private:
     // How the code is shown, and the window they are edited in.
     Preferences preferences_;
     PreferencesWindow preferences_window_;
-    // Vim's registers, which every view with Vim on shares.
+    // Vim's registers and what its :set changed, which every view with Vim
+    // on shares.
     std::shared_ptr<vim::Registers> registers_{std::make_shared<vim::Registers>()};
+    std::shared_ptr<vim::Settings> vim_settings_{std::make_shared<vim::Settings>()};
     // Files changed on disk while they had unsaved changes here, until
     // answered; and when the disk is next looked at.
     std::set<std::filesystem::path> changed_;

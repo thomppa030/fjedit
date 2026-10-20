@@ -572,6 +572,21 @@ TEST_CASE("The menus show the keys of the mode the view in front is in", "[progr
     CHECK(run.program->shortcut("edit.paste") == "Ctrl R +");
 }
 
+TEST_CASE("With Vim on, :set rnu and so change every view for the session, Preferences left as they are",
+          "[program][vim]") {
+    Running run({{"a.txt", "abc\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("a.txt");
+    run.h.step();
+    run.h.type(":set rnu so=7");
+    run.h.press(Key::Enter);
+    run.h.step(2);
+    CHECK(run.program->vim_settings().relative_numbers_shown);
+    CHECK(run.program->vim_settings().around_caret_shown == 7);
+    CHECK(run.program->preferences().line_numbers == LineNumbers::Absolute);
+    CHECK(run.program->preferences().around_caret == 0);
+}
+
 TEST_CASE("With Vim on, Ctrl W is Vim's and closes no tab", "[program][vim]") {
     Running run({{"a.txt", "foo bar\n"}});
     run.program->preferences().vim = true;
