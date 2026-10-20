@@ -1678,7 +1678,14 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         const vim::CommandLine& line = *view.vim->command_line();
         const std::string count = view.vim->shown_search() != nullptr ? match_count(view.find, view.selections) : "";
         const std::optional<vim::Outcome> outcome = view.vim->outcome(vim_context(), view.file_facts);
-        command_line_plate(line.kind, line.text, count, outcome ? &*outcome : nullptr, view.text_size, code);
+        const std::optional<vim::NameChoices> names = view.vim->name_choices();
+        const std::optional<std::size_t> chosen = command_line_plate(
+            line.kind, line.text, count, names ? &*names : nullptr, outcome ? &*outcome : nullptr, view.text_size, code);
+        // A name clicked goes in as Tab would put it, the keyboard kept.
+        if (chosen) {
+            view.vim->choose_name(*chosen);
+            ui.set_focus(id);
+        }
     }
 
     // The completion list under the word being typed; an entry clicked is

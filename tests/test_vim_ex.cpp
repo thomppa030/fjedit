@@ -4,6 +4,8 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 using namespace fjedit::vim;
 
@@ -188,4 +190,34 @@ TEST_CASE(":g's, :set's and :sort's arguments read as Vim reads them", "[vim][ex
     CHECK_FALSE(sort->fold_case);
     CHECK(read_sort("/x/").error() == "Not supported yet: :sort with a pattern");
     CHECK(read_sort("q").error() == "E474: Invalid argument: q");
+}
+
+TEST_CASE("A name being typed lists the commands it can become, after any range", "[vim][ex]") {
+    const auto names_of = [](const NameTyped& typed) {
+        std::vector<std::string_view> out;
+        for (const ExCommandName& command : typed.names) out.push_back(command.name);
+        return out;
+    };
+    const auto w = name_typed("w");
+    REQUIRE(w);
+    CHECK(w->at == 0);
+    CHECK(w->typed == "w");
+    CHECK(names_of(*w) == std::vector<std::string_view>{"wall", "wincmd", "wq", "write"});
+    const auto whole = name_typed("%s");
+    REQUIRE(whole);
+    CHECK(whole->at == 1);
+    CHECK(names_of(*whole) == std::vector<std::string_view>{"set", "sort", "split", "substitute"});
+    CHECK(name_typed("'<,'>no")->at == 5);
+    // Before a letter, past the name, or a name no command begins as.
+    CHECK_FALSE(name_typed(""));
+    CHECK_FALSE(name_typed("12"));
+    CHECK_FALSE(name_typed("w "));
+    CHECK_FALSE(name_typed("w!"));
+    CHECK_FALSE(name_typed("s/"));
+    CHECK_FALSE(name_typed("zz"));
+    // Every command has its words, and reads by its whole name.
+    for (const ExCommandName& command : ex_commands()) {
+        CHECK_FALSE(command.words.empty());
+        CHECK(parse_ex(command.name)->name == command.name);
+    }
 }

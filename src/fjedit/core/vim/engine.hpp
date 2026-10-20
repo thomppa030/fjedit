@@ -109,6 +109,15 @@ struct Outcome {
     bool operator==(const Outcome&) const = default;
 };
 
+/// While a `:` line's command name is typed: the commands it can still
+/// become, what is typed of the name, which a list picks out in each, and
+/// the one Enter runs now, when it is one of them.
+struct NameChoices {
+    std::string typed;
+    std::vector<ExCommandName> names;
+    std::optional<std::size_t> lit;
+};
+
 /// What the program knows of its files that the `:` line's words need.
 struct FileFacts {
     /// The name of the file the view shows ("windmill.cpp"); empty for none
@@ -227,6 +236,16 @@ public:
     /// no `:` line is typed, or nothing is typed on it.
     [[nodiscard]] std::optional<Outcome> outcome(const CommandContext& context, const FileFacts& files) const;
 
+    /// While the `:` line's command name is typed, the commands it can
+    /// still become (sheet 49, H3). Tab puts the next of them in place of
+    /// the name and Shift-Tab the one before, round to the name as typed
+    /// past either end; whatever else is typed ends the round there.
+    [[nodiscard]] std::optional<NameChoices> name_choices() const;
+
+    /// The command `index` of name_choices() put in place of the name
+    /// typed, as Tab would put it: one picked with the mouse.
+    void choose_name(std::size_t index);
+
     /// The search whose matches a view shows: a pattern typed after `/` or
     /// `?` as it is typed, otherwise the last search until Ctrl-L or `:noh`
     /// hides it; null while none shows.
@@ -321,6 +340,9 @@ private:
     // A `:` command that is the program's, handed on from take() once it
     // reads as Vim reads it; what doesn't is said.
     void hand_on(ExCommand command);
+    // The command `index` of the names the line as typed can become put in
+    // place of the name, or with none the name as typed, as Tab puts them.
+    void put_name(std::optional<std::size_t> index);
     // What `line`, typed after `:`, will do (outcome()); `inside` a :g, the
     // command it runs at each line it marks, said of that line.
     [[nodiscard]] Outcome read_line(std::string_view line, const CommandContext& context, const FileFacts& files,
@@ -405,6 +427,11 @@ private:
         bool operating{false};
         std::optional<std::size_t> history_at;
         std::string history_prefix;
+        // Tab's round of command names: the line as typed before the first
+        // Tab, and the name it put in, none once it came round to the name
+        // as typed.
+        std::optional<std::string> naming_from;
+        std::optional<std::size_t> named;
     };
     std::optional<Typing> typing_;
     // The pattern typed as it is typed, when it reads.

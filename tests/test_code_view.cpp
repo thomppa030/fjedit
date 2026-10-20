@@ -1608,6 +1608,29 @@ TEST_CASE("With Vim on, / shows its line on a plate and its matches through the 
     CHECK_FALSE(v.e.view.find.shown);
 }
 
+TEST_CASE("With Vim on, the : line lists the commands a name typed can become; Tab or a click puts one in",
+          "[code_view][vim]") {
+    WithVim v("spin");
+    const auto field = [&] { return v.e.h.find("Command line", ftk::ui::core::Role::TextField); };
+    v.e.h.type(":w");
+    v.e.h.step();
+    REQUIRE(v.e.h.find("write", ftk::ui::core::Role::TreeItem) != nullptr);
+    REQUIRE(v.e.h.find("wq", ftk::ui::core::Role::TreeItem) != nullptr);
+    // Under the field.
+    CHECK(v.e.h.find("wall", ftk::ui::core::Role::TreeItem)->rect.min.y >= field()->rect.max.y);
+    v.e.h.press(Key::Tab);
+    v.e.h.step();
+    CHECK(field()->value == "wall");
+    // A click puts its name in, and the keyboard stays on the line.
+    v.e.h.click_at(v.e.h.find("wq", ftk::ui::core::Role::TreeItem)->rect.centre());
+    v.e.h.step();
+    CHECK(field()->value == "wq");
+    v.e.h.type("!");
+    v.e.h.step();
+    CHECK(field()->value == "wq!");
+    CHECK(v.e.h.find("wq", ftk::ui::core::Role::TreeItem) == nullptr);
+}
+
 TEST_CASE("With Vim on, the : line's plate says under its field what Enter will do", "[code_view][vim]") {
     WithVim v("spin");
     v.e.view.file_facts = {.file = "windmill.cpp", .closing_loses = true, .unsaved = "windmill.cpp"};
@@ -1619,7 +1642,7 @@ TEST_CASE("With Vim on, the : line's plate says under its field what Enter will 
         const uint32_t packed = ftk::ui::core::pack_colour(colour);
         for (const auto& root : v.e.h.output().roots) {
             for (const auto& p : root.draw->primitives) {
-                if (p.colour == packed && p.min.y >= field->rect.max.y && p.max.y <= field->rect.max.y + 3.0f * CODE_LINE &&
+                if (p.colour == packed && p.min.y >= field->rect.max.y && p.max.y <= field->rect.max.y + 8.0f * CODE_LINE &&
                     p.min.x >= field->rect.min.x - 1.0f && p.max.x <= field->rect.max.x + 1.0f) {
                     return true;
                 }

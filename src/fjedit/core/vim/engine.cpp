@@ -897,7 +897,9 @@ void Engine::begin_command_line(char kind, std::vector<Chord> before, bool opera
                      .before = std::move(before),
                      .operating = operating,
                      .history_at = {},
-                     .history_prefix = {}};
+                     .history_prefix = {},
+                     .naming_from = {},
+                     .named = {}};
     preview_.reset();
     mode_ = Mode::Command;
 }
@@ -905,6 +907,12 @@ void Engine::begin_command_line(char kind, std::vector<Chord> before, bool opera
 void Engine::take_command(const Chord& key, CommandContext& c) {
     Typing& line = *typing_;
     std::string& text = line.line.text;
+    // Whatever but Tab and Shift-Tab ends a round of names where it is.
+    const bool tab = pressed(key, Key::Tab) || pressed(key, Key::Tab, {.shift = true});
+    if (!tab) {
+        line.naming_from.reset();
+        line.named.reset();
+    }
     if (register_next_) {
         // Ctrl-R's register: its text typed, to its first line's end.
         register_next_ = false;
@@ -949,6 +957,23 @@ void Engine::take_command(const Chord& key, CommandContext& c) {
     } else if (named == "<C-r>") {
         register_next_ = true;
         return;
+    } else if (tab) {
+        // The next of the names the name typed can become, or the one
+        // before; past either end, the name as typed.
+        if (line.line.kind != ':') return;
+        const std::optional<NameTyped> typed = name_typed(line.naming_from ? *line.naming_from : text);
+        if (!typed) return;
+        const std::size_t count = typed->names.size();
+        const bool forward = named == "<Tab>";
+        std::optional<std::size_t> next;
+        if (!line.named) {
+            next = forward ? 0 : count - 1;
+        } else if (forward && *line.named + 1 < count) {
+            next = *line.named + 1;
+        } else if (!forward && *line.named > 0) {
+            next = *line.named - 1;
+        }
+        return put_name(next);
     } else if (named == "<Up>" || named == "<Down>") {
         // The lines typed before on a line of this kind that begin with
         // what is typed, older with Up; Down past the latest gives back what
@@ -1227,6 +1252,34 @@ void Engine::hand_on(ExCommand command) {
     // None for a window fjedit doesn't have: nothing, as when Vim has none
     // there.
     handed_ = std::move(*read);
+}
+
+std::optional<NameChoices> Engine::name_choices() const {
+    if (!typing_ || typing_->line.kind != ':') return std::nullopt;
+    const Typing& line = *typing_;
+    std::optional<NameTyped> typed = name_typed(line.naming_from ? *line.naming_from : line.line.text);
+    if (!typed) return std::nullopt;
+    NameChoices out{.typed = std::string(typed->typed), .names = std::move(typed->names), .lit = {}};
+    if (const ftk::Result<ExCommand> read = parse_ex(line.line.text)) {
+        const auto found = std::ranges::find(out.names, std::string_view(read->name), &ExCommandName::name);
+        if (found != out.names.end()) out.lit = static_cast<std::size_t>(found - out.names.begin());
+    }
+    return out;
+}
+
+void Engine::choose_name(std::size_t index) {
+    if (!typing_ || typing_->line.kind != ':') return;
+    put_name(index);
+}
+
+void Engine::put_name(std::optional<std::size_t> index) {
+    Typing& line = *typing_;
+    if (!line.naming_from) line.naming_from = line.line.text;
+    const std::string& from = *line.naming_from;
+    const std::optional<NameTyped> typed = name_typed(from);
+    if (!typed || (index && *index >= typed->names.size())) return;
+    line.named = index;
+    line.line.text = from.substr(0, typed->at) + std::string(index ? typed->names[*index].name : typed->typed);
 }
 
 std::optional<Outcome> Engine::outcome(const CommandContext& c, const FileFacts& files) const {

@@ -17,8 +17,9 @@
 namespace fjedit {
 
 namespace vim {
+struct NameChoices;
 struct Outcome;
-}
+} // namespace vim
 
 /// A view's go to line: whether it is open, what is typed in it, and the
 /// function the line it names is in.
@@ -56,11 +57,14 @@ GoToLinePlate go_to_line_plate(GoToLineState& state, const Document& document, P
 /// Draws Vim's command line on go to line's plate over the top centre of
 /// `over`: `kind` (`:`, `/`, `?`) before `text`, the caret after it, and
 /// `note` (a search's match count) inside the field's right end, in the
-/// mono face at the code's `text_size`, the plate as much wider; under the
-/// field, what a `:` line will do (`outcome`, when there is one), in the
-/// body face at that size (sheet 49). It takes no keys: the view reads
-/// them for Vim.
-void command_line_plate(char kind, std::string_view text, std::string_view note, const vim::Outcome* outcome,
-                        float text_size, ftk::ui::core::Rect over);
+/// mono face at the code's `text_size`, the plate as much wider. Under the
+/// field (sheet 49), while a `:` line's command name is typed, the `names`
+/// it can become, each with its words, the one Enter runs lit; otherwise
+/// what the line will do (`outcome`), which under the names shows only
+/// when it will be refused. It takes no keys, which the view reads for
+/// Vim; returns the name clicked.
+std::optional<std::size_t> command_line_plate(char kind, std::string_view text, std::string_view note,
+                                              const vim::NameChoices* names, const vim::Outcome* outcome,
+                                              float text_size, ftk::ui::core::Rect over);
 
 } // namespace fjedit

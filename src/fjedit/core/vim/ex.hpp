@@ -15,6 +15,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace fjedit::vim {
 
@@ -63,9 +64,29 @@ struct ExCommand {
 /// that doesn't read ("E14: Invalid address").
 [[nodiscard]] ftk::Result<ExCommand> parse_ex(std::string_view line);
 
-/// The whole names of the commands Vim's line takes here, in the order a
-/// list of them shows.
-[[nodiscard]] std::span<const std::string_view> ex_commands();
+/// A command Vim's line takes here: its whole name, and what it does in a
+/// few plain words ("Save", "Replace a pattern"), for a list of them.
+struct ExCommandName {
+    std::string_view name;
+    std::string_view words;
+
+    bool operator==(const ExCommandName&) const = default;
+};
+
+/// The commands Vim's line takes here, in the order a list of them shows.
+[[nodiscard]] std::span<const ExCommandName> ex_commands();
+
+/// A `:` line whose command's name is still being typed (`wq`, `%s`):
+/// where the name begins in it, what is typed of the name, and the
+/// commands whose names begin with that, in ex_commands()' order.
+struct NameTyped {
+    std::size_t at{0};
+    std::string_view typed;
+    std::vector<ExCommandName> names;
+};
+/// Nothing before a letter of the name is typed, once anything but letters
+/// follows the range, or when no command's name begins as typed.
+[[nodiscard]] std::optional<NameTyped> name_typed(std::string_view line);
 
 // What follows a command's name, read as the command reads it, apart from
 // running it: the engine runs what these read, and the `:` line's words

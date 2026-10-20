@@ -22,9 +22,33 @@ constexpr Name NAMES[] = {
     {"substitute", "s"}, {"t", "t"},       {"vglobal", "v"},  {"vsplit", "vs"},        {"wall", "wa"},
     {"wincmd", "winc"}, {"wq", "wq"},      {"write", "w"},    {"xit", "x"},            {"yank", "y"},
 };
-constexpr std::string_view COMMANDS[] = {
-    "bnext", "bprevious", "close", "copy", "delete", "edit", "global", "move", "nohlsearch", "normal", "qall", "quit",
-    "set", "sort", "split", "substitute", "t", "vglobal", "vsplit", "wall", "wincmd", "wq", "write", "xit", "yank",
+// Each command, with what it does in a few words, for a list of them.
+constexpr ExCommandName COMMANDS[] = {
+    {"bnext", "Next tab"},
+    {"bprevious", "Previous tab"},
+    {"close", "Close"},
+    {"copy", "Put a copy of lines below a line"},
+    {"delete", "Delete lines"},
+    {"edit", "Open a file, or read this one again"},
+    {"global", "Run a command on the lines with a pattern"},
+    {"move", "Move lines below a line"},
+    {"nohlsearch", "Hide the search's matches"},
+    {"normal", "Type keys in normal mode"},
+    {"qall", "Quit"},
+    {"quit", "Close"},
+    {"set", "Change a setting"},
+    {"sort", "Sort lines"},
+    {"split", "Split"},
+    {"substitute", "Replace a pattern"},
+    {"t", "Put a copy of lines below a line"},
+    {"vglobal", "Run a command on the lines without a pattern"},
+    {"vsplit", "Split"},
+    {"wall", "Save all"},
+    {"wincmd", "Go to another group"},
+    {"wq", "Save and close"},
+    {"write", "Save"},
+    {"xit", "Save if it changed, and close"},
+    {"yank", "Copy lines"},
 };
 
 bool digit(char c) {
@@ -94,32 +118,40 @@ ftk::Result<std::optional<ExAddress>> address(std::string_view text, std::size_t
     return std::optional<ExAddress>{std::move(out)};
 }
 
+// The range a line begins with, after any `:` and blanks, `at` left at
+// what follows it and its blanks.
+ftk::Result<ExRange> read_range(std::string_view line, std::size_t& at) {
+    ExRange range;
+    while (at < line.size() && (line[at] == ':' || line[at] == ' ' || line[at] == '\t')) ++at;
+    if (at < line.size() && line[at] == '%') {
+        range.whole = true;
+        ++at;
+    } else {
+        ftk::Result<std::optional<ExAddress>> first = address(line, at);
+        if (!first) return std::unexpected(first.error());
+        range.from = std::move(*first);
+        skip_blanks(line, at);
+        if (at < line.size() && (line[at] == ',' || line[at] == ';')) {
+            range.from_first = line[at] == ';';
+            ++at;
+            if (!range.from) range.from = ExAddress{};
+            ftk::Result<std::optional<ExAddress>> second = address(line, at);
+            if (!second) return std::unexpected(second.error());
+            range.to = second->value_or(ExAddress{});
+        }
+    }
+    skip_blanks(line, at);
+    return range;
+}
+
 } // namespace
 
 ftk::Result<ExCommand> parse_ex(std::string_view line) {
     ExCommand out;
     std::size_t at = 0;
-    while (at < line.size() && (line[at] == ':' || line[at] == ' ' || line[at] == '\t')) ++at;
-
-    // The range.
-    if (at < line.size() && line[at] == '%') {
-        out.range.whole = true;
-        ++at;
-    } else {
-        ftk::Result<std::optional<ExAddress>> first = address(line, at);
-        if (!first) return std::unexpected(first.error());
-        out.range.from = std::move(*first);
-        skip_blanks(line, at);
-        if (at < line.size() && (line[at] == ',' || line[at] == ';')) {
-            out.range.from_first = line[at] == ';';
-            ++at;
-            if (!out.range.from) out.range.from = ExAddress{};
-            ftk::Result<std::optional<ExAddress>> second = address(line, at);
-            if (!second) return std::unexpected(second.error());
-            out.range.to = second->value_or(ExAddress{});
-        }
-    }
-    skip_blanks(line, at);
+    ftk::Result<ExRange> range = read_range(line, at);
+    if (!range) return std::unexpected(range.error());
+    out.range = std::move(*range);
 
     // The name: letters, or a run of > or <, whose length is how far it
     // shifts.
@@ -157,8 +189,22 @@ ftk::Result<ExCommand> parse_ex(std::string_view line) {
     return out;
 }
 
-std::span<const std::string_view> ex_commands() {
+std::span<const ExCommandName> ex_commands() {
     return COMMANDS;
+}
+
+std::optional<NameTyped> name_typed(std::string_view line) {
+    std::size_t at = 0;
+    if (!read_range(line, at)) return std::nullopt;
+    const std::size_t begin = at;
+    while (at < line.size() && letter(line[at])) ++at;
+    if (at == begin || at != line.size()) return std::nullopt;
+    NameTyped out{.at = begin, .typed = line.substr(begin), .names = {}};
+    for (const ExCommandName& command : COMMANDS) {
+        if (command.name.starts_with(out.typed)) out.names.push_back(command);
+    }
+    if (out.names.empty()) return std::nullopt;
+    return out;
 }
 
 Delimited split_pattern(std::string_view text, char delimiter) {

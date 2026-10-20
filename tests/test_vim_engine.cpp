@@ -1511,6 +1511,59 @@ TEST_CASE("The : line says in plain words what Enter will do, its range as the l
     CHECK(v.engine.shown_search() == nullptr);
 }
 
+TEST_CASE("Tab goes round the commands a name typed can become, and back to it; typing ends the round",
+          "[vim][ex]") {
+    Vim v("|a");
+    const auto line = [&] { return v.engine.command_line()->text; };
+    v.keys(":w");
+    const std::optional<vim::NameChoices> choices = v.engine.name_choices();
+    REQUIRE(choices);
+    CHECK(choices->typed == "w");
+    REQUIRE(choices->names.size() == 4);
+    CHECK(choices->names[3].name == "write");
+    CHECK(choices->names[3].words == "Save");
+    // :w is :write, which Enter runs.
+    CHECK(choices->lit == std::optional<std::size_t>{3});
+    v.keys("<Tab>");
+    CHECK(line() == "wall");
+    CHECK(v.engine.name_choices()->lit == std::optional<std::size_t>{0});
+    CHECK(v.engine.name_choices()->names.size() == 4);
+    v.keys("<Tab><Tab><Tab>");
+    CHECK(line() == "write");
+    v.keys("<Tab>");
+    CHECK(line() == "w");
+    v.keys("<Tab>");
+    CHECK(line() == "wall");
+    v.keys("<S-Tab>");
+    CHECK(line() == "w");
+    v.keys("<S-Tab>");
+    CHECK(line() == "write");
+    // A blank ends the round, and the names give way.
+    v.keys(" ");
+    CHECK(line() == "write ");
+    CHECK_FALSE(v.engine.name_choices());
+    v.keys("<Esc>");
+    // A range before the name stays where it is.
+    v.keys(":%su<Tab>");
+    CHECK(line() == "%substitute");
+    v.keys("<Esc>");
+    // One picked with the mouse goes in as Tab's would.
+    v.keys(":q");
+    v.engine.choose_name(0);
+    CHECK(line() == "qall");
+    v.keys("<Tab>");
+    CHECK(line() == "quit");
+    v.keys("<Esc>");
+    // A name no command begins as, and a search, have none.
+    v.keys(":zz");
+    CHECK_FALSE(v.engine.name_choices());
+    v.keys("<Tab>");
+    CHECK(line() == "zz");
+    v.keys("<Esc>/w");
+    CHECK_FALSE(v.engine.name_choices());
+    v.keys("<Esc>");
+}
+
 TEST_CASE("The : line says what the program's commands will do, and what they will refuse over changes",
           "[vim][ex]") {
     Vim v("|a");

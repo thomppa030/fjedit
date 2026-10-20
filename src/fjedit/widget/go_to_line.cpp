@@ -10,6 +10,7 @@
 #include "ftk/ui/kit/plate.hpp"
 #include "ftk/ui/kit/text.hpp"
 #include "ftk/ui/kit/text_field.hpp"
+#include "ftk/ui/kit/tree.hpp"
 #include "ftk/ui/theme.hpp"
 
 #include <algorithm>
@@ -100,20 +101,48 @@ GoToLinePlate go_to_line_plate(GoToLineState& state, const Document& document, P
     return out;
 }
 
-void command_line_plate(char kind, std::string_view text, std::string_view note, const vim::Outcome* outcome,
-                        float text_size, ftk::ui::core::Rect over) {
+std::optional<std::size_t> command_line_plate(char kind, std::string_view text, std::string_view note,
+                                              const vim::NameChoices* names, const vim::Outcome* outcome,
+                                              float text_size, ftk::ui::core::Rect over) {
+    std::optional<std::size_t> clicked;
     // A `:` line is as wide as find's plate from its first key, so the
     // words under it never make it jump.
     const float base = kind == ':' ? COMMAND_PLATE_WIDTH : PLATE_WIDTH;
     const float width = std::min(base * text_size / CODE_TEXT, over.width() - 2.0f * ui::PLATE_INSET);
     if (auto plate = ui::Plate("##command_line", over.min, over.max, ui::PlatePlace::TopCenter, width)) {
+        const bool rows = names != nullptr && !names->names.empty();
         {
             const ui::FontScope mono(theme::mono_font(), text_size);
             ui::next_width(plate.inner_width());
             const char prompt[] = {kind, '\0'};
             ui::shown_entry("Command line##vim", text, {.prompt = prompt, .caret = text.size(), .note = note});
+            // The names it can become, their words in a column past the
+            // longest.
+            if (rows) {
+                float column = 0.0f;
+                for (const vim::ExCommandName& name : names->names) column = std::max(column, ui::text_size(name.name).x);
+                column += ui::text_size("  ").x;
+                if (auto tree = ui::Tree("##names", text_size)) {
+                    for (std::size_t i = 0; i < names->names.size(); ++i) {
+                        const vim::ExCommandName& name = names->names[i];
+                        const std::string id(name.name);
+                        const ui::TreeRowResult row = ui::tree_row({
+                            .id = id.c_str(),
+                            .name = name.name,
+                            .description = name.words,
+                            .description_at = column,
+                            .selection = names->lit == i ? ui::RowSelection::Primary : ui::RowSelection::None,
+                            .query = names->typed,
+                        });
+                        if (row.clicked) clicked = i;
+                    }
+                }
+            }
         }
-        if (outcome != nullptr) {
+        // Under the names, only a refusal to come: the lit name says what
+        // runs, and a name half typed isn't wrong yet.
+        if (outcome != nullptr && (!rows || outcome->kind == vim::Outcome::Kind::Refused)) {
+            if (rows) ui::separator();
             const ui::FontScope body(ui::Font::Body, text_size);
             std::optional<ui::Severity> severity;
             if (outcome->kind == vim::Outcome::Kind::Refused) severity = ui::Severity::Warning;
@@ -121,6 +150,7 @@ void command_line_plate(char kind, std::string_view text, std::string_view note,
             ui::outcome_line(severity, outcome->text);
         }
     }
+    return clicked;
 }
 
 } // namespace fjedit
