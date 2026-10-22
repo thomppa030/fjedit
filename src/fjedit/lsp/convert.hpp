@@ -85,7 +85,10 @@ using PositionsFor = std::function<Positions(const std::filesystem::path& path)>
 /// A workspace edit, by its changes or its documentChanges.
 [[nodiscard]] WorkspaceEdit workspace_edit_from(const Json& edit, const PositionsFor& positions);
 
-/// What each of the server's token types (its legend) colours as.
+/// What each of the server's token types (its legend) colours as: the
+/// protocol's own names, and fjls's for a shader's uniforms (`uniform`), the
+/// engine's built-ins (`builtin`) and FJSL's hints (`hint`). Any other name
+/// is plain text.
 [[nodiscard]] std::vector<TokenKind> token_kinds(const Json& token_types);
 
 /// The colours of semantic tokens' data, five numbers a token, each

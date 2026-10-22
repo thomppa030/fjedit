@@ -159,6 +159,14 @@ TEST_CASE("Semantic tokens are read from their numbers by the server's legend", 
     REQUIRE(tokens.lines[2][0].kind == TokenKind::Text);
 }
 
+TEST_CASE("fjls's own token types colour as what only a server knows", "[lsp][convert]") {
+    const std::vector<TokenKind> kinds = token_kinds(parsed(R"(["uniform","builtin","hint","operator","glow"])"));
+    // An operator keeps the lexer's punctuation; a name nobody gave a colour
+    // is plain.
+    REQUIRE(kinds == std::vector<TokenKind>{TokenKind::Uniform, TokenKind::Builtin, TokenKind::Meta,
+                                            TokenKind::Punctuation, TokenKind::Text});
+}
+
 TEST_CASE("Why a completion was asked goes to the server as its context", "[lsp][convert]") {
     REQUIRE(completion_context({}) == parsed(R"({"triggerKind":1})"));
     REQUIRE(completion_context({.kind = CompletionTrigger::Kind::Character, .character = "@"}) ==

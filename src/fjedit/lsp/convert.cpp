@@ -280,8 +280,14 @@ std::vector<TokenKind> token_kinds(const Json& token_types) {
             kind = TokenKind::Function;
         } else if (name == "property") {
             kind = TokenKind::Member;
-        } else if (name == "macro") {
+        } else if (name == "macro" || name == "hint") {
             kind = TokenKind::Meta;
+        } else if (name == "uniform") {
+            kind = TokenKind::Uniform;
+        } else if (name == "builtin") {
+            kind = TokenKind::Builtin;
+        } else if (name == "operator") {
+            kind = TokenKind::Punctuation;
         } else if (name == "keyword" || name == "modifier") {
             kind = TokenKind::Keyword;
         } else if (name == "comment") {
