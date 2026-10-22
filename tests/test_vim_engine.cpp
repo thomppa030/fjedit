@@ -1028,7 +1028,7 @@ TEST_CASE("Insert mode begun from outside notes nothing for the dot", "[vim][eng
     CHECK(v.shown() == "zz|c");
 }
 
-TEST_CASE("/ searches on from the caret; n and N go on with it round the text's ends", "[vim][search]") {
+TEST_CASE("A / search goes on from the caret; n and N go on with it round the text's ends", "[vim][search]") {
     Vim v("|foo bar foo\nfoo");
     const auto caret = [&] { return v.view.selections.primary().caret; };
     v.keys("/foo<CR>");
