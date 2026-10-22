@@ -47,6 +47,7 @@ add_executable(fjedit-tests
     test_vim_text_objects.cpp
     test_workspace.cpp)
 ftk_target_defaults(fjedit-tests)
+ftk_leak_suppressions(fjedit-tests)
 target_link_libraries(fjedit-tests PRIVATE fjedit::core Catch2::Catch2WithMain)
 
 # The code view, driven as a person drives it through ftk's harness: clicks,
@@ -56,6 +57,7 @@ add_executable(fjedit-widget-tests
     test_code_view.cpp
     test_markdown.cpp)
 ftk_target_defaults(fjedit-widget-tests)
+ftk_leak_suppressions(fjedit-widget-tests)
 target_link_libraries(fjedit-widget-tests PRIVATE fjedit::widget ftk::kit-harness Catch2::Catch2WithMain)
 
 # The program, on folders of the tests' own, through the same harness.
@@ -63,6 +65,7 @@ add_executable(fjedit-program-tests
     log_for_tests.cpp
     test_program.cpp)
 ftk_target_defaults(fjedit-program-tests)
+ftk_leak_suppressions(fjedit-program-tests)
 target_link_libraries(fjedit-program-tests PRIVATE fjedit::program ftk::kit-harness Catch2::Catch2WithMain)
 
 # The language server connection, against a fake server of the tests' own,
@@ -77,6 +80,7 @@ add_executable(fjedit-lsp-tests
     test_lsp_client.cpp
     test_lsp_convert.cpp)
 ftk_target_defaults(fjedit-lsp-tests)
+ftk_leak_suppressions(fjedit-lsp-tests)
 target_link_libraries(fjedit-lsp-tests PRIVATE fjedit::lsp Catch2::Catch2WithMain)
 add_dependencies(fjedit-lsp-tests fjedit-fake-server)
 target_compile_definitions(fjedit-lsp-tests PRIVATE FJEDIT_FAKE_SERVER="$<TARGET_FILE:fjedit-fake-server>")
