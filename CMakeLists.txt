@@ -30,7 +30,7 @@ if(NOT TARGET ftk::base)
     include(FetchContent)
     FetchContent_Declare(ftk
         GIT_REPOSITORY https://github.com/thomppa030/ftk.git
-        GIT_TAG        9444586729fb6f584b7e167ada0f2f255db87a1d)
+        GIT_TAG        914f870111236a96f30a5b11c563b0c6733a3e51)
     FetchContent_MakeAvailable(ftk)
 endif()
 
