@@ -6,7 +6,7 @@
 // read when it is first opened and again when the tree is told to forget
 // what it read, so files made or removed elsewhere come and go.
 
-#include "fjedit/widget/file_look.hpp"
+#include "fjedit/widget/file_kind.hpp"
 
 #include <filesystem>
 #include <map>

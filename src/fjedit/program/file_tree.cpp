@@ -81,13 +81,13 @@ void FileTree::draw_folder(const std::filesystem::path& folder, int depth, const
             continue;
         }
         const std::string entry_id = entry.path.generic_string();
-        const FileLook look = file_look(entry.path);
+        const ui::AssetKind kind = file_kind(entry.path);
         const ui::TreeRowResult file = ui::tree_row({
             .id = entry_id.c_str(),
             .name = entry.name,
             .depth = depth + 1,
-            .icon = look.icon,
-            .hue = look.hue,
+            .icon = kind.icon,
+            .hue = kind.hue,
             .selection = entry.path == selected ? ui::RowSelection::Primary : ui::RowSelection::None,
         });
         if (file.clicked) pressed = entry.path;

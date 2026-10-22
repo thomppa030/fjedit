@@ -55,6 +55,7 @@ target_link_libraries(fjedit-tests PRIVATE fjedit::core Catch2::Catch2WithMain)
 add_executable(fjedit-widget-tests
     log_for_tests.cpp
     test_code_view.cpp
+    test_file_kind.cpp
     test_markdown.cpp)
 ftk_target_defaults(fjedit-widget-tests)
 ftk_leak_suppressions(fjedit-widget-tests)
@@ -78,7 +79,8 @@ add_executable(fjedit-lsp-tests
     log_for_tests.cpp
     test_lsp.cpp
     test_lsp_client.cpp
-    test_lsp_convert.cpp)
+    test_lsp_convert.cpp
+    test_lsp_fjls.cpp)
 ftk_target_defaults(fjedit-lsp-tests)
 ftk_leak_suppressions(fjedit-lsp-tests)
 target_link_libraries(fjedit-lsp-tests PRIVATE fjedit::lsp Catch2::Catch2WithMain)

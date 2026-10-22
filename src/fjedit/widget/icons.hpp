@@ -24,11 +24,27 @@ inline constexpr const char* operation = ICON_LC_PARENTHESES;
 inline constexpr const char* file = ICON_LC_FILE;
 inline constexpr const char* folder = ICON_LC_FOLDER;
 
-// Kinds of file (sheet 39), each tinted in its category's hue (file_look()).
-inline constexpr const char* code_file = ICON_LC_FILE_CODE;   // C++ and shaders
-inline constexpr const char* sheet_file = ICON_LC_HASH;       // stylesheets
-inline constexpr const char* widget_file = ICON_LC_CODE;      // widgets and their markup
-inline constexpr const char* data_file = ICON_LC_BRACES;      // JSON, and the assets written in it
-inline constexpr const char* plain_file = ICON_LC_FILE;
+// Kinds of file, as Fjell shows them (its src/ui/icons.hpp), each in its
+// category's hue (file_kind.cpp). Textures, audio and fonts are the kit's.
+inline constexpr const char* script = ICON_LC_FILE_CODE;           // C++
+inline constexpr const char* shader = ICON_LC_CODE;                // FJSL and GLSL
+inline constexpr const char* mesh = ICON_LC_BOX;                   // meshes, models and instance sets
+inline constexpr const char* skeleton = ICON_LC_BONE;
+inline constexpr const char* material = ICON_LC_CIRCLE_DOT;
+inline constexpr const char* colour_grade = ICON_LC_PALETTE;
+inline constexpr const char* animation = ICON_LC_FILM;
+inline constexpr const char* blend_space = ICON_LC_WORKFLOW;
+inline constexpr const char* vfx = ICON_LC_SPARKLES;
+inline constexpr const char* ui_layout = ICON_LC_LAYOUT_PANEL_TOP; // layouts, style sheets and widgets
+inline constexpr const char* surface = ICON_LC_LAYERS_3;           // surfaces and terrain
+inline constexpr const char* day_profile = ICON_LC_SUNRISE;
+inline constexpr const char* weather = ICON_LC_CLOUD_RAIN;
+inline constexpr const char* climate = ICON_LC_THERMOMETER_SUN;
+inline constexpr const char* water = ICON_LC_WAVES_HORIZONTAL;
+inline constexpr const char* placement = ICON_LC_TREES;
+inline constexpr const char* scene = ICON_LC_CLAPPERBOARD;
+inline constexpr const char* preset = ICON_LC_BOXES;
+inline constexpr const char* input = ICON_LC_GAMEPAD_2;
+inline constexpr const char* saved_game = ICON_LC_SAVE;
 
 } // namespace fjedit::icon

@@ -8,6 +8,7 @@
 #include "fjedit/core/vim/notation.hpp"
 #include "fjedit/lsp/client.hpp"
 #include "fjedit/program/icons.hpp"
+#include "fjedit/widget/file_kind.hpp"
 
 #include "ftk/platform/platform.hpp"
 
@@ -161,13 +162,13 @@ std::optional<std::size_t> lines_changed(const std::filesystem::path& path, std:
 // A file as a dialog's list shows it: its kind's icon, its name, and its
 // folder within `root` with `more` after it.
 ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem::path& root, std::string_view more) {
-    const FileLook look = file_look(path);
+    const ui::AssetKind kind = file_kind(path);
     std::string folder = path.parent_path().lexically_relative(root).generic_string();
     if (folder == ".") folder.clear();
     std::string detail = folder;
     if (!more.empty()) detail += detail.empty() ? std::string(more) : "  " + std::string(more);
-    return {.icon = look.icon,
-            .icon_colour = look.hue ? theme::hue(*look.hue) : theme::text_secondary(),
+    return {.icon = kind.icon,
+            .icon_colour = theme::hue(kind.hue),
             .name = path.filename().string(),
             .detail = std::move(detail)};
 }
@@ -946,10 +947,10 @@ void Program::draw_group(Group& group, std::size_t index) {
         for (std::size_t i = 0; i < group.tabs.size(); ++i) {
             const Tab& tab = group.tabs[i];
             const std::string label = tab_label(tab.path);
-            const FileLook look = file_look(tab.path);
+            const ui::AssetKind kind = file_kind(tab.path);
             const ui::DocumentTabResult result = ui::document_tab({.label = label.c_str(),
-                                                                   .icon = look.icon,
-                                                                   .hue = look.hue,
+                                                                   .icon = kind.icon,
+                                                                   .hue = kind.hue,
                                                                    .unsaved = workspace_.unsaved(tab.path),
                                                                    .select = group.select == i});
             if (result.front) group.front = i;

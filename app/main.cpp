@@ -3,6 +3,7 @@
 //     fjedit [folder]     the folder, or the one it was started in
 
 #include "fjedit/program/program.hpp"
+#include "fjedit/widget/file_kind.hpp"
 
 #include "ftk/app/app_window.hpp"
 #include "ftk/base/log.hpp"
@@ -40,6 +41,8 @@ int run(const std::filesystem::path& folder) {
         FTK_CORE_CRITICAL("fjedit could not find its fonts beside it");
         return EXIT_FAILURE;
     }
+    // Fjell's files look as they do in Fjell.
+    fjedit::register_file_kinds();
     // A language server's answer comes on a thread of its own: it wakes the
     // window to draw it.
     fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder),

@@ -2,7 +2,7 @@
 
 #include "fjedit/core/structure.hpp"
 #include "fjedit/widget/code_view.hpp"
-#include "fjedit/widget/file_look.hpp"
+#include "fjedit/widget/file_kind.hpp"
 
 #include "ftk/base/utf8.hpp"
 #include "ftk/ui/kit/feedback.hpp"
@@ -163,12 +163,12 @@ std::optional<std::size_t> command_line_plate(char kind, std::string_view text, 
                     for (std::size_t i = in_view.first(); i < in_view.end(); ++i) {
                         const vim::PathEntry& entry = paths->entries[i];
                         const std::string name = entry.folder ? entry.name + "/" : entry.name;
-                        const FileLook look = entry.folder ? FileLook{.icon = ui::icon::folder, .hue = {}} : file_look(entry.name);
+                        const ui::AssetKind look = file_kind(entry.name);
                         const ui::TreeRowResult row = ui::tree_row({
                             .id = name.c_str(),
                             .name = name,
-                            .icon = look.icon,
-                            .hue = look.hue,
+                            .icon = entry.folder ? ui::icon::folder : look.icon,
+                            .hue = entry.folder ? std::nullopt : std::optional(look.hue),
                             .tint = entry.folder ? std::optional(theme::accent()) : std::nullopt,
                             .selection = paths->lit == i ? ui::RowSelection::Primary : ui::RowSelection::None,
                             .query = paths->typed,

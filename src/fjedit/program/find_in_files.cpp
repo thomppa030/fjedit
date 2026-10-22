@@ -3,7 +3,7 @@
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/language.hpp"
 #include "fjedit/core/text_file.hpp"
-#include "fjedit/program/file_tree.hpp"
+#include "fjedit/widget/file_kind.hpp"
 #include "fjedit/widget/find.hpp"
 
 #include "ftk/ui/core/context.hpp"
@@ -243,12 +243,12 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
                     const std::string_view matched =
                         std::string_view(hit.line).substr(hit.span.from.byte, hit.span.to.byte - hit.span.from.byte);
                     const std::string where = std::format("{}:{}", hit.path.filename().string(), hit.span.from.line + 1);
-                    const FileLook look = file_look(hit.path);
+                    const ui::AssetKind kind = file_kind(hit.path);
                     const ui::TreeRowResult row = ui::tree_row({
                         .id = id.c_str(),
                         .name = line,
-                        .icon = look.icon,
-                        .hue = look.hue,
+                        .icon = kind.icon,
+                        .hue = kind.hue,
                         .tag = where,
                         .selection = i == selected_ ? ui::RowSelection::Primary : ui::RowSelection::None,
                         .query = matched,
@@ -265,9 +265,9 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
         // The match picked, in its file, editable.
         if (selected_ < hits_.size() && preview_) {
             const FileHit& hit = hits_[selected_];
-            const FileLook look = file_look(hit.path);
+            const ui::AssetKind kind = file_kind(hit.path);
             ui::align_text_to_frame();
-            ui::text(look.icon, look.hue ? theme::hue(*look.hue) : theme::text_secondary());
+            ui::text(kind.icon, theme::hue(kind.hue));
             ui::same_line();
             ui::align_text_to_frame();
             ui::text(hit.path.lexically_relative(workspace_->root()).generic_string(), theme::text_secondary());

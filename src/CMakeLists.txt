@@ -50,7 +50,7 @@ target_link_libraries(fjedit-core PUBLIC ftk::base ftk::ui-core)
 add_library(fjedit-widget STATIC
     fjedit/widget/code_view.cpp
     fjedit/widget/completion.cpp
-    fjedit/widget/file_look.cpp
+    fjedit/widget/file_kind.cpp
     fjedit/widget/find.cpp
     fjedit/widget/go_to_line.cpp
     fjedit/widget/markdown.cpp
