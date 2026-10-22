@@ -22,13 +22,15 @@ endif()
 
 # ftk: a program that builds fjedit beside its own ftk (Fjell) has the
 # targets already, and fjedit takes those, so one build holds one ftk.
-# Otherwise it is fetched. While working on both, point the fetch at a
+# Otherwise it is fetched at the commit fjedit builds with: ftk grows along
+# with fjedit, so a change that needs a newer ftk moves the hash instead of
+# waiting for a release. While working on both, point the fetch at a
 # checkout with -DFETCHCONTENT_SOURCE_DIR_FTK=<path>.
 if(NOT TARGET ftk::base)
     include(FetchContent)
     FetchContent_Declare(ftk
         GIT_REPOSITORY https://github.com/thomppa030/ftk.git
-        GIT_TAG        v0.1.0)
+        GIT_TAG        1ba74f6a9f1f9afe8f7bbf218404a923eead57ea)
     FetchContent_MakeAvailable(ftk)
 endif()
 

@@ -19,7 +19,7 @@ or MSVC 2022) and the Vulkan SDK. Everything else is fetched at configure.
 
 ## Working on ftk at the same time
 
-fjedit fetches ftk at a tag. To build against a checkout instead, keep a
+fjedit fetches ftk at a commit. To build against a checkout instead, keep a
 `CMakeUserPresets.json` (git ignores it) whose preset sets
 `FETCHCONTENT_SOURCE_DIR_FTK` to the checkout:
 
