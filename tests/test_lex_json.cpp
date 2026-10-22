@@ -32,8 +32,10 @@ TEST_CASE("JSON: literals, negative numbers and exponents", "[lex][json]") {
 }
 
 TEST_CASE("JSON: a key with a space before its colon, and an escaped quote", "[lex][json]") {
-    REQUIRE(colours(json, R"("a\"b" : "c")") ==
-            Colours{{R"("a\"b")", K::Member}, {":", K::Punctuation}, {"\"c\"", K::String}});
+    // Outside the REQUIRE: MSVC's preprocessor can't stringize a raw string holding \".
+    const std::string line = R"("a\"b" : "c")";
+    const std::string key = R"("a\"b")";
+    REQUIRE(colours(json, line) == Colours{{key, K::Member}, {":", K::Punctuation}, {"\"c\"", K::String}});
 }
 
 TEST_CASE("JSON: comments, as .fjgraph has them", "[lex][json]") {

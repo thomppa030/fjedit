@@ -28,8 +28,10 @@ TEST_CASE("C++: numbers in their forms", "[lex][cpp]") {
 }
 
 TEST_CASE("C++: strings, characters and their prefixes", "[lex][cpp]") {
-    REQUIRE(colours(cpp, R"(s = "a \" b";)") ==
-            Colours{{"=", K::Punctuation}, {R"("a \" b")", K::String}, {";", K::Punctuation}});
+    // Outside the REQUIRE: MSVC's preprocessor can't stringize a raw string holding \".
+    const std::string line = R"(s = "a \" b";)";
+    const std::string quoted = R"("a \" b")";
+    REQUIRE(colours(cpp, line) == Colours{{"=", K::Punctuation}, {quoted, K::String}, {";", K::Punctuation}});
     REQUIRE(colours(cpp, "u8\"x\" L'y'") == Colours{{"u8\"x\"", K::String}, {"L'y'", K::String}});
 }
 
