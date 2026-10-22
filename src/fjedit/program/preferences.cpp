@@ -162,10 +162,12 @@ bool draw_code_editor(Preferences& preferences, const LanguageServerShown& clang
         });
         if (!keys.empty()) {
             ui::row("Your maps", [&] {
+                // The path is cut to leave Open in reach, however long it is.
+                const float room = ui::space_left().x - ui::item_spacing().x - ui::button_width("Open");
                 {
                     const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
                     ui::align_text_to_frame();
-                    ui::text(shown_path(keys), theme::text_secondary());
+                    ui::cut_text(shown_path(keys), room, theme::text_secondary());
                 }
                 ui::same_line();
                 open_keys = ui::button("Open");

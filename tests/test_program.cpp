@@ -1,4 +1,5 @@
 #include "fjedit/program/program.hpp"
+#include "fjedit/program/preferences.hpp"
 
 #include "fjedit/core/vim/notation.hpp"
 
@@ -1197,6 +1198,26 @@ TEST_CASE("Preferences' Open makes keys.vim with a few lines of comment, and ope
     CHECK(std::filesystem::exists(run.keys_file()));
     CHECK(run.folder.read(".config/keys.vim").starts_with("\" Your maps for Vim's keys"));
     CHECK(run.program->front() == run.program->workspace().name(run.keys_file()));
+}
+
+TEST_CASE("Preferences keeps keys.vim's Open in reach however long its path", "[program][keys]") {
+    ftk::test::KitHarness h;
+    Preferences preferences;
+    PreferencesWindow window;
+    window.open();
+    const std::filesystem::path keys = std::filesystem::path("folder") / std::string(200, 'a') / "keys.vim";
+    bool asked = false;
+    h.set_ui([&] {
+        if (window.draw(preferences, {}, {}, keys).open_keys) asked = true;
+    });
+    h.step(2);
+    h.type("maps");
+    h.step();
+    const auto* open = h.find("Open", Role::Button);
+    REQUIRE(open != nullptr);
+    h.click_at(open->rect.centre());
+    h.step(2);
+    CHECK(asked);
 }
 
 TEST_CASE("Every command the program names it runs", "[program]") {
