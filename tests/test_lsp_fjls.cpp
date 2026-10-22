@@ -1,0 +1,136 @@
+#include "fjedit/lsp/client.hpp"
+
+#include "fjedit/core/document.hpp"
+#include "fjedit/core/language.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <span>
+#include <string>
+#include <thread>
+#include <vector>
+
+using namespace fjedit;
+namespace fs = std::filesystem;
+
+namespace {
+
+std::string variable(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr ? value : "";
+}
+
+std::string_view name_of(TokenKind kind) {
+    constexpr std::array<std::string_view, 12> NAMES = {"Text",    "Keyword", "Type",        "Function",
+                                                        "String",  "Number",  "Comment",     "Meta",
+                                                        "Punctuation", "Member", "Uniform", "Builtin"};
+    return NAMES.at(static_cast<std::size_t>(kind));
+}
+
+// What each byte of a line `size` long is coloured as by `tokens`; Text
+// where none is.
+std::vector<TokenKind> by_byte(std::size_t size, std::span<const Token> tokens) {
+    std::vector<TokenKind> kinds(size, TokenKind::Text);
+    for (const Token& token : tokens) {
+        for (std::size_t i = token.begin; i < std::min(token.end, size); ++i) kinds[i] = token.kind;
+    }
+    return kinds;
+}
+
+// Whether fjls's colour `told` may stand over the lexer's `guessed`: the
+// same, or what only fjls knows over plain text or the lexer's guess at a
+// name.
+bool agrees(TokenKind guessed, TokenKind told) {
+    if (told == guessed || guessed == TokenKind::Text) return true;
+    const bool known = told == TokenKind::Uniform || told == TokenKind::Builtin;
+    return known && (guessed == TokenKind::Type || guessed == TokenKind::Function);
+}
+
+std::string read_text(const fs::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+} // namespace
+
+// Fjell's own files are the samples, in the tree $FJELL_SOURCE_DIR names, and
+// the fjls asked is $FJLS's, else the PATH's; without them, as on CI, this is
+// skipped.
+TEST_CASE("fjls colours Fjell's own files as fjedit's lexers do, its uniforms and built-ins besides",
+          "[lsp][fjls]") {
+    const fs::path source = variable("FJELL_SOURCE_DIR");
+    if (source.empty()) SKIP("FJELL_SOURCE_DIR doesn't name Fjell's tree, whose files are the samples");
+    const std::string named = variable("FJLS");
+
+    std::vector<fs::path> samples{source / "assets" / "ui" / "test.fjss", source / "assets" / "ui" / "test.fjwidget"};
+    for (const fs::directory_entry& entry : fs::directory_iterator(source / "shaders")) {
+        if (entry.path().extension() == ".fjsl") samples.push_back(entry.path());
+    }
+    std::ranges::sort(samples);
+
+    // The documents outlive the client that follows them, whatever ends the test.
+    std::vector<std::unique_ptr<Document>> documents;
+    lsp::Client fjls({.command = {named.empty() ? std::string("fjls") : named},
+                      .root = source,
+                      .extensions = {"fjsl", "fjss", "fjwidget"},
+                      .language_id = [](const fs::path& path) { return path.extension().string().substr(1); },
+                      .arrived = {}});
+    if (fjls.status().state == ServiceState::Stopped) SKIP("fjls isn't there: " << fjls.status().note);
+
+    std::vector<std::string> differences;
+    bool uniforms = false;
+    bool builtins = false;
+    for (const fs::path& path : samples) {
+        const Document* document =
+            documents.emplace_back(std::make_unique<Document>(read_text(path), language_for(path.filename().string())))
+                .get();
+        fjls.open(path, *document);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (fjls.tokens(path) == nullptr && std::chrono::steady_clock::now() < until) {
+            fjls.update();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const SemanticTokens* told = fjls.tokens(path);
+        INFO(path.string());
+        REQUIRE(told != nullptr);
+
+        for (std::size_t line = 0; line < document->buffer().line_count(); ++line) {
+            const std::string_view text = document->buffer().line(line);
+            const std::vector<TokenKind> guessed = by_byte(text.size(), document->syntax().tokens(line));
+            const std::vector<TokenKind> said =
+                by_byte(text.size(), line < told->lines.size() ? std::span<const Token>(told->lines[line])
+                                                               : std::span<const Token>());
+            uniforms = uniforms || std::ranges::contains(said, TokenKind::Uniform);
+            builtins = builtins || std::ranges::contains(said, TokenKind::Builtin);
+            for (std::size_t at = 0; at < text.size();) {
+                std::size_t end = at + 1;
+                while (end < text.size() && guessed[end] == guessed[at] && said[end] == said[at]) ++end;
+                if (!agrees(guessed[at], said[at])) {
+                    differences.push_back(std::format("{}:{}:{} '{}': the lexer says {}, fjls {}",
+                                                      path.filename().string(), line + 1, at + 1,
+                                                      text.substr(at, end - at), name_of(guessed[at]),
+                                                      name_of(said[at])));
+                }
+                at = end;
+            }
+        }
+        fjls.close(path);
+    }
+
+    std::string shown;
+    for (std::size_t i = 0; i < std::min<std::size_t>(differences.size(), 40); ++i) shown += differences[i] + "\n";
+    INFO(differences.size() << " differences:\n" << shown);
+    CHECK(differences.empty());
+    // And what only fjls knows is told: the shaders read uniforms and built-ins.
+    CHECK(uniforms);
+    CHECK(builtins);
+}
