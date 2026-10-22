@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace fjedit {
 
@@ -51,6 +52,11 @@ struct Preferences {
 /// file is read and written as it is saved; a value out of range is held to
 /// it. `preferences` outlives the section.
 [[nodiscard]] ftk::ui::SettingsSection preferences_section(Preferences& preferences);
+
+/// The settings file's section that keeps `folders`: the folders opened
+/// lately, the latest first, as the folder browser offers them. A folder
+/// read twice is kept once. `folders` outlives the section.
+[[nodiscard]] ftk::ui::SettingsSection recent_folders_section(std::vector<std::string>& folders);
 
 /// How a language server is, for the Preferences window to show: its
 /// status, once it has been started, and for clangd the compile commands it

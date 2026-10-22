@@ -22,7 +22,9 @@
 #include <cstdlib>
 #include <format>
 #include <iterator>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace fjedit {
@@ -43,6 +45,13 @@ namespace theme = ftk::theme;
 //     Fjls=fjls
 constexpr const char* SECTION = "fjedit";
 constexpr std::string_view ENTRY = "Code";
+
+// The folders opened lately, in a section of their own, as
+//     [fjedit-folders][Recent]
+//     Folder=/home/user/game
+constexpr const char* FOLDERS_SECTION = "fjedit-folders";
+constexpr std::string_view FOLDERS_ENTRY = "Recent";
+constexpr std::string_view FOLDER_KEY = "Folder=";
 
 // The ways of numbering lines, as the settings file and the Preferences
 // window name them.
@@ -195,6 +204,22 @@ ui::SettingsSection preferences_section(Preferences& preferences) {
                       std::format("VimKeys={}", preferences.vim ? 1 : 0),
                       std::format("Clangd={}", preferences.clangd),
                       std::format("Fjls={}", preferences.fjls)}}};
+            }};
+}
+
+ui::SettingsSection recent_folders_section(std::vector<std::string>& folders) {
+    return {.name = FOLDERS_SECTION,
+            .read = [&folders](std::string_view entry, std::string_view line) {
+                if (entry != FOLDERS_ENTRY || !line.starts_with(FOLDER_KEY)) return;
+                std::string folder(line.substr(FOLDER_KEY.size()));
+                if (!folder.empty() && std::ranges::find(folders, folder) == folders.end()) {
+                    folders.push_back(std::move(folder));
+                }
+            },
+            .write = [&folders] {
+                ui::SettingsEntry recent{.name = std::string(FOLDERS_ENTRY), .lines = {}};
+                for (const std::string& folder : folders) recent.lines.push_back(std::string(FOLDER_KEY) + folder);
+                return std::vector<ui::SettingsEntry>{std::move(recent)};
             }};
 }
 

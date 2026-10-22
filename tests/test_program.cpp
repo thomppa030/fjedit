@@ -769,6 +769,23 @@ TEST_CASE("The preferences are kept in the settings file and read back held to t
     REQUIRE(read.text_size == TEXT_SIZE_MAX);
 }
 
+TEST_CASE("The folders opened lately are kept in the settings file, in order, each once", "[program][preferences]") {
+    std::vector<std::string> kept{"/home/user/game", "/home/user/tools"};
+    const ftk::ui::SettingsSection section = recent_folders_section(kept);
+    const std::vector<ftk::ui::SettingsEntry> written = section.write();
+    REQUIRE(written.size() == 1);
+
+    std::vector<std::string> read;
+    ftk::ui::SettingsSection reading = recent_folders_section(read);
+    for (const std::string& line : written.front().lines) reading.read(written.front().name, line);
+    REQUIRE(read == kept);
+    // The file read again adds nothing; another entry's lines are not its.
+    for (const std::string& line : written.front().lines) reading.read(written.front().name, line);
+    reading.read("Code", "Folder=/home/user/other");
+    reading.read(written.front().name, "Folder=");
+    REQUIRE(read == kept);
+}
+
 TEST_CASE("A C++ file opened is told to its language service, closed and saved too", "[program][language]") {
     Running run({{"coin.cpp", "int a;\n"}, {"notes.txt", "a\n"}}, {}, Running::Languages::Fake);
     run.press_row("notes.txt");
