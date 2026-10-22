@@ -116,7 +116,7 @@ TEST_CASE("A pattern ends at its delimiter, not one escaped or in a collection",
 
 TEST_CASE("Counts, registers, shifts and targets after a name read as Vim reads them", "[vim][ex]") {
     CHECK(read_count("")->has_value() == false);
-    CHECK(read_count(" 3") == std::optional<std::size_t>{3});
+    CHECK(read_count(" 3").value() == std::optional<std::size_t>{3});
     CHECK(read_count("x").error() == "E488: Trailing characters: x");
     CHECK(read_count("0").error() == "E939: Positive count required");
     const auto into_a = read_register_count("a 2");
@@ -128,8 +128,8 @@ TEST_CASE("Counts, registers, shifts and targets after a name read as Vim reads 
     REQUIRE(shift);
     CHECK(shift->levels == 3);
     CHECK(shift->count == std::optional<std::size_t>{4});
-    CHECK(read_target("$") == at(Kind::Last));
-    CHECK(read_target("0") == line(0));
+    CHECK(read_target("$").value() == at(Kind::Last));
+    CHECK(read_target("0").value() == line(0));
     CHECK(read_target("1,2").error() == "E14: Invalid address");
     CHECK(read_target("d").error() == "E14: Invalid address");
 }
