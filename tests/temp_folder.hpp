@@ -20,6 +20,9 @@ struct TempFolder {
         path = std::filesystem::temp_directory_path() /
                ("fjedit-test-" + std::to_string(random()) + std::to_string(random()));
         std::filesystem::create_directories(path);
+        // As the system names it: Windows can hand out the temporary folder by
+        // its short name (RUNNER~1), and a language server answers with the long.
+        path = std::filesystem::canonical(path);
     }
     ~TempFolder() {
         std::error_code ignored;
