@@ -53,6 +53,10 @@ struct ProgramOptions {
     /// keys.vim, one's own maps for Vim's keys (decision 7 of the Vim plan),
     /// read at the start and again when saved here; none reads none.
     std::filesystem::path keys{};
+    /// Asks where another folder is, for File > Open folder: a window's
+    /// folder browser, which hands the folder picked to open_folder(). None
+    /// leaves the entry unavailable.
+    std::function<void()> pick_folder{};
 };
 
 class Program {
@@ -105,6 +109,16 @@ public:
     /// files on its next draw and answers false; quitting() then says when
     /// it may go. Callable between frames.
     bool ask_to_quit();
+
+    /// Asked to open the folder `folder` in this one's place: as quitting,
+    /// it asks first what to do with the unsaved files, on its next draw.
+    /// folder_wanted() says the folder once nothing stands in the way.
+    /// Callable between frames.
+    void open_folder(std::filesystem::path folder);
+
+    /// The folder asked to open in this one's place, once the unsaved files
+    /// were answered: the window makes a program on it.
+    [[nodiscard]] const std::optional<std::filesystem::path>& folder_wanted() const { return folder_wanted_; }
 
     /// Quitting was asked for and answered: the window may close.
     [[nodiscard]] bool quitting() const { return quitting_; }
@@ -286,12 +300,16 @@ private:
     bool recover_looked_{false};
     std::vector<Recovery::Kept> recovering_;
     std::vector<ftk::ui::UnsavedItem> recover_items_;
-    // Quitting: asked for, the unsaved files asked about while asked, and
-    // the answer given.
+    // Quitting, or leaving for another folder: asked for, the unsaved files
+    // asked about while asked, the folder left for, and the answer given.
     bool quit_asked_{false};
     std::vector<std::filesystem::path> quit_paths_;
     std::vector<ftk::ui::UnsavedItem> quit_items_;
+    std::optional<std::filesystem::path> leaving_for_;
     bool quitting_{false};
+    std::optional<std::filesystem::path> folder_wanted_;
+    // What asks where another folder is.
+    std::function<void()> pick_folder_;
     // Where the program's dialogs hang from: under the tabs.
     glm::vec2 dialog_at_{0.0f};
     // The threads work is done on away from the frames: searches. Before

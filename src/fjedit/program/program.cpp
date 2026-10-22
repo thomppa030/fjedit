@@ -177,7 +177,7 @@ ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem:
 
 Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOptions options)
     : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1),
-      preferences_(preferences), wake_(std::move(options.wake)),
+      preferences_(preferences), pick_folder_(std::move(options.pick_folder)), wake_(std::move(options.wake)),
       services_(noting_paths(options.services ? std::move(*options.services)
                                               : std::vector<ServiceMaker>{clangd(), fjls()}),
                 workspace_.root()),
@@ -320,9 +320,10 @@ std::filesystem::path Program::keys_file() {
 
 std::span<const Program::Command> Program::commands() {
     static constexpr Command COMMANDS[] = {
-        {"file.save", "Save"},          {"file.save_all", "Save all"},      {"file.close", "Close"},
-        {"file.quit", "Quit"},          {"view.split", "Split"},            {"files.find", "Find in files"},
-        {"tab.next", "Next tab"},       {"tab.previous", "Previous tab"},   {"edit.preferences", "Preferences"},
+        {"file.open_folder", "Open folder"}, {"file.save", "Save"},    {"file.save_all", "Save all"},
+        {"file.close", "Close"},             {"file.quit", "Quit"},    {"view.split", "Split"},
+        {"files.find", "Find in files"},     {"tab.next", "Next tab"}, {"tab.previous", "Previous tab"},
+        {"edit.preferences", "Preferences"},
     };
     return COMMANDS;
 }
@@ -434,7 +435,9 @@ void Program::open(const std::filesystem::path& path) {
 bool Program::run(std::string_view command) {
     Group& group = groups_[active_];
     Tab* tab = front_tab();
-    if (command == "file.save") {
+    if (command == "file.open_folder") {
+        if (pick_folder_) pick_folder_();
+    } else if (command == "file.save") {
         if (tab != nullptr) save(tab->path);
     } else if (command == "file.save_all") {
         for (const std::filesystem::path& path : workspace_.files()) {
@@ -500,6 +503,7 @@ void Program::forget_kept(const std::filesystem::path& path) {
 
 bool Program::ask_to_quit() {
     if (quitting_) return true;
+    leaving_for_.reset();
     const std::vector<std::filesystem::path> files = workspace_.files();
     if (std::ranges::none_of(files, [&](const std::filesystem::path& path) { return workspace_.unsaved(path); })) {
         quitting_ = true;
@@ -507,6 +511,15 @@ bool Program::ask_to_quit() {
     }
     quit_asked_ = true;
     return false;
+}
+
+void Program::open_folder(std::filesystem::path folder) {
+    if (!first_unsaved()) {
+        folder_wanted_ = std::move(folder);
+        return;
+    }
+    leaving_for_ = std::move(folder);
+    quit_asked_ = true;
 }
 
 void Program::check_disk(double now) {
@@ -878,7 +891,9 @@ void Program::draw_menus() {
     const std::vector<ui::Menu> menus{
         {.label = "File",
          .entries = [&] {
-             return std::vector<ui::MenuEntry>{entry("Save", "file.save", open_file), entry("Save all", "file.save_all"),
+             return std::vector<ui::MenuEntry>{entry("Open folder", "file.open_folder", static_cast<bool>(pick_folder_)),
+                                               ui::MenuEntry::separator(),
+                                               entry("Save", "file.save", open_file), entry("Save all", "file.save_all"),
                                                ui::MenuEntry::separator(), entry("Close", "file.close", open_file),
                                                ui::MenuEntry::separator(), entry("Quit", "file.quit")};
          }},
@@ -1197,21 +1212,33 @@ void Program::ask_quit() {
     const std::size_t count = quit_items_.size();
     const std::string title = count == 1 ? std::string("1 file has unsaved changes")
                                          : std::format("{} files have unsaved changes", count);
-    const ui::UnsavedAnswer answer = ui::unsaved_list_dialog("##quit", title.c_str(), quit_items_);
+    // Another folder opened in this one's place closes this one.
+    const ui::UnsavedAnswer answer =
+        ui::unsaved_list_dialog("##quit", title.c_str(), quit_items_, leaving_for_ ? "close" : "quit");
     if (answer == ui::UnsavedAnswer::None) return;
     const std::vector<std::filesystem::path> paths = std::exchange(quit_paths_, {});
     const std::vector<ui::UnsavedItem> items = std::exchange(quit_items_, {});
-    if (answer == ui::UnsavedAnswer::Cancel) return;
+    if (answer == ui::UnsavedAnswer::Cancel) {
+        leaving_for_.reset();
+        return;
+    }
     for (std::size_t i = 0; i < paths.size(); ++i) {
         if (answer == ui::UnsavedAnswer::Save && items[i].save) {
             save(paths[i]);
             // A file that couldn't be saved keeps the program open.
-            if (workspace_.unsaved(paths[i])) return;
+            if (workspace_.unsaved(paths[i])) {
+                leaving_for_.reset();
+                return;
+            }
         } else {
             forget_kept(paths[i]);
         }
     }
-    quitting_ = true;
+    if (leaving_for_) {
+        folder_wanted_ = std::exchange(leaving_for_, std::nullopt);
+    } else {
+        quitting_ = true;
+    }
 }
 
 void Program::ask_recover() {

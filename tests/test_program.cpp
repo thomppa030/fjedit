@@ -45,6 +45,8 @@ struct Running {
     int languages_made{0};
     FakeLanguage* fjls{nullptr};
     int fjls_made{0};
+    // How many times the program asked where another folder is.
+    int folders_picked{0};
 
     // What answers for C++: nothing, so no test runs a server it didn't ask
     // for; a fake; a fake and a second fake for headers and Fjell's files, as
@@ -83,7 +85,8 @@ struct Running {
             ProgramOptions{.recovery = recovery_folder(),
                            .services = languages == Languages::Clangd ? std::nullopt : std::optional(std::move(services)),
                            .wake = {},
-                           .keys = keys_file()});
+                           .keys = keys_file(),
+                           .pick_folder = [this] { ++folders_picked; }});
         h.set_ui([this] { program->draw(); });
         h.step(3);
     }
@@ -368,6 +371,53 @@ TEST_CASE("Save and quit saves the files that stay ticked", "[program][quit]") {
     run.press(std::string(ftk::ui::icon::save) + "  Save 1 and quit");
     REQUIRE(run.program->quitting());
     REQUIRE(run.folder.read("coin.cpp") == "xint a;\n");
+}
+
+TEST_CASE("Open folder asks the window where the folder is", "[program][folder]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    REQUIRE(run.program->run("file.open_folder"));
+    CHECK(run.folders_picked == 1);
+    CHECK_FALSE(run.program->folder_wanted());
+}
+
+TEST_CASE("Another folder with nothing unsaved here is wanted at once", "[program][folder]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    const std::filesystem::path other = run.folder.path / "other";
+    run.program->open_folder(other);
+    REQUIRE(run.program->folder_wanted() == other);
+    CHECK_FALSE(run.program->quitting());
+}
+
+TEST_CASE("Another folder with unsaved files here asks first: Cancel stays, Don't save leaves for it",
+          "[program][folder]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    run.h.step(DISK_FRAMES);
+    const std::filesystem::path other = run.folder.path / "other";
+    run.program->open_folder(other);
+    CHECK_FALSE(run.program->folder_wanted());
+    run.press("Cancel");
+    CHECK_FALSE(run.program->folder_wanted());
+
+    run.program->open_folder(other);
+    run.press("Don't save");
+    REQUIRE(run.program->folder_wanted() == other);
+    CHECK_FALSE(run.program->quitting());
+    CHECK(run.folder.read("coin.cpp") == "int a;\n");
+    CHECK(run.kept().empty());
+}
+
+TEST_CASE("Leaving for another folder saves the files that stay ticked, the folder open closing", "[program][folder]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    const std::filesystem::path other = run.folder.path / "other";
+    run.program->open_folder(other);
+    run.press(std::string(ftk::ui::icon::save) + "  Save 1 and close");
+    REQUIRE(run.program->folder_wanted() == other);
+    CHECK(run.folder.read("coin.cpp") == "xint a;\n");
 }
 
 TEST_CASE("Splitting opens the file in front again beside it, one document between them", "[program][split]") {
