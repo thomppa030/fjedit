@@ -267,7 +267,7 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
             const FileHit& hit = hits_[selected_];
             const ui::AssetKind kind = file_kind(hit.path);
             ui::align_text_to_frame();
-            ui::text(kind.icon, theme::hue(kind.hue));
+            ui::text(kind.icon, ui::kind_colour(kind));
             ui::same_line();
             ui::align_text_to_frame();
             ui::text(hit.path.lexically_relative(workspace_->root()).generic_string(), theme::text_secondary());

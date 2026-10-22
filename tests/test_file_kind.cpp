@@ -43,6 +43,6 @@ TEST_CASE("Code shows by the language it is read in, any other file by the kit's
     CHECK(file_kind("shaders/blur.frag").hue == Hue::blue);
     CHECK(icon_of("pictures/coin.png") == ftk::ui::icon::texture);
     CHECK(icon_of("notes.txt") == ftk::ui::icon::file);
-    CHECK(file_kind("notes.txt").hue == Hue::grey);
+    CHECK_FALSE(file_kind("notes.txt").hue.has_value());
     CHECK(icon_of("Makefile") == ftk::ui::icon::file);
 }

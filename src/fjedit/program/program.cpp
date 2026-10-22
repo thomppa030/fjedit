@@ -168,7 +168,7 @@ ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem:
     std::string detail = folder;
     if (!more.empty()) detail += detail.empty() ? std::string(more) : "  " + std::string(more);
     return {.icon = kind.icon,
-            .icon_colour = theme::hue(kind.hue),
+            .icon_colour = ui::kind_colour(kind),
             .name = path.filename().string(),
             .detail = std::move(detail)};
 }
