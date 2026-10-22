@@ -12,7 +12,7 @@ concurrency:
 
 # Each job builds fjedit as someone cloning it gets it, with ftk fetched at the
 # commit CMakeLists.txt names, and runs the four test suites. The tests against
-# clangd and fjls skip: neither server is installed here.
+# a real clangd run where the runner has one, which is Windows; fjls's skip.
 jobs:
   linux:
     name: Linux (Ninja, GCC)
