@@ -146,6 +146,30 @@ TEST_CASE("The tree shows the folder: folders first, each by name, hidden ones l
     REQUIRE(run.rows().size() == 5);
 }
 
+TEST_CASE("A folder in the tree is drawn in Structure's grey, open or not, never in the accent", "[program]") {
+    Running run({{"scripts/coin.cpp", ""}});
+    // Whether the last frame drew anything in `colour` on the row named `name`.
+    const auto on_row = [&](std::string_view name, ftk::ui::Color colour) {
+        const auto* row = run.h.find(name, Role::TreeItem);
+        REQUIRE(row != nullptr);
+        const uint32_t packed = ftk::ui::core::pack_colour(colour);
+        for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+            for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+                if (p.colour == packed && row->rect.contains(p.min)) return true;
+            }
+        }
+        return false;
+    };
+    const ftk::ui::Color grey = ftk::theme::hue(ftk::theme::Hue::grey);
+    CHECK(on_row("scripts", grey));
+    CHECK_FALSE(on_row("scripts", ftk::theme::accent()));
+    run.press_row("scripts");
+    run.h.step();
+    REQUIRE(run.rows().size() == 3);
+    CHECK(on_row("scripts", grey));
+    CHECK_FALSE(on_row("scripts", ftk::theme::accent()));
+}
+
 TEST_CASE("A file pressed in the tree opens in a tab in front, with the keyboard", "[program]") {
     Running run({{"coin.cpp", "int a;\n"}, {"toon.fjsl", "void fragment() {}\n"}});
     run.press_row("coin.cpp");

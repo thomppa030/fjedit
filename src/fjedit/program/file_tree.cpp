@@ -1,6 +1,6 @@
 #include "fjedit/program/file_tree.hpp"
 
-#include "fjedit/program/icons.hpp"
+#include "fjedit/widget/file_kind.hpp"
 
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/tree.hpp"
@@ -59,22 +59,18 @@ void FileTree::draw_folder(const std::filesystem::path& folder, int depth, const
                            std::optional<std::filesystem::path>& pressed) {
     const std::string id = folder.generic_string();
     const std::string name = folder.filename().string();
-    const bool was_open = open_.contains(folder);
+    // A folder in Structure's grey, open or not, as Fjell shows one.
     const ui::TreeRowResult row = ui::tree_row({
         .id = id.c_str(),
         .name = name,
         .depth = depth,
         .has_children = true,
-        .icon = was_open ? icon::open_folder : ui::icon::folder,
-        .tint = ftk::theme::accent(),
+        .icon = ui::icon::folder,
+        .hue = ftk::theme::Hue::grey,
         .starts_open = depth == 0,
         .fold_on_click = true,
     });
-    if (!row.open) {
-        open_.erase(folder);
-        return;
-    }
-    open_.insert(folder);
+    if (!row.open) return;
     for (const FolderEntry& entry : entries(folder)) {
         if (entry.folder) {
             draw_folder(entry.path, depth + 1, selected, pressed);

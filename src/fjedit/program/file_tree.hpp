@@ -6,12 +6,9 @@
 // read when it is first opened and again when the tree is told to forget
 // what it read, so files made or removed elsewhere come and go.
 
-#include "fjedit/widget/file_kind.hpp"
-
 #include <filesystem>
 #include <map>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -48,8 +45,6 @@ private:
 
     std::filesystem::path root_;
     std::map<std::filesystem::path, std::vector<FolderEntry>> listed_;
-    // The folders open when last drawn, which show the open folder's icon.
-    std::set<std::filesystem::path> open_;
 };
 
 } // namespace fjedit

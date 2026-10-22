@@ -8,10 +8,6 @@
 
 namespace fjedit::icon {
 
-// The file tree: a folder open. The kinds of file are the widget's
-// (fjedit/widget/icons.hpp), which every view of a file shares.
-inline constexpr const char* open_folder = ICON_LC_FOLDER_OPEN;
-
 // The editor
 inline constexpr const char* split = ICON_LC_COLUMNS_2;
 
