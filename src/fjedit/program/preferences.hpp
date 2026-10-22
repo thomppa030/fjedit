@@ -5,7 +5,7 @@
 // edited in Edit > Preferences, a window shaped like Fjell's project
 // settings. There is no Save: a change applies at once.
 //
-//     ui::add_settings_section(preferences_section(program.preferences()));
+//     ui::add_settings_section(preferences_section(preferences));
 //     ui::keep_settings_file(path);
 
 #include "fjedit/core/language_service.hpp"

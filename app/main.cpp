@@ -43,18 +43,21 @@ int run(const std::filesystem::path& folder) {
     }
     // Fjell's files look as they do in Fjell.
     fjedit::register_file_kinds();
-    // A language server's answer comes on a thread of its own: it wakes the
+    // How this machine likes the code shown, whatever folder is open. A
+    // language server's answer comes on a thread of its own: it wakes the
     // window to draw it.
-    fjedit::Program program(folder, {.recovery = fjedit::Program::recovery_folder(folder),
-                                     .services = std::nullopt,
-                                     .wake = [] { ftk::Window::wake(); },
-                                     .keys = fjedit::Program::keys_file()});
+    fjedit::Preferences preferences;
+    fjedit::Program program(folder, preferences,
+                            {.recovery = fjedit::Program::recovery_folder(folder),
+                             .services = std::nullopt,
+                             .wake = [] { ftk::Window::wake(); },
+                             .keys = fjedit::Program::keys_file()});
 
     // fjedit's settings file, this machine's: where its windows were left
     // and its preferences. The window's UI is the current one from here on,
     // so the file read now places its windows.
     ftk::ui::core::set_current(&app.ui());
-    ftk::ui::add_settings_section(fjedit::preferences_section(program.preferences()));
+    ftk::ui::add_settings_section(fjedit::preferences_section(preferences));
     const std::filesystem::path settings_folder = ftk::platform::config_dir() / "fjedit";
     std::filesystem::create_directories(settings_folder, error);
     const std::string settings = (settings_folder / "settings.ini").string();

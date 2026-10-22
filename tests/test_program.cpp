@@ -34,6 +34,7 @@ constexpr ftk::ui::Modifiers CTRL{.ctrl = true};
 // The program on a folder of a test's own, in the kit's harness.
 struct Running {
     TempFolder folder;
+    Preferences preferences;
     std::unique_ptr<Program> program;
     ftk::test::KitHarness h{{1280.0f, 800.0f}};
 
@@ -78,7 +79,7 @@ struct Running {
                                 }});
         }
         program = std::make_unique<Program>(
-            folder.path,
+            folder.path, preferences,
             ProgramOptions{.recovery = recovery_folder(),
                            .services = languages == Languages::Clangd ? std::nullopt : std::optional(std::move(services)),
                            .wake = {},

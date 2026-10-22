@@ -175,9 +175,9 @@ ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem:
 
 } // namespace
 
-Program::Program(std::filesystem::path root, ProgramOptions options)
+Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOptions options)
     : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1),
-      wake_(std::move(options.wake)),
+      preferences_(preferences), wake_(std::move(options.wake)),
       services_(noting_paths(options.services ? std::move(*options.services)
                                               : std::vector<ServiceMaker>{clangd(), fjls()}),
                 workspace_.root()),

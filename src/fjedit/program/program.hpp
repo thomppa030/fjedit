@@ -5,7 +5,7 @@
 // top and the status bar along the bottom. It draws with ftk's kit inside
 // whatever runs its frames: a window of its own, or a test's harness.
 //
-//     fjedit::Program program(folder);
+//     fjedit::Program program(folder, preferences);
 //     app.run({.ui = [&](ftk::ui::core::Context&, glm::vec2) { program.draw(); }});
 
 #include "fjedit/core/jump_list.hpp"
@@ -57,8 +57,9 @@ struct ProgramOptions {
 
 class Program {
 public:
-    /// The folder `root` open.
-    explicit Program(std::filesystem::path root, ProgramOptions options = {});
+    /// The folder `root` open, the code shown as `preferences` say. They
+    /// outlive the program, as they outlive each folder opened in a window.
+    Program(std::filesystem::path root, Preferences& preferences, ProgramOptions options = {});
 
     /// Where a program on the folder `root` keeps its unsaved work on this
     /// machine: a folder of its own under the user's state folder.
@@ -265,8 +266,9 @@ private:
     // and whether the question is open.
     std::optional<std::filesystem::path> closing_;
     bool asking_{false};
-    // How the code is shown, and the window they are edited in.
-    Preferences preferences_;
+    // How the code is shown, which outlive the program, and the window
+    // they are edited in.
+    Preferences& preferences_;
     PreferencesWindow preferences_window_;
     // Vim's registers and what its :set changed, which every view with Vim
     // on shares.
