@@ -1030,6 +1030,48 @@ TEST_CASE("Resting on a word asks what it is, and the answer hangs under it", "[
     REQUIRE(cards(e.h).empty());
 }
 
+TEST_CASE("A hover card taller than the view stays inside it, the wheel over it scrolling it and not the code",
+          "[code_view][hover]") {
+    FakeLanguage language;
+    Editor e(FUNCTION);
+    e.view.service = &language;
+    e.view.path = "x.cpp";
+    e.h.move_to(x_called(e.h));
+    wait(e, 0.6);
+    REQUIRE(language.hovers.size() == 1);
+    std::string markdown;
+    for (int i = 0; i < 80; ++i) markdown += "Line " + std::to_string(i) + " of a long answer.\n\n";
+    FakeLanguage::answer(language.hovers.front(), std::optional<Hover>(Hover{.markdown = markdown, .span = {}}));
+    e.h.step(3);
+    std::vector<ftk::ui::core::Rect> card = cards(e.h);
+    REQUIRE(card.size() == 1);
+    CHECK(card.front().max.y <= 600.0f);
+
+    // Its scrollbar's thumb down its right edge, in the raised colour.
+    const auto thumb = [&](const ftk::ui::core::Rect& on) {
+        std::vector<ftk::ui::core::Rect> found = drawn_in_code(e.h, ftk::theme::surface_raised());
+        std::erase_if(found, [&](const ftk::ui::core::Rect& r) {
+            return r.max.x - r.min.x > 16.0f || r.centre().x < on.max.x - 16.0f || !on.contains(r.centre());
+        });
+        REQUIRE(found.size() == 1);
+        return found.front();
+    };
+    const float thumb_top = thumb(card.front()).min.y;
+
+    // The wheel over it moves it on, and leaves the code where it was.
+    const glm::vec2 scrolled = e.view.scroll;
+    e.h.wheel(card.front().centre(), -3.0f);
+    e.h.step(30);
+    card = cards(e.h);
+    REQUIRE(card.size() == 1);
+    CHECK(e.view.scroll == scrolled);
+    CHECK(thumb(card.front()).min.y > thumb_top);
+    // Onto its foot it stays.
+    e.h.move_to({card.front().centre().x, card.front().max.y - 4.0f});
+    e.h.step(2);
+    CHECK(cards(e.h).size() == 1);
+}
+
 TEST_CASE("With Vim on, K shows what is at the caret until the caret moves", "[code_view][vim][hover]") {
     FakeLanguage language;
     Editor e(FUNCTION);

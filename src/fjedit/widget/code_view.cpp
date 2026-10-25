@@ -1534,10 +1534,10 @@ void draw_hover_card(core::Context& ui, const Buffer& buffer, EditorView& view, 
                                          .anchor_max = anchor_max,
                                          .width = inner + 2.0f * pad.x,
                                          .padding = pad});
-    const glm::vec2 at = card.inner_min();
-    const float height = draw_markdown(ui, hovering.card, at, card.inner_width(), look);
+    const float height = draw_markdown(ui, hovering.card, card.inner_min(), card.inner_width(), look);
     ftk::ui::reserve({card.inner_width(), height});
-    hovering.card_rect = core::Rect{.min = at - pad, .max = at + glm::vec2{card.inner_width(), height} + pad};
+    // As it shows: no taller than the view lets it, what it holds scrolling.
+    hovering.card_rect = core::Rect{.min = card.min(), .max = card.max(height)};
 }
 
 } // namespace
