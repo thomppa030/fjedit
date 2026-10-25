@@ -134,3 +134,66 @@ TEST_CASE("fjls colours Fjell's own files as fjedit's lexers do, its uniforms an
     CHECK(uniforms);
     CHECK(builtins);
 }
+
+// F12 in a shader through fjls, FJSL's and plain GLSL's alike: a call to a
+// library function goes to where its include writes it.
+TEST_CASE("fjls takes a shader's call to a library function to where its include writes it", "[lsp][fjls]") {
+    const fs::path source = variable("FJELL_SOURCE_DIR");
+    if (source.empty()) SKIP("FJELL_SOURCE_DIR doesn't name Fjell's tree, whose files are the samples");
+    const std::string named = variable("FJLS");
+
+    std::vector<std::unique_ptr<Document>> documents;
+    lsp::Client fjls({.command = {named.empty() ? std::string("fjls") : named},
+                      .root = source,
+                      .extensions = {"fjsl", "frag"},
+                      .language_id =
+                          [](const fs::path& path) {
+                              return path.extension() == ".fjsl" ? std::string("fjsl") : std::string("glsl");
+                          },
+                      .arrived = {}});
+    if (fjls.status().state == ServiceState::Stopped) SKIP("fjls isn't there: " << fjls.status().note);
+
+    struct Call {
+        std::string_view shader;
+        std::string_view function;
+        std::string_view include;
+    };
+    for (const Call& call : {Call{"grass_wind.fjsl", "grass_camera_tilt", "fjell_wind.glsl"},
+                             Call{"placement_mask.frag", "overlay_surface", "fjell_overlay_surface.glsl"}}) {
+        INFO(call.shader);
+        const fs::path path = source / "shaders" / call.shader;
+        const Document* document = documents
+                                       .emplace_back(std::make_unique<Document>(read_text(path),
+                                                                                language_for(path.filename().string())))
+                                       .get();
+        fjls.open(path, *document);
+        // Its first call in code: the name, then its parenthesis.
+        Position at{};
+        const std::string called = std::string(call.function) + "(";
+        for (std::size_t line = 0; line < document->buffer().line_count(); ++line) {
+            const std::string_view text = document->buffer().line(line);
+            const std::size_t found = text.find(called);
+            if (found != std::string_view::npos && text.find("//") > found) {
+                at = {.line = line, .byte = found + 1};
+                break;
+            }
+        }
+        REQUIRE(at.line > 0);
+
+        const Asked<std::vector<Location>> asked = fjls.definition(path, at);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (!asked->answered && std::chrono::steady_clock::now() < until) {
+            fjls.update();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        REQUIRE(asked->answered);
+        REQUIRE(asked->answer.size() == 1);
+        const Location& written = asked->answer.front();
+        CHECK(written.path.filename() == call.include);
+        // The name as its include writes it, where the answer says.
+        const Document include(read_text(written.path), language_for(written.path.filename().string()));
+        REQUIRE(written.span.from.line < include.buffer().line_count());
+        CHECK(include.buffer().line(written.span.from.line).substr(written.span.from.byte).starts_with(call.function));
+        fjls.close(path);
+    }
+}
