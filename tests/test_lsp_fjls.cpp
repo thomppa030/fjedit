@@ -47,11 +47,13 @@ std::vector<TokenKind> by_byte(std::size_t size, std::span<const Token> tokens) 
 }
 
 // Whether fjls's colour `told` may stand over the lexer's `guessed`: the
-// same, or what only fjls knows over plain text or the lexer's guess at a
-// name.
+// same, or what only fjls knows over plain text or over what the lexer
+// guesses from a name's shape, a type or a function: a uniform, a built-in, a
+// macro's use, a struct made like a call, a keyword written as one.
 bool agrees(TokenKind guessed, TokenKind told) {
     if (told == guessed || guessed == TokenKind::Text) return true;
-    const bool known = told == TokenKind::Uniform || told == TokenKind::Builtin;
+    const bool known = told == TokenKind::Uniform || told == TokenKind::Builtin || told == TokenKind::Meta ||
+                       told == TokenKind::Type || told == TokenKind::Keyword;
     return known && (guessed == TokenKind::Type || guessed == TokenKind::Function);
 }
 
@@ -71,9 +73,13 @@ TEST_CASE("fjls colours Fjell's own files as fjedit's lexers do, its uniforms an
     if (source.empty()) SKIP("FJELL_SOURCE_DIR doesn't name Fjell's tree, whose files are the samples");
     const std::string named = variable("FJLS");
 
+    // Its own GLSL too: the stages and the includes they take in.
+    constexpr std::array<std::string_view, 7> SHADERS = {".fjsl", ".vert", ".frag", ".comp", ".mesh", ".task", ".glsl"};
     std::vector<fs::path> samples{source / "assets" / "ui" / "test.fjss", source / "assets" / "ui" / "test.fjwidget"};
-    for (const fs::directory_entry& entry : fs::directory_iterator(source / "shaders")) {
-        if (entry.path().extension() == ".fjsl") samples.push_back(entry.path());
+    for (const fs::path& folder : {source / "shaders", source / "shaders" / "include"}) {
+        for (const fs::directory_entry& entry : fs::directory_iterator(folder)) {
+            if (std::ranges::contains(SHADERS, entry.path().extension().string())) samples.push_back(entry.path());
+        }
     }
     std::ranges::sort(samples);
 
@@ -81,8 +87,14 @@ TEST_CASE("fjls colours Fjell's own files as fjedit's lexers do, its uniforms an
     std::vector<std::unique_ptr<Document>> documents;
     lsp::Client fjls({.command = {named.empty() ? std::string("fjls") : named},
                       .root = source,
-                      .extensions = {"fjsl", "fjss", "fjwidget"},
-                      .language_id = [](const fs::path& path) { return path.extension().string().substr(1); },
+                      .extensions = {"fjsl", "fjss", "fjwidget", "vert", "frag", "comp", "mesh", "task", "glsl"},
+                      .language_id =
+                          [](const fs::path& path) {
+                              const std::string extension = path.extension().string().substr(1);
+                              return extension == "fjsl" || extension == "fjss" || extension == "fjwidget"
+                                         ? extension
+                                         : std::string("glsl");
+                          },
                       .arrived = {}});
     if (fjls.status().state == ServiceState::Stopped) SKIP("fjls isn't there: " << fjls.status().note);
 
