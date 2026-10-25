@@ -1710,6 +1710,24 @@ TEST_CASE("With Vim on, a drag selects in visual mode", "[code_view][vim]") {
     REQUIRE(v.e.view.vim->mode() == vim::Mode::Normal);
 }
 
+TEST_CASE("With Vim on, the Edit menu's Paste puts as \"+P does, dropping keys Vim waited on", "[code_view][vim]") {
+    WithVim v("one\ntwo");
+    v.e.h.ui().set_clipboard("new\n");
+    // The caret on the e of one.
+    v.e.h.type("d");
+    v.e.view.queued.emplace_back("edit.paste");
+    v.e.h.step();
+    // A line above, not the text at the caret.
+    CHECK(v.e.text() == "new\none\ntwo");
+    CHECK(v.e.view.vim->mode() == vim::Mode::Normal);
+    // The d no longer waits for a motion.
+    v.e.h.type("w");
+    CHECK(v.e.text() == "new\none\ntwo");
+    v.e.view.queued.emplace_back("edit.undo");
+    v.e.h.step();
+    CHECK(v.e.text() == "one\ntwo");
+}
+
 TEST_CASE("With Vim on, Ctrl-J and Ctrl-K step the completion list, as Ctrl-N and Ctrl-P do",
           "[code_view][vim][completion]") {
     Completing c;

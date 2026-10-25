@@ -1607,6 +1607,25 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         if (completed && view.vim) view.vim->completed(completed->replaced, completed->text);
     };
     std::optional<Rename> rename;
+    // What Vim asks of the program, in order.
+    std::vector<vim::Asked> vim_asked;
+    // The rows wholly in sight, which Vim's H, Ctrl-D and zz move by and
+    // may scroll.
+    const auto first_row = static_cast<std::size_t>(std::ceil(view.scroll.y / frame.line - 0.01f));
+    const auto past_last = static_cast<std::size_t>((view.scroll.y + frame.rect.height()) / frame.line + 0.01f);
+    InView in_view{.top = first_row,
+                   .rows = past_last > first_row ? past_last - first_row : 1,
+                   .around = rows_kept(view.around_caret, frame)};
+    // Vim's view of the document, for it to act through.
+    const auto vim_context = [&] {
+        view.folds.catch_up(document);
+        return CommandContext{.document = document, .selections = view.selections, .layout = layout,
+                              .clipboard = &clipboard, .folds = &view.folds, .text = {}, .in_view = &in_view};
+    };
+    const auto to_vim = [&](const Chord& key) {
+        CommandContext context = vim_context();
+        for (vim::Asked& handed : view.vim->take(key, context)) vim_asked.push_back(std::move(handed));
+    };
     auto run = [&](std::string_view command, std::string_view text = {}) {
         if (command == "completion.accept") {
             accept(std::nullopt);
@@ -1620,6 +1639,16 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             run_view_command(command, document, view);
             return;
         }
+        // With Vim on, a command Vim has keys for runs as those keys, the
+        // ones the menus show: Paste in normal mode puts as "+P does.
+        if (view.vim) {
+            if (const std::optional<std::vector<Chord>> keys = vim::keys_for(command, view.vim->mode())) {
+                CommandContext context = vim_context();
+                view.vim->cancel(context);
+                for (const Chord& key : *keys) to_vim(key);
+                return;
+            }
+        }
         view.folds.catch_up(document);
         CommandContext context{.document = document, .selections = view.selections, .layout = layout,
                                .clipboard = &clipboard, .folds = &view.folds, .text = text};
@@ -1628,8 +1657,6 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     // What a menu or a palette asked for, first.
     for (const std::string& command : std::exchange(view.queued, {})) run(command);
 
-    // What Vim asks of the program, in order.
-    std::vector<vim::Asked> vim_asked;
     // Answers that came: a format made as one step if the text is as it was
     // asked about; a definition in this file selected, a jump with Vim on,
     // one in another handed out.
@@ -1670,19 +1697,6 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             }
         }
     };
-    // The rows wholly in sight, which Vim's H, Ctrl-D and zz move by and
-    // may scroll.
-    const auto first_row = static_cast<std::size_t>(std::ceil(view.scroll.y / frame.line - 0.01f));
-    const auto past_last = static_cast<std::size_t>((view.scroll.y + frame.rect.height()) / frame.line + 0.01f);
-    InView in_view{.top = first_row,
-                   .rows = past_last > first_row ? past_last - first_row : 1,
-                   .around = rows_kept(view.around_caret, frame)};
-    // Vim's view of the document, for it to act through.
-    const auto vim_context = [&] {
-        view.folds.catch_up(document);
-        return CommandContext{.document = document, .selections = view.selections, .layout = layout,
-                              .clipboard = &clipboard, .folds = &view.folds, .text = {}, .in_view = &in_view};
-    };
 
     // A rename asked for begins once the service says where the name
     // stands; Enter makes it, Esc gives it up, the completion list's own
@@ -1704,8 +1718,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             take_vim_keys(ui, keymap, view, vim_context, run, [&](const Chord& key) {
                 if (ends_rename(key)) return;
                 const bool inserting = view.vim->mode() == vim::Mode::Insert;
-                CommandContext context = vim_context();
-                for (vim::Asked& handed : view.vim->take(key, context)) vim_asked.push_back(std::move(handed));
+                to_vim(key);
                 // The completion list is insert mode's, and goes with it.
                 if (view.vim->mode() != vim::Mode::Insert) {
                     view.completing = {};
