@@ -5,8 +5,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace fjedit;
@@ -17,6 +19,17 @@ TEST_CASE("A file's language is found by its extension, case aside", "[syntax]")
     REQUIRE(language_for("notes.txt").name == "Plain text");
     REQUIRE(language_for("Makefile").name == "Plain text");
     REQUIRE(language_for("dir.v2/README").name == "Plain text");
+}
+
+TEST_CASE("A language's extensions are the files read in it", "[syntax]") {
+    const std::vector<std::string_view> glsl = extensions_of(language_for("sky.frag"));
+    for (const std::string_view extension : {"glsl", "vert", "frag", "comp", "mesh", "task", "rgen", "rint", "rcall"}) {
+        CHECK(std::ranges::contains(glsl, extension));
+    }
+    for (const std::string_view extension : glsl) {
+        CHECK(&language_for("x." + std::string(extension)) == &language_for("x.glsl"));
+    }
+    CHECK(extensions_of(plain_text()).empty());
 }
 
 TEST_CASE("A syntax holds each line's tokens and end state", "[syntax]") {

@@ -56,8 +56,9 @@ struct Known {
 constexpr Known BY_EXTENSION[] = {
     {"c", cpp},   {"cc", cpp},  {"cpp", cpp}, {"cxx", cpp}, {"h", cpp},
     {"hh", cpp},  {"hpp", cpp}, {"hxx", cpp}, {"inl", cpp}, {"ipp", cpp},
-    {"comp", glsl}, {"frag", glsl}, {"geom", glsl}, {"glsl", glsl}, {"mesh", glsl}, {"rchit", glsl},
-    {"rgen", glsl}, {"rmiss", glsl}, {"task", glsl}, {"tesc", glsl}, {"tese", glsl}, {"vert", glsl},
+    {"comp", glsl}, {"frag", glsl}, {"geom", glsl}, {"glsl", glsl}, {"mesh", glsl}, {"rahit", glsl},
+    {"rcall", glsl}, {"rchit", glsl}, {"rgen", glsl}, {"rint", glsl}, {"rmiss", glsl}, {"task", glsl},
+    {"tesc", glsl}, {"tese", glsl}, {"vert", glsl},
     {"fjsl", fjsl}, {"fjss", fjss}, {"fjui", widget}, {"fjwidget", widget},
     {"fjanimset", json}, {"fjday", json}, {"fjell", json}, {"fjfont", json}, {"fjgraph", json}, {"fjinput", json},
     {"fjlut", json}, {"fjmat", json}, {"fjp", json}, {"fjsurface", json}, {"fjvfx", json}, {"fjwater", json},
@@ -91,6 +92,14 @@ const Language& language_for(std::string_view file_name) {
         if (known.extension == extension) return known.language();
     }
     return plain_text();
+}
+
+std::vector<std::string_view> extensions_of(const Language& language) {
+    std::vector<std::string_view> out;
+    for (const Known& known : BY_EXTENSION) {
+        if (&known.language() == &language) out.push_back(known.extension);
+    }
+    return out;
 }
 
 } // namespace fjedit

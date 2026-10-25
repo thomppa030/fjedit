@@ -207,8 +207,14 @@ ServiceMaker Program::clangd() {
 }
 
 ServiceMaker Program::fjls() {
-    // A game's script headers, beside clangd, and Fjell's own files alone.
-    static const std::vector<std::string> EXTENSIONS{"hpp", "fjss", "fjwidget", "fjfont", "fjsl"};
+    // A game's script headers, beside clangd; Fjell's own files and GLSL
+    // alone.
+    static const Language& GLSL = language_for("shader.glsl");
+    static const std::vector<std::string> EXTENSIONS = [] {
+        std::vector<std::string> extensions{"hpp", "fjss", "fjwidget", "fjfont", "fjsl"};
+        for (const std::string_view extension : extensions_of(GLSL)) extensions.emplace_back(extension);
+        return extensions;
+    }();
     return {.name = "fjls",
             .extensions = EXTENSIONS,
             .make = [this](const std::filesystem::path& root) -> std::unique_ptr<LanguageService> {
@@ -218,7 +224,10 @@ ServiceMaker Program::fjls() {
                     .extensions = EXTENSIONS,
                     .language_id = [](const std::filesystem::path& path) {
                         const std::string extension = path.extension().string();
-                        return extension == ".hpp" ? std::string("cpp") : extension.substr(1);
+                        if (extension == ".hpp") return std::string("cpp");
+                        // A stage's file and an include alike.
+                        if (&language_for(path.filename().string()) == &GLSL) return std::string("glsl");
+                        return extension.substr(1);
                     },
                     .arrived = wake_,
                     .if_missing = "set its path in Preferences",

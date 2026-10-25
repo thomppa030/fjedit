@@ -979,6 +979,18 @@ TEST_CASE("The status bar shows how the language service of the file in front is
     REQUIRE_FALSE(on_status_bar(run, ftk::theme::success()));
 }
 
+TEST_CASE("A GLSL file is fjls's, started with the first one opened", "[program][language]") {
+    Running run({{"shaders/sky.frag", "#version 460\nvoid main() {}\n"}}, {}, Running::Languages::Clangd);
+    // A program that isn't there: its dot says so, and nothing runs.
+    run.program->preferences().fjls = "fjedit-no-such-fjls";
+    run.press_row("shaders");
+    run.h.step();
+    REQUIRE_FALSE(on_status_bar(run, ftk::theme::error()));
+    run.press_row("sky.frag");
+    run.h.step(2);
+    REQUIRE(on_status_bar(run, ftk::theme::error()));
+}
+
 TEST_CASE("A new path for clangd in the preferences starts it again, the views joined to it", "[program][language]") {
     Running run({{"coin.cpp", "int a;\n"}}, {}, Running::Languages::Fake);
     run.press_row("coin.cpp");

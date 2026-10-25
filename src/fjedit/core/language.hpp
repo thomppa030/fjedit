@@ -6,6 +6,7 @@
 #include "fjedit/core/syntax.hpp"
 
 #include <string_view>
+#include <vector>
 
 namespace fjedit {
 
@@ -29,6 +30,10 @@ struct Language {
 /// The language `file_name` is written in, by its extension (case aside);
 /// plain text for one fjedit doesn't know.
 [[nodiscard]] const Language& language_for(std::string_view file_name);
+
+/// The extensions of the files fjedit reads as `language`, lower case and
+/// without their dot ("frag", "glsl"); none for plain text.
+[[nodiscard]] std::vector<std::string_view> extensions_of(const Language& language);
 
 /// Text with no colours.
 [[nodiscard]] const Language& plain_text();
