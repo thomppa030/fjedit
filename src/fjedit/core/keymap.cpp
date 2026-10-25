@@ -200,6 +200,10 @@ Keymap Keymap::standard() {
         {chord(Key::X, CTRL), "edit.cut"},
         {chord(Key::C, CTRL), "edit.copy"},
         {chord(Key::V, CTRL), "edit.paste"},
+        // A terminal's copy and paste, after Ctrl C and V, which the menus
+        // show.
+        {chord(Key::C, CTRL, SHIFT), "edit.copy"},
+        {chord(Key::V, CTRL, SHIFT), "edit.paste"},
         {chord(Key::Z, CTRL), "edit.undo"},
         {chord(Key::Y, CTRL), "edit.redo"},
         {chord(Key::Z, CTRL, SHIFT), "edit.redo"},
@@ -262,6 +266,14 @@ Keymap Keymap::standard() {
     for (const Default& binding : with_vim) {
         keymap.bind(VIM_NORMAL, {binding.keys}, std::string(binding.command));
         keymap.bind(VIM_INSERT, {binding.keys}, std::string(binding.command));
+    }
+    // A terminal's copy and paste, which Vim gives no meaning either: they
+    // run as Vim's keys for Copy and Paste in the mode ("+yy, "+P, Ctrl-R +).
+    for (const std::string_view mode : {VIM_NORMAL, VIM_VISUAL}) {
+        keymap.bind(mode, {chord(Key::C, CTRL, SHIFT)}, "edit.copy");
+    }
+    for (const std::string_view mode : {VIM_NORMAL, VIM_VISUAL, VIM_INSERT}) {
+        keymap.bind(mode, {chord(Key::V, CTRL, SHIFT)}, "edit.paste");
     }
     // Insert mode's Ctrl-N and Ctrl-P, Vim's completion keys: they open the
     // list, then step down and up it.

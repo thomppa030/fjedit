@@ -654,7 +654,10 @@ TEST_CASE("The menus show the keys of the mode the view in front is in", "[progr
     run.h.step();
     CHECK(run.program->shortcut("edit.undo") == "u");
     CHECK(run.program->shortcut("edit.redo") == "Ctrl R");
-    CHECK(run.program->shortcut("edit.copy") == "\"+yy");
+    CHECK(run.program->shortcut("edit.cut") == "\"+dd");
+    // A terminal's copy and paste, which Vim keeps.
+    CHECK(run.program->shortcut("edit.copy") == "Ctrl Shift C");
+    CHECK(run.program->shortcut("edit.paste") == "Ctrl Shift V");
     // The program's keys and the bindings Vim keeps, and none for what Vim
     // has no keys for yet.
     CHECK(run.program->shortcut("file.save") == "Ctrl S");
@@ -665,14 +668,16 @@ TEST_CASE("The menus show the keys of the mode the view in front is in", "[progr
     CHECK(run.program->shortcut("find.open").empty());
     run.h.type("v");
     run.h.step();
-    CHECK(run.program->shortcut("edit.copy") == "\"+y");
+    CHECK(run.program->shortcut("edit.cut") == "\"+d");
+    CHECK(run.program->shortcut("edit.copy") == "Ctrl Shift C");
     CHECK(run.program->shortcut("edit.undo").empty());
     CHECK(run.program->shortcut("file.close") == "Ctrl W q");
     run.h.press(Key::Escape);
     run.h.type("i");
     run.h.step();
     CHECK(run.program->shortcut("edit.undo") == "Ctrl O u");
-    CHECK(run.program->shortcut("edit.paste") == "Ctrl R +");
+    CHECK(run.program->shortcut("edit.paste") == "Ctrl Shift V");
+    CHECK(run.program->shortcut("edit.copy").empty());
     CHECK(run.program->shortcut("file.close") == "Ctrl O Ctrl W q");
 }
 

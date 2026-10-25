@@ -96,7 +96,7 @@ public:
 
     /// The keys a menu shows for `command` ("Ctrl S"): the program's, else
     /// those of the view's keys; with Vim on, those of the mode the view in
-    /// front is in first ("u", "\"+yy", one's own binds), then the
+    /// front is in first ("u", "\"+dd", one's own binds), then the
     /// program's. Empty when no keys run it.
     [[nodiscard]] std::string shortcut(std::string_view command) const;
 

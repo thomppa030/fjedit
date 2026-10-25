@@ -1710,6 +1710,29 @@ TEST_CASE("With Vim on, a drag selects in visual mode", "[code_view][vim]") {
     REQUIRE(v.e.view.vim->mode() == vim::Mode::Normal);
 }
 
+TEST_CASE("With Vim on, Ctrl Shift C and V copy and paste as Vim's keys through the + register", "[code_view][vim]") {
+    constexpr Modifiers CTRL_SHIFT{.ctrl = true, .shift = true};
+    WithVim v("one\ntwo");
+    // Visual mode's selection, as "+y copies it, visual mode ending.
+    v.e.h.type("0vl");
+    v.e.h.press(Key::C, CTRL_SHIFT);
+    CHECK(v.e.h.ui().clipboard() == "on");
+    CHECK(v.e.view.vim->mode() == vim::Mode::Normal);
+    // In normal mode the line, put back above as a line, as "+yy and "+P.
+    v.e.h.type("j");
+    v.e.h.press(Key::C, CTRL_SHIFT);
+    CHECK(v.e.h.ui().clipboard() == "two\n");
+    v.e.h.type("l");
+    v.e.h.press(Key::V, CTRL_SHIFT);
+    CHECK(v.e.text() == "one\ntwo\ntwo");
+    // In insert mode what the clipboard holds is typed, as Ctrl-R + types it.
+    v.e.h.ui().set_clipboard("x");
+    v.e.h.type("i");
+    v.e.h.press(Key::V, CTRL_SHIFT);
+    v.e.h.press(Key::Escape);
+    CHECK(v.e.text() == "one\nxtwo\ntwo");
+}
+
 TEST_CASE("With Vim on, the Edit menu's Paste puts as \"+P does, dropping keys Vim waited on", "[code_view][vim]") {
     WithVim v("one\ntwo");
     v.e.h.ui().set_clipboard("new\n");

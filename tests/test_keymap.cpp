@@ -121,6 +121,23 @@ TEST_CASE("Vim's Ctrl-N and Ctrl-P open the completion list in insert mode, then
     CHECK_FALSE(keys.find(Keymap::VIM_NORMAL, std::vector<Chord>{ctrl(Key::N)}).command);
 }
 
+TEST_CASE("Ctrl Shift C and V copy and paste as a terminal's, with Vim on and off", "[keymap]") {
+    const Keymap keys = Keymap::standard();
+    const std::vector<Chord> copy{{.key = Key::C, .modifiers = {.ctrl = true, .shift = true}}};
+    const std::vector<Chord> paste{{.key = Key::V, .modifiers = {.ctrl = true, .shift = true}}};
+    for (const std::string_view mode : {Keymap::EDITING, Keymap::VIM_NORMAL, Keymap::VIM_VISUAL}) {
+        CHECK(keys.find(mode, copy).command == "edit.copy");
+    }
+    for (const std::string_view mode : {Keymap::EDITING, Keymap::VIM_NORMAL, Keymap::VIM_VISUAL, Keymap::VIM_INSERT}) {
+        CHECK(keys.find(mode, paste).command == "edit.paste");
+    }
+    // Insert mode has nothing selected to copy.
+    CHECK_FALSE(keys.find(Keymap::VIM_INSERT, copy).command);
+    // Without Vim the menus go on showing Ctrl C and V.
+    CHECK(keys.keys_for(Keymap::EDITING, "edit.copy") == std::vector<Chord>{ctrl(Key::C)});
+    CHECK(keys.keys_for(Keymap::EDITING, "edit.paste") == std::vector<Chord>{ctrl(Key::V)});
+}
+
 TEST_CASE("Vim's normal mode has Neovim's keys for what a language server answers", "[keymap]") {
     const Keymap keys = Keymap::standard();
     const auto typed = [](std::string_view text) {
