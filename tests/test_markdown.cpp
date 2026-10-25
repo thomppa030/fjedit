@@ -35,6 +35,31 @@ TEST_CASE("A paragraph's lines join, and lists, strong text, links and escapes r
     REQUIRE(blocks[3] == MarkdownBlock{.kind = Kind::Paragraph, .runs = {{.text = "*not strong*"}}});
 }
 
+TEST_CASE("Emphasis reads as Markdown has it, and names with underscores stay names", "[markdown]") {
+    const auto blocks = read_markdown("*Stages:* fragment, compute\n\n"
+                                      "*Needs* `#extension GL_EXT_mesh_shader : require`, which _this_ file lacks\n\n"
+                                      "gl_FragCoord and snake_case_name, a * b * c, 2*3 and *unclosed\n\n"
+                                      "**strong**, *emphasis* and **strong with *both* inside**");
+    REQUIRE(blocks.size() == 4);
+    CHECK(blocks[0].runs == std::vector<MarkdownRun>{{.text = "Stages:", .emphasis = true},
+                                                     {.text = " fragment, compute"}});
+    CHECK(blocks[1].runs == std::vector<MarkdownRun>{{.text = "Needs", .emphasis = true},
+                                                     {.text = " "},
+                                                     {.text = "#extension GL_EXT_mesh_shader : require", .code = true},
+                                                     {.text = ", which "},
+                                                     {.text = "this", .emphasis = true},
+                                                     {.text = " file lacks"}});
+    CHECK(blocks[2].runs ==
+          std::vector<MarkdownRun>{{.text = "gl_FragCoord and snake_case_name, a * b * c, 2*3 and *unclosed"}});
+    CHECK(blocks[3].runs == std::vector<MarkdownRun>{{.text = "strong", .strong = true},
+                                                     {.text = ", "},
+                                                     {.text = "emphasis", .emphasis = true},
+                                                     {.text = " and "},
+                                                     {.text = "strong with ", .strong = true},
+                                                     {.text = "both", .strong = true, .emphasis = true},
+                                                     {.text = " inside", .strong = true}});
+}
+
 TEST_CASE("An unclosed fence holds the rest as code, and a lone backtick is itself", "[markdown]") {
     const std::vector<MarkdownBlock> blocks = read_markdown("a ` b\n```\nint x;");
     REQUIRE(blocks.size() == 2);

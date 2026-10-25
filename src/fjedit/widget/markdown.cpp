@@ -8,6 +8,7 @@
 #include "ftk/ui/theme.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
 
 namespace fjedit {
@@ -76,8 +77,38 @@ std::optional<std::string_view> item(std::string_view line) {
     return std::nullopt;
 }
 
-// The runs of inline text: `code`, **strong**, [a link](to) as its text,
-// and a backslash making the character after it itself.
+bool blank(char c) {
+    return std::isspace(static_cast<unsigned char>(c)) != 0;
+}
+
+bool word_byte(char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) != 0 || static_cast<unsigned char>(c) >= 0x80;
+}
+
+// Whether the single `mark` at `at` in `text` opens emphasis: a word follows
+// it, an `_` isn't inside a word, and a mark that can close it comes later.
+bool opens_emphasis(std::string_view text, std::size_t at, char mark) {
+    if (at + 1 >= text.size() || blank(text[at + 1])) return false;
+    if (mark == '_' && at > 0 && word_byte(text[at - 1])) return false;
+    for (std::size_t close = at + 2; close < text.size(); ++close) {
+        if (text[close] != mark || blank(text[close - 1])) continue;
+        // One of a pair is strong text's, no emphasis's.
+        if ((close + 1 < text.size() && text[close + 1] == mark) || text[close - 1] == mark) continue;
+        if (mark == '_' && close + 1 < text.size() && word_byte(text[close + 1])) continue;
+        return true;
+    }
+    return false;
+}
+
+// Whether the single `mark` at `at` in `text` closes emphasis: it follows a
+// word, and an `_` ends one.
+bool closes_emphasis(std::string_view text, std::size_t at, char mark) {
+    if (at == 0 || blank(text[at - 1])) return false;
+    return mark != '_' || at + 1 >= text.size() || !word_byte(text[at + 1]);
+}
+
+// The runs of inline text: `code`, **strong**, *emphasis*, [a link](to) as
+// its text, and a backslash making the character after it itself.
 std::vector<MarkdownRun> runs_of(std::string_view text) {
     std::vector<MarkdownRun> runs;
     MarkdownRun current;
@@ -101,7 +132,8 @@ std::vector<MarkdownRun> runs_of(std::string_view text) {
                 // One space either side, there to let the code begin or end
                 // with a backtick, goes.
                 if (code.size() >= 2 && code.front() == ' ' && code.back() == ' ') code = code.substr(1, code.size() - 2);
-                runs.push_back({.text = std::string(code), .code = true, .strong = current.strong});
+                runs.push_back(
+                    {.text = std::string(code), .code = true, .strong = current.strong, .emphasis = current.emphasis});
                 i = close + ticks - 1;
                 continue;
             }
@@ -110,6 +142,12 @@ std::vector<MarkdownRun> runs_of(std::string_view text) {
             flush();
             current.strong = !current.strong;
             ++i;
+            continue;
+        }
+        if ((c == '*' || c == '_') &&
+            (current.emphasis ? closes_emphasis(text, i, c) : opens_emphasis(text, i, c))) {
+            flush();
+            current.emphasis = !current.emphasis;
             continue;
         }
         if (c == '[') {
@@ -128,7 +166,7 @@ std::vector<MarkdownRun> runs_of(std::string_view text) {
 }
 
 const core::TextStyle& style_of(const MarkdownRun& run, const MarkdownLook& look) {
-    return run.code ? look.mono : run.strong ? look.strong : look.body;
+    return run.code ? look.mono : run.strong ? look.strong : run.emphasis ? look.emphasis : look.body;
 }
 
 float width_of(core::Context& ui, std::string_view text, const core::TextStyle& style) {
@@ -141,7 +179,8 @@ float width_of(core::Context& ui, std::string_view text, const core::TextStyle& 
 float draw_runs(core::Context& ui, std::span<const MarkdownRun> runs, glm::vec2 at, float right,
                 const MarkdownLook& look, ftk::ui::Color prose) {
     core::DrawList& dl = ui.draw_list();
-    const float line = std::max({look.body.line_height, look.mono.line_height, look.strong.line_height});
+    const float line = std::max(
+        {look.body.line_height, look.mono.line_height, look.strong.line_height, look.emphasis.line_height});
     float x = at.x;
     float y = at.y;
     for (const MarkdownRun& run : runs) {
@@ -242,7 +281,8 @@ MarkdownLook card_look(float scale) {
     const float line = CARD_LINE * scale;
     return {.body = style_in(ftk::ui::Font::Body, CARD_TEXT * scale, line),
             .mono = style_in(theme::mono_font(), CARD_CODE * scale, line),
-            .strong = style_in(theme::bold_font(), CARD_TEXT * scale, line)};
+            .strong = style_in(theme::bold_font(), CARD_TEXT * scale, line),
+            .emphasis = style_in(theme::italic_font(), CARD_TEXT * scale, line)};
 }
 
 float markdown_width(core::Context& ui, std::span<const MarkdownBlock> blocks, const MarkdownLook& look) {

@@ -2,9 +2,10 @@
 
 // What a language service writes about code, in Markdown, read and drawn
 // in a card: sheet 39's hover card and a completion's documentation. The
-// Markdown clangd writes is headings, rules, paragraphs and lists, `code`
-// inline, and fenced code. Inline code is drawn in the mono face; fenced
-// code in it too, coloured as the editor colours code.
+// Markdown clangd and fjls write is headings, rules, paragraphs and lists,
+// `code`, **strong** and *emphasised* text inline, and fenced code. Inline
+// code is drawn in the mono face; fenced code in it too, coloured as the
+// editor colours code; emphasis in the italic face.
 //
 //     const auto blocks = read_markdown("### field `speed`\n---\nType: `float`");
 //     const float height = draw_markdown(ui, blocks, at, width, look);
@@ -26,6 +27,7 @@ struct MarkdownRun {
     std::string text{};
     bool code{false};
     bool strong{false};
+    bool emphasis{false};
 
     bool operator==(const MarkdownRun&) const = default;
 };
@@ -43,19 +45,24 @@ struct MarkdownBlock {
 };
 
 /// The blocks of `markdown`. A paragraph's lines are joined into one; a
-/// link is its text; a backslash before a character makes it itself.
+/// link is its text; a backslash before a character makes it itself. A
+/// single `*` or `_` emphasises as CommonMark has it: opening before a word
+/// and closing after one, so `a * b` stays as written, and `_` not inside a
+/// word, so `gl_FragCoord` does too.
 [[nodiscard]] std::vector<MarkdownBlock> read_markdown(std::string_view markdown);
 
-/// The faces a card's text is drawn in: its prose, code, and strong text.
+/// The faces a card's text is drawn in: its prose, code, strong text and
+/// emphasis.
 struct MarkdownLook {
     ftk::ui::core::TextStyle body{};
     ftk::ui::core::TextStyle mono{};
     ftk::ui::core::TextStyle strong{};
+    ftk::ui::core::TextStyle emphasis{};
 };
 
 /// The faces of a card's text beside code at `scale` of 13 (sheet 39's
-/// hover card and completion): prose at 12.5, code at 12, on lines 18
-/// apart.
+/// hover card and completion): prose, strong and emphasised at 12.5, code
+/// at 12, on lines 18 apart.
 [[nodiscard]] MarkdownLook card_look(float scale);
 
 /// How wide `blocks` are with nothing wrapped: their widest line.
