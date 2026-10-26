@@ -230,6 +230,42 @@ std::vector<Span> occurrences_from(const Json& result, const Positions& position
     return out;
 }
 
+std::vector<ColourValue> colour_values_from(const Json& result, const Positions& positions) {
+    std::vector<ColourValue> out;
+    if (!result.is_array()) return out;
+    for (const Json& information : result) {
+        if (!information.is_object() || !information.contains("range")) continue;
+        const Json colour = information.value("color", Json::object());
+        const auto channel = [&](const char* name, float otherwise) {
+            const auto found = colour.find(name);
+            return found != colour.end() && found->is_number() ? found->get<float>() : otherwise;
+        };
+        out.push_back({.span = positions.span(information["range"]),
+                       .rgba = {channel("red", 0.0f), channel("green", 0.0f), channel("blue", 0.0f),
+                                channel("alpha", 1.0f)}});
+    }
+    std::ranges::sort(out, {}, [](const ColourValue& value) { return value.span.from; });
+    return out;
+}
+
+Json colour_json(const std::array<float, 4>& rgba) {
+    return {{"red", rgba[0]}, {"green", rgba[1]}, {"blue", rgba[2]}, {"alpha", rgba[3]}};
+}
+
+std::vector<Change> colour_forms_from(const Json& result, Span span, const Positions& positions) {
+    std::vector<Change> out;
+    if (!result.is_array()) return out;
+    for (const Json& presentation : result) {
+        if (!presentation.is_object()) continue;
+        if (const auto text_edit = presentation.find("textEdit"); text_edit != presentation.end() && text_edit->is_object()) {
+            out.push_back(change_of(*text_edit, positions));
+        } else if (const auto label = presentation.find("label"); label != presentation.end() && label->is_string()) {
+            out.push_back({.span = span, .text = label->get<std::string>()});
+        }
+    }
+    return out;
+}
+
 Edit edit_from(const Json& text_edits, const Positions& positions) {
     Edit edit;
     if (!text_edits.is_array()) return edit;

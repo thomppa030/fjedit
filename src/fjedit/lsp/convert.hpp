@@ -13,6 +13,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -78,6 +79,18 @@ using PositionsFor = std::function<Positions(const std::filesystem::path& path)>
 /// Where a symbol stands in a file, read from a documentHighlight answer:
 /// each highlight's range, in order; none for a null answer.
 [[nodiscard]] std::vector<Span> occurrences_from(const Json& result, const Positions& positions);
+
+/// A documentColor answer: each colour written and where, in order; none
+/// for a null answer. A channel the server leaves out is 0, alpha 1.
+[[nodiscard]] std::vector<ColourValue> colour_values_from(const Json& result, const Positions& positions);
+
+/// `rgba` as the protocol's colour: red, green, blue and alpha.
+[[nodiscard]] Json colour_json(const std::array<float, 4>& rgba);
+
+/// A colorPresentation answer for the value at `span`: each presentation's
+/// change, its text edit or else its label over `span`, in order. What else
+/// a presentation would change is left out.
+[[nodiscard]] std::vector<Change> colour_forms_from(const Json& result, Span span, const Positions& positions);
 
 /// A list of the protocol's text edits as one edit, its changes in order.
 [[nodiscard]] Edit edit_from(const Json& text_edits, const Positions& positions);

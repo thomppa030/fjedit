@@ -7,8 +7,10 @@
 // character typed is asked only of the services that name it; a hover is one
 // card, each answer under the one before with a rule between.
 // A definition, where a symbol stands, a rename and a format come from the
-// first service that has one, colours from the first that knows any. A file one service answers for
-// is that service's alone, its answers passed on as they are.
+// first service that has one, colours and colour values from the first that
+// knows any, a colour's forms from the service that named it. A file one
+// service answers for is that service's alone, its answers passed on as they
+// are.
 //
 //     LanguageServices services({clangd, fjls}, folder);
 //     view.service = &services;
@@ -73,6 +75,11 @@ public:
     [[nodiscard]] ServiceStatus status() const override;
     [[nodiscard]] const std::vector<Diagnostic>& diagnostics(const std::filesystem::path& path) override;
     [[nodiscard]] const SemanticTokens* tokens(const std::filesystem::path& path) override;
+    /// The first's that has any.
+    [[nodiscard]] const std::vector<ColourValue>& colour_values(const std::filesystem::path& path) override;
+    /// Asked of the service whose colour values hold one at `span`.
+    [[nodiscard]] Asked<ColourForms> colour_forms(const std::filesystem::path& path, Span span,
+                                                  const std::array<float, 4>& rgba) override;
     /// What any of the file's services names, each once, in order.
     [[nodiscard]] std::vector<std::string> completion_triggers(const std::filesystem::path& path) const override;
     [[nodiscard]] Asked<Completions> complete(const std::filesystem::path& path, Position at,

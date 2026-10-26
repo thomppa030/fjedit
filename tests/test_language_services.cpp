@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -277,4 +278,31 @@ TEST_CASE("A service started again is told of its files, what the one before was
     two.services.update();
     REQUIRE(definition->answered);
     CHECK(definition->answer == std::vector<Location>{there});
+}
+
+TEST_CASE("A file's colour values are the first's that has any, a colour's forms asked of the one that named it",
+          "[services]") {
+    Two two;
+    const Document header = document("a.hpp");
+    two.services.open("a.hpp", header);
+    constexpr std::array<float, 4> TEAL{63 / 255.0f, 184 / 255.0f, 196 / 255.0f, 1.0f};
+    const Span tint{{0, 4}, {0, 11}};
+
+    CHECK(two.services.colour_values("a.hpp").empty());
+    two.second->values = {{.span = tint, .rgba = {1.0f, 1.0f, 1.0f, 1.0f}}};
+    CHECK(&two.services.colour_values("a.hpp") == &two.second->values);
+
+    // Asked of fjls, which named the value, and of no one else.
+    const auto forms = two.services.colour_forms("a.hpp", tint, TEAL);
+    CHECK(two.first->forms.empty());
+    REQUIRE(two.second->forms.size() == 1);
+    CHECK(two.second->forms_spans.back() == tint);
+    CHECK(two.second->forms_colours.back() == TEAL);
+    CHECK(forms.get() == two.second->forms.back().pending.get());
+
+    // Where no service named a value, no one is asked, and the answer is none.
+    const auto nowhere = two.services.colour_forms("a.hpp", {{0, 0}, {0, 3}}, TEAL);
+    CHECK(two.second->forms.size() == 1);
+    REQUIRE(nowhere->answered);
+    CHECK(nowhere->answer.changes.empty());
 }

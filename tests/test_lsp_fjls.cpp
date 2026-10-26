@@ -3,15 +3,19 @@
 #include "fjedit/core/document.hpp"
 #include "fjedit/core/language.hpp"
 
+#include "temp_folder.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -208,4 +212,56 @@ TEST_CASE("fjls takes a shader's call to a library function to where its include
         CHECK(include.buffer().line(written.span.from.line).substr(written.span.from.byte).starts_with(call.function));
         fjls.close(path);
     }
+}
+
+TEST_CASE("fjls names a sheet's colour values, they follow an edit, and a picked one comes back in its form",
+          "[lsp][fjls]") {
+    // Run with the others, where FJELL_SOURCE_DIR says fjell's tree and its
+    // fjls are there; the sheet is the test's own.
+    if (variable("FJELL_SOURCE_DIR").empty()) SKIP("FJELL_SOURCE_DIR doesn't name fjell's tree");
+    const std::string named = variable("FJLS");
+    TempFolder folder;
+    const fs::path path = folder.write("hud.fjss", "");
+    lsp::Client fjls({.command = {named.empty() ? std::string("fjls") : named},
+                      .root = folder.path,
+                      .extensions = {"fjss"},
+                      .language_id = [](const fs::path&) { return std::string("fjss"); },
+                      .arrived = {}});
+    if (fjls.status().state == ServiceState::Stopped) SKIP("fjls isn't there: " << fjls.status().note);
+    const auto until = [&](const std::function<bool()>& done) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (std::chrono::steady_clock::now() < end) {
+            fjls.update();
+            if (done()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+
+    Document document(".panel {\n    color: #44cc44;\n    background: rgba(34, 34, 34, 0.8);\n}\n",
+                      language_for("hud.fjss"));
+    fjls.open(path, document);
+    REQUIRE(until([&] { return fjls.colour_values(path).size() == 2; }));
+    const std::vector<ColourValue> values = fjls.colour_values(path);
+    CHECK(values[0].span == Span{{1, 11}, {1, 18}});
+    CHECK(values[1].span == Span{{2, 16}, {2, 37}});
+    CHECK(std::lround(values[0].rgba[1] * 255.0f) == 0xcc);
+    CHECK(values[1].rgba[3] == 0.8f);
+
+    // Before fjls hears of it: two spaces put in before the first value
+    // moves it, and the second stays.
+    (void)document.apply(Edit{.changes = {{.span = {{1, 10}, {1, 10}}, .text = "  "}}});
+    const std::vector<ColourValue>& carried = fjls.colour_values(path);
+    REQUIRE(carried.size() == 2);
+    CHECK(carried[0].span == Span{{1, 13}, {1, 20}});
+    CHECK(carried[1].span == values[1].span);
+
+    // The teal sheet 56 picks, written as the value is.
+    const Asked<ColourForms> forms =
+        fjls.colour_forms(path, carried[0].span, {63 / 255.0f, 184 / 255.0f, 196 / 255.0f, 1.0f});
+    REQUIRE(until([&] { return forms->answered; }));
+    REQUIRE(forms->answer.changes.size() == 2);
+    CHECK(forms->answer.changes[0] == Change{.span = {{1, 13}, {1, 20}}, .text = "#3fb8c4"});
+    CHECK(forms->answer.changes[1].text == "rgb(63, 184, 196)");
+    CHECK(forms->answer.version == document.version());
 }

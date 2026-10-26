@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -188,4 +189,38 @@ TEST_CASE("An entry with no edit of its own replaces the word as the file's lang
     const std::vector<Completion> widget =
         completions_from(click, Position{0, 14}, "    <div on:cl", language_for("hud.fjwidget"), UTF8);
     REQUIRE(widget[0].change == Change{.span = {{0, 9}, {0, 14}}, .text = "on:click"});
+}
+
+TEST_CASE("Colour values and a colour's forms are read as the server counts, a colour sent as it writes one",
+          "[lsp][convert]") {
+    // An e with an accent is two bytes and one unit.
+    const std::string line = "/* \xC3\xA9 */ .a { color: #ff8040; border: 1 solid rgba(0, 0, 0, 0.5); }";
+    const Positions utf16(ftk::jsonrpc::Encoding::Utf16, [&](std::size_t) { return std::string_view(line); });
+    const Json answer = parsed(R"([
+        {"range":{"start":{"line":0,"character":45},"end":{"line":0,"character":63}},
+         "color":{"red":0,"green":0,"blue":0,"alpha":0.5}},
+        {"range":{"start":{"line":0,"character":20},"end":{"line":0,"character":27}},
+         "color":{"red":1,"green":0.5,"blue":0.25}}])");
+    const std::vector<ColourValue> values = colour_values_from(answer, utf16);
+    // In order, each where its bytes are; a channel left out is opaque.
+    REQUIRE(values.size() == 2);
+    CHECK(values[0].span == Span{{0, 21}, {0, 28}});
+    CHECK(values[0].rgba == std::array<float, 4>{1.0f, 0.5f, 0.25f, 1.0f});
+    CHECK(line.substr(values[1].span.from.byte, values[1].span.to.byte - values[1].span.from.byte) ==
+          "rgba(0, 0, 0, 0.5)");
+    CHECK(values[1].rgba[3] == 0.5f);
+    CHECK(colour_values_from(Json(), utf16).empty());
+
+    CHECK(colour_json({1.0f, 0.5f, 0.25f, 1.0f}) == parsed(R"({"red":1.0,"green":0.5,"blue":0.25,"alpha":1.0})"));
+
+    // A form with an edit of its own, then one with its label alone, written
+    // over the value asked about.
+    const Json forms = parsed(R"json([
+        {"label":"#3fb8c4","textEdit":{"range":{"start":{"line":0,"character":20},"end":{"line":0,"character":27}},
+                                       "newText":"#3fb8c4"}},
+        {"label":"rgb(63, 184, 196)"}])json");
+    const Span asked{{0, 21}, {0, 28}};
+    CHECK(colour_forms_from(forms, asked, utf16) ==
+          std::vector<Change>{{.span = asked, .text = "#3fb8c4"}, {.span = asked, .text = "rgb(63, 184, 196)"}});
+    CHECK(colour_forms_from(Json(), asked, utf16).empty());
 }

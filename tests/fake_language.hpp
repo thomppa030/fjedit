@@ -13,6 +13,7 @@
 
 #include "fjedit/core/language_service.hpp"
 
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -31,6 +32,8 @@ struct Question {
 struct FakeLanguage final : fjedit::LanguageService {
     std::vector<fjedit::Diagnostic> problems;
     std::optional<fjedit::SemanticTokens> colours;
+    /// The colour values it says are written.
+    std::vector<fjedit::ColourValue> values;
     fjedit::ServiceStatus state{.state = fjedit::ServiceState::Ready, .note = {}};
     /// What, typed, asks it for completion.
     std::vector<std::string> triggers;
@@ -45,6 +48,11 @@ struct FakeLanguage final : fjedit::LanguageService {
     std::vector<Question<ftk::Result<fjedit::WorkspaceEdit>>> renames;
     std::vector<std::string> new_names;
     std::vector<Question<std::optional<fjedit::VersionedEdit>>> formats;
+    /// A colour's forms asked, at the start of the value's span, and the
+    /// span and colour each was asked for.
+    std::vector<Question<fjedit::ColourForms>> forms;
+    std::vector<fjedit::Span> forms_spans;
+    std::vector<std::array<float, 4>> forms_colours;
     std::vector<std::filesystem::path> opened;
     std::vector<std::filesystem::path> closed;
     std::vector<std::filesystem::path> saved_paths;
@@ -67,6 +75,15 @@ struct FakeLanguage final : fjedit::LanguageService {
     }
     [[nodiscard]] const fjedit::SemanticTokens* tokens(const std::filesystem::path&) override {
         return colours ? &*colours : nullptr;
+    }
+    [[nodiscard]] const std::vector<fjedit::ColourValue>& colour_values(const std::filesystem::path&) override {
+        return values;
+    }
+    [[nodiscard]] fjedit::Asked<fjedit::ColourForms> colour_forms(const std::filesystem::path& path, fjedit::Span span,
+                                                                  const std::array<float, 4>& rgba) override {
+        forms_spans.push_back(span);
+        forms_colours.push_back(rgba);
+        return ask(forms, path, span.from);
     }
 
     [[nodiscard]] std::vector<std::string> completion_triggers(const std::filesystem::path&) const override {

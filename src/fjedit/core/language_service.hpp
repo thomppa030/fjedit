@@ -6,10 +6,10 @@
 //
 // A service follows the documents it is told are open, and is brought up
 // to date once a frame by update(): what changed goes to it, what it found
-// comes back. Its problems and colours are carried to the text as it is
-// now. A question (completion, hover, a definition, a rename, a format)
-// comes back as a Pending filled in when the answer comes; one that no one
-// holds any more is given up.
+// comes back. Its problems, colours and colour values are carried to the
+// text as it is now. A question (completion, hover, a definition, a rename,
+// a format, a colour's forms) comes back as a Pending filled in when the
+// answer comes; one that no one holds any more is given up.
 //
 //     auto asked = service.complete(path, caret, {});
 //     // frames later:
@@ -20,6 +20,7 @@
 
 #include "ftk/base/result.hpp"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -168,6 +169,24 @@ struct SemanticTokens {
     std::vector<std::vector<Token>> lines{};
 };
 
+/// A colour written in a file: where its value is (`#44cc44`,
+/// `vec3(1.0, 0.5, 0.2)`), and the colour, red, green, blue and alpha from 0
+/// to 1, in sRGB.
+struct ColourValue {
+    Span span{};
+    std::array<float, 4> rgba{0.0f, 0.0f, 0.0f, 1.0f};
+
+    bool operator==(const ColourValue&) const = default;
+};
+
+/// How a colour value can be written as another colour, each the change
+/// that writes it: in the form it is written in first, then its others. For
+/// the document's `version`; none where no colour value was written.
+struct ColourForms {
+    std::vector<Change> changes{};
+    uint64_t version{0};
+};
+
 /// An answer still to come. The one who asked keeps it while waiting and
 /// reads `answer` once `answered`; letting it go gives the question up.
 template <typename T>
@@ -221,6 +240,17 @@ public:
     /// The colours it knows for the file at `path`, for its document as it
     /// is now; nothing when it knows none, or none that still fit.
     [[nodiscard]] virtual const SemanticTokens* tokens(const std::filesystem::path& path) = 0;
+
+    /// The colour values written in the file at `path`, in order, where they
+    /// are in its document now; none for a file it doesn't follow or knows
+    /// none in.
+    [[nodiscard]] virtual const std::vector<ColourValue>& colour_values(const std::filesystem::path& path) = 0;
+
+    /// How the colour value at `span` in the file at `path` is written as
+    /// `rgba` (sRGB, from 0 to 1) instead; no changes where it names no
+    /// colour value there.
+    [[nodiscard]] virtual Asked<ColourForms> colour_forms(const std::filesystem::path& path, Span span,
+                                                          const std::array<float, 4>& rgba) = 0;
 
     /// What, typed in the file at `path`, asks it for completion besides a
     /// word begun: "." and "->" for C++. None while it starts, or from a

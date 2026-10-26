@@ -23,7 +23,8 @@ const Json TOKEN_TYPES = {"namespace", "type",     "class",    "enum",   "interf
 
 // What fjedit tells a server it can do: positions in UTF-8 when the server
 // counts that way too, no snippets in completions, why a completion was
-// asked, documentation in Markdown, and the rest of what the editor asks.
+// asked, documentation in Markdown, colour values, and the rest of what the
+// editor asks.
 Json capabilities() {
     return {
         {"general", {{"positionEncodings", {"utf-8", "utf-16"}}}},
@@ -49,6 +50,7 @@ Json capabilities() {
                {"tokenTypes", TOKEN_TYPES},
                {"tokenModifiers", Json::array()},
                {"formats", {"relative"}}}},
+             {"colorProvider", Json::object()},
          }},
         {"workspace", {{"workspaceEdit", {{"documentChanges", true}}}, {"workspaceFolders", true}}},
     };
@@ -134,6 +136,9 @@ void Client::initialized(const jsonrpc::Answer& answer) {
     }
     if (const auto provider = capabilities.find("semanticTokensProvider"); provider != capabilities.end() && provider->is_object()) {
         colour_kinds_ = token_kinds(provider->value("legend", Json::object()).value("tokenTypes", Json::array()));
+    }
+    if (const auto provider = capabilities.find("colorProvider"); provider != capabilities.end()) {
+        finds_colour_values_ = provider->is_object() || (provider->is_boolean() && provider->get<bool>());
     }
     if (const auto provider = capabilities.find("completionProvider"); provider != capabilities.end() && provider->is_object()) {
         const auto triggers = provider->find("triggerCharacters");
@@ -237,6 +242,26 @@ void Client::ask_colours(const fs::path& path, Open& file) {
                                 answered);
 }
 
+void Client::ask_colour_values(const fs::path& path, Open& file) {
+    const uint64_t version = file.document->version();
+    if (!finds_colour_values_ || file.values_asked || file.values_for == version) return;
+    file.values_asked = true;
+    file.values_for = version;
+    const auto answered = [this, path, version](jsonrpc::Answer answer) {
+        const auto found = open_.find(path);
+        if (found == open_.end()) return;
+        Open& asked = found->second;
+        asked.values_asked = false;
+        // Values for a text since changed are asked for again; the ones
+        // before are carried meanwhile.
+        if (!answer || version != asked.document->version()) return;
+        asked.values = colour_values_from(*answer, positions_for(path));
+        asked.values_version = version;
+        asked.carried_values_version.reset();
+    };
+    connection_->peer().request("textDocument/documentColor", {{"textDocument", {{"uri", file.uri}}}}, answered);
+}
+
 void Client::update() {
     if (!connection_) return;
     connection_->peer().poll([this](const jsonrpc::Incoming& message) { return heard(message); });
@@ -253,6 +278,7 @@ void Client::update() {
     for (auto& [path, file] : open_) {
         sync(path, file);
         ask_colours(path, file);
+        ask_colour_values(path, file);
     }
     // Questions no one waits on any more are given up.
     std::erase_if(watched_, [this](const Watched& watched) {
@@ -355,6 +381,38 @@ const SemanticTokens* Client::tokens(const fs::path& path) {
     file.carried_colours = std::move(carried_tokens);
     file.carried_colours_version = document.version();
     return &file.carried_colours;
+}
+
+const std::vector<ColourValue>& Client::colour_values(const fs::path& path) {
+    static const std::vector<ColourValue> NONE;
+    const auto found = open_.find(path);
+    if (found == open_.end() || !found->second.values) return NONE;
+    Open& file = found->second;
+    const Document& document = *file.document;
+    if (file.values_version == document.version()) return *file.values;
+    if (file.carried_values_version == document.version()) return file.carried_values;
+    // Each value carried through the edits since; one an edit cut into is
+    // dropped until the server's next values. None while the edits are no
+    // longer known.
+    file.carried_values.clear();
+    if (const auto edits = document.edits_since(file.values_version)) {
+        for (ColourValue value : *file.values) {
+            bool kept = true;
+            for (const Edit& edit : *edits) {
+                const bool touched = std::ranges::any_of(edit.changes, [&](const Change& change) {
+                    return change.span.from < value.span.to && value.span.from < change.span.to;
+                });
+                if (touched) {
+                    kept = false;
+                    break;
+                }
+                value.span = carried(edit, value.span);
+            }
+            if (kept) file.carried_values.push_back(value);
+        }
+    }
+    file.carried_values_version = document.version();
+    return file.carried_values;
 }
 
 Positions Client::positions_for(const fs::path& path) const {
@@ -524,6 +582,25 @@ Asked<std::optional<VersionedEdit>> Client::format(const fs::path& path) {
                                                  return VersionedEdit{.version = version,
                                                                       .edit = edit_from(*answer, positions_for(path))};
                                              });
+}
+
+Asked<ColourForms> Client::colour_forms(const fs::path& path, Span span, const std::array<float, 4>& rgba) {
+    const auto found = open_.find(path);
+    if (found == open_.end()) return std::make_shared<const Pending<ColourForms>>(Pending<ColourForms>{.answered = true});
+    Open& file = found->second;
+    if (ready()) sync(path, file);
+    const uint64_t version = file.document->version();
+    return ask<ColourForms>("textDocument/colorPresentation",
+                            [this, path, uri = file.uri, span, rgba] {
+                                return Json{{"textDocument", {{"uri", uri}}},
+                                            {"color", colour_json(rgba)},
+                                            {"range", positions_for(path).to_json(span)}};
+                            },
+                            [this, path, span, version](const jsonrpc::Answer& answer) {
+                                ColourForms out{.changes = {}, .version = version};
+                                if (answer) out.changes = colour_forms_from(*answer, span, positions_for(path));
+                                return out;
+                            });
 }
 
 } // namespace fjedit::lsp

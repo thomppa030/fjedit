@@ -16,6 +16,7 @@
 #include "fjedit/lsp/connection.hpp"
 #include "fjedit/lsp/convert.hpp"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -65,6 +66,11 @@ public:
     [[nodiscard]] ServiceStatus status() const override { return status_; }
     [[nodiscard]] const std::vector<Diagnostic>& diagnostics(const std::filesystem::path& path) override;
     [[nodiscard]] const SemanticTokens* tokens(const std::filesystem::path& path) override;
+    /// As the server last found them, carried through the edits since: a
+    /// value an edit cut into is gone until it answers again.
+    [[nodiscard]] const std::vector<ColourValue>& colour_values(const std::filesystem::path& path) override;
+    [[nodiscard]] Asked<ColourForms> colour_forms(const std::filesystem::path& path, Span span,
+                                                  const std::array<float, 4>& rgba) override;
     /// The server's trigger characters, as it named them at initialize.
     [[nodiscard]] std::vector<std::string> completion_triggers(const std::filesystem::path& path) const override;
     [[nodiscard]] Asked<Completions> complete(const std::filesystem::path& path, Position at,
@@ -99,6 +105,13 @@ private:
         bool colours_asked{false};
         SemanticTokens carried_colours;
         std::optional<uint64_t> carried_colours_version;
+        // The colour values written in it, kept as the colours are.
+        std::optional<std::vector<ColourValue>> values;
+        uint64_t values_version{0};
+        std::optional<uint64_t> values_for;
+        bool values_asked{false};
+        std::vector<ColourValue> carried_values;
+        std::optional<uint64_t> carried_values_version;
     };
 
     // A question under way: its id, and what asked, held weakly so letting
@@ -120,6 +133,7 @@ private:
     // Tells the server what changed in `file` since it last heard.
     void sync(const std::filesystem::path& path, Open& file);
     void ask_colours(const std::filesystem::path& path, Open& file);
+    void ask_colour_values(const std::filesystem::path& path, Open& file);
     [[nodiscard]] Positions positions_for(const std::filesystem::path& path) const;
     // The protocol's document and position: where a question is about.
     [[nodiscard]] Json document_at(const std::filesystem::path& path, const std::string& uri, Position at) const;
@@ -139,12 +153,13 @@ private:
     std::unique_ptr<Connection> connection_;
     ServiceStatus status_;
     // How the server counts along a line, how it takes changes (whole, or
-    // by the edit), whether it wants saves, its colours' legend, and what
-    // typed asks it for completion.
+    // by the edit), whether it wants saves, its colours' legend, whether it
+    // finds colour values, and what typed asks it for completion.
     ftk::jsonrpc::Encoding encoding_{ftk::jsonrpc::Encoding::Utf16};
     bool incremental_{false};
     bool wants_saves_{false};
     std::vector<TokenKind> colour_kinds_;
+    bool finds_colour_values_{false};
     std::vector<std::string> triggers_;
     std::map<std::filesystem::path, Open> open_;
     std::vector<Watched> watched_;

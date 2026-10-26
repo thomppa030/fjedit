@@ -122,6 +122,24 @@ const SemanticTokens* LanguageServices::tokens(const fs::path& path) {
     return nullptr;
 }
 
+const std::vector<ColourValue>& LanguageServices::colour_values(const fs::path& path) {
+    static const std::vector<ColourValue> NONE;
+    for (Running* running : told_of(path)) {
+        const std::vector<ColourValue>& values = running->service->colour_values(path);
+        if (!values.empty()) return values;
+    }
+    return NONE;
+}
+
+Asked<ColourForms> LanguageServices::colour_forms(const fs::path& path, Span span, const std::array<float, 4>& rgba) {
+    for (Running* running : told_of(path)) {
+        const bool named = std::ranges::any_of(running->service->colour_values(path),
+                                               [&](const ColourValue& value) { return value.span == span; });
+        if (named) return running->service->colour_forms(path, span, rgba);
+    }
+    return answered(ColourForms{});
+}
+
 std::vector<std::string> LanguageServices::completion_triggers(const fs::path& path) const {
     std::vector<std::string> all;
     for (const Running& running : services_) {
