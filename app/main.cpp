@@ -6,6 +6,7 @@
 #include "fjedit/widget/file_kind.hpp"
 
 #include "ftk/app/app_window.hpp"
+#include "ftk/app/app_identity.hpp"
 #include "ftk/app/file_browser.hpp"
 #include "ftk/base/delegate.hpp"
 #include "ftk/base/log.hpp"
@@ -34,6 +35,14 @@ int run(const std::filesystem::path& folder) {
     if (!std::filesystem::is_directory(folder, error)) {
         FTK_CORE_CRITICAL("fjedit opens a folder, and {} is none", folder.string());
         return EXIT_FAILURE;
+    }
+    // Who fjedit is to the desktop, before its window opens: what the window
+    // manager knows it by, and its icon. The brand files are staged beside
+    // the program in brand/.
+    const std::filesystem::path brand = ftk::platform::executable_path().parent_path() / "brand";
+    if (auto told = ftk::set_app_identity({.id = "fjedit", .name = "fjedit", .icon = brand / "fjedit-tile.svg"});
+        !told) {
+        FTK_CORE_WARN("fjedit goes without its icon: {}", told.error());
     }
     auto made = ftk::AppWindow::create({
         .title = title_of(fjedit::Workspace(folder).root()),
