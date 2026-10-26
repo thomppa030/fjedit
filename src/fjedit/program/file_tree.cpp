@@ -59,7 +59,7 @@ void FileTree::draw_folder(const std::filesystem::path& folder, int depth, const
                            std::optional<std::filesystem::path>& pressed) {
     const std::string id = folder.generic_string();
     const std::string name = folder.filename().string();
-    // A folder in Structure's grey, open or not, as Fjell shows one.
+    // A folder in Structure's grey, open or not, as fjell shows one.
     const ui::TreeRowResult row = ui::tree_row({
         .id = id.c_str(),
         .name = name,

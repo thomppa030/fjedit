@@ -41,7 +41,7 @@ struct Running {
 
     // The language service made for C++ files, when the test gives one,
     // and how many have been made; and the one beside it for script headers
-    // and Fjell's files, when the test gives both.
+    // and fjell's files, when the test gives both.
     FakeLanguage* language{nullptr};
     int languages_made{0};
     FakeLanguage* fjls{nullptr};
@@ -50,7 +50,7 @@ struct Running {
     int folders_picked{0};
 
     // What answers for C++: nothing, so no test runs a server it didn't ask
-    // for; a fake; a fake and a second fake for headers and Fjell's files, as
+    // for; a fake; a fake and a second fake for headers and fjell's files, as
     // clangd and fjls; or clangd, as the program runs it.
     enum class Languages { None, Fake, Both, Clangd };
 

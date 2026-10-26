@@ -215,7 +215,7 @@ ServiceMaker Program::clangd() {
 }
 
 ServiceMaker Program::fjls() {
-    // A game's script headers, beside clangd; Fjell's own files and GLSL
+    // A game's script headers, beside clangd; fjell's own files and GLSL
     // alone.
     static const Language& GLSL = language_for("shader.glsl");
     static const std::vector<std::string> EXTENSIONS = [] {

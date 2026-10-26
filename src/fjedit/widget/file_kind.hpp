@@ -1,7 +1,7 @@
 #pragma once
 
 // What kind of file a file is, wherever it is named: the tree, the tabs, find
-// in files and Vim's `:e` rows show its kind's icon in its hue, as Fjell shows
+// in files and Vim's `:e` rows show its kind's icon in its hue, as fjell shows
 // its files (ftk/ui/kit/asset_kind.hpp).
 
 #include "ftk/ui/kit/asset_kind.hpp"
@@ -10,9 +10,9 @@
 
 namespace fjedit {
 
-/// Gives the kit the kinds of Fjell's files, as Fjell registers them: what
-/// fjedit on its own shows them by. A program that registers Fjell's kinds
-/// itself, Fjell, needs none of this.
+/// Gives the kit the kinds of fjell's files, as fjell registers them: what
+/// fjedit on its own shows them by. A program that registers fjell's kinds
+/// itself, fjell, needs none of this.
 void register_file_kinds();
 
 /// The kind of the file at `path`: C++ and GLSL by the language fjedit reads

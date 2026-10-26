@@ -6,7 +6,7 @@ project(fjedit
     LANGUAGES C CXX)
 
 option(FJEDIT_BUILD_TESTS "Build fjedit's unit tests" ${PROJECT_IS_TOP_LEVEL})
-# A program that takes fjedit's libraries, as Fjell does, needs no fjedit
+# A program that takes fjedit's libraries, as fjell does, needs no fjedit
 # program of its own.
 option(FJEDIT_BUILD_PROGRAM "Build the fjedit program" ${PROJECT_IS_TOP_LEVEL})
 
@@ -20,7 +20,7 @@ if(PROJECT_IS_TOP_LEVEL)
     set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 endif()
 
-# ftk: a program that builds fjedit beside its own ftk (Fjell) has the
+# ftk: a program that builds fjedit beside its own ftk (fjell) has the
 # targets already, and fjedit takes those, so one build holds one ftk.
 # Otherwise it is fetched at the commit fjedit builds with: ftk grows along
 # with fjedit, so a change that needs a newer ftk moves the hash instead of

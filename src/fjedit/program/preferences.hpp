@@ -2,7 +2,7 @@
 
 // How this machine likes fjedit to show code (sheet 39, S1): kept in the
 // settings file beside the window's places, never in a folder it opens, and
-// edited in Edit > Preferences, a window shaped like Fjell's project
+// edited in Edit > Preferences, a window shaped like fjell's project
 // settings. There is no Save: a change applies at once.
 //
 //     ui::add_settings_section(preferences_section(preferences));
@@ -43,8 +43,8 @@ struct Preferences {
     /// clangd, which answers for C and C++: a path, or a name looked for
     /// along the PATH.
     std::string clangd{"clangd"};
-    /// fjls, Fjell's language server, which answers for a game's script
-    /// headers beside clangd and for Fjell's own files: likewise.
+    /// fjls, fjell's language server, which answers for a game's script
+    /// headers beside clangd and for fjell's own files: likewise.
     std::string fjls{"fjls"};
 };
 

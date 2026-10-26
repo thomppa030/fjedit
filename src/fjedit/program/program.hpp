@@ -46,7 +46,7 @@ struct ProgramOptions {
     std::filesystem::path recovery{};
     /// Its language services, in the order a file is asked of them. Not
     /// given, it runs clangd for C and C++, and fjls for a game's script
-    /// headers and Fjell's own files.
+    /// headers and fjell's own files.
     std::optional<std::vector<ServiceMaker>> services{};
     /// Wakes the frame loop from another thread, when a language service's
     /// answer comes: ftk::Window::wake() for a window.
@@ -268,7 +268,7 @@ private:
     // Opens the file at `path` with `span` selected, the keyboard in it.
     void go_to(const std::filesystem::path& path, Span span);
     // clangd for C and C++, and fjls for a game's script headers and
-    // Fjell's own files, at the paths the preferences give them.
+    // fjell's own files, at the paths the preferences give them.
     [[nodiscard]] ServiceMaker clangd();
     [[nodiscard]] ServiceMaker fjls();
     // The makers, those of clangd and fjls noting the path each starts at.

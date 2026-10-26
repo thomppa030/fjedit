@@ -64,13 +64,13 @@ std::string read_text(const fs::path& path) {
 
 } // namespace
 
-// Fjell's own files are the samples, in the tree $FJELL_SOURCE_DIR names, and
+// fjell's own files are the samples, in the tree $FJELL_SOURCE_DIR names, and
 // the fjls asked is $FJLS's, else the PATH's; without them, as on CI, this is
 // skipped.
-TEST_CASE("fjls colours Fjell's own files as fjedit's lexers do, its uniforms and built-ins besides",
+TEST_CASE("fjls colours fjell's own files as fjedit's lexers do, its uniforms and built-ins besides",
           "[lsp][fjls]") {
     const fs::path source = variable("FJELL_SOURCE_DIR");
-    if (source.empty()) SKIP("FJELL_SOURCE_DIR doesn't name Fjell's tree, whose files are the samples");
+    if (source.empty()) SKIP("FJELL_SOURCE_DIR doesn't name fjell's tree, whose files are the samples");
     const std::string named = variable("FJLS");
 
     // Its own GLSL too: the stages and the includes they take in.
@@ -151,7 +151,7 @@ TEST_CASE("fjls colours Fjell's own files as fjedit's lexers do, its uniforms an
 // library function goes to where its include writes it.
 TEST_CASE("fjls takes a shader's call to a library function to where its include writes it", "[lsp][fjls]") {
     const fs::path source = variable("FJELL_SOURCE_DIR");
-    if (source.empty()) SKIP("FJELL_SOURCE_DIR doesn't name Fjell's tree, whose files are the samples");
+    if (source.empty()) SKIP("FJELL_SOURCE_DIR doesn't name fjell's tree, whose files are the samples");
     const std::string named = variable("FJLS");
 
     std::vector<std::unique_ptr<Document>> documents;

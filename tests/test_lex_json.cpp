@@ -8,7 +8,7 @@ using namespace fjedit;
 
 static const Lexer& json = language_for("x.json").lexer;
 
-TEST_CASE("JSON and Fjell's files written in it", "[lex][json]") {
+TEST_CASE("JSON and fjell's files written in it", "[lex][json]") {
     for (const char* file : {"package.json", "toon.fjmat", "Inter.fjfont", "sand.fjsurface", "Player.fjp",
                              "rolling_swell.fjwater", "neutral.fjlut", "AnimSet_01.fjanimset", "gameplay.fjinput",
                              "default_day.fjday", "clear.fjweather", "breath.fjvfx", "editor_preview.fjgraph",

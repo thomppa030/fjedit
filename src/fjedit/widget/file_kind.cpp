@@ -15,7 +15,7 @@ namespace {
 using ftk::ui::AssetKind;
 using H = ftk::theme::Hue;
 
-// Fjell's categories, each by its hue (Fjell's src/ui/categories.hpp).
+// fjell's categories, each by its hue (fjell's src/ui/categories.hpp).
 namespace category {
 constexpr H RENDERING = H::blue;
 constexpr H ENVIRONMENT = H::cyan;
@@ -44,7 +44,7 @@ struct Entry {
     AssetKind kind;
 };
 
-// Fjell's file types, as Fjell registers them (its src/ui/asset_kinds.cpp).
+// fjell's file types, as fjell registers them (its src/ui/asset_kinds.cpp).
 // Images, fonts and audio files the kit knows already.
 constexpr std::array ENTRIES{
     Entry{".fjmesh", MESH}, Entry{".glb", MESH}, Entry{".gltf", MESH}, Entry{".fbx", MESH}, Entry{".obj", MESH},

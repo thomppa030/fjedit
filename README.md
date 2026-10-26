@@ -60,5 +60,5 @@ fjedit fetches ftk at a commit. To build against a checkout instead, keep a
 | `fjedit::lsp` | A language server run as a child process and talked to through ftk's JSON-RPC: what clangd and fjls run as |
 | `fjedit::program` | The program on a folder: its file tree, tabs and groups, find in files, Preferences and status bar |
 
-A program that already builds ftk itself (Fjell does) can add fjedit beside it:
+A program that already builds ftk itself (fjell does) can add fjedit beside it:
 fjedit then uses that program's ftk targets instead of fetching its own.

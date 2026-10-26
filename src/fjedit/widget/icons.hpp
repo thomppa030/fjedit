@@ -24,7 +24,7 @@ inline constexpr const char* operation = ICON_LC_PARENTHESES;
 inline constexpr const char* file = ICON_LC_FILE;
 inline constexpr const char* folder = ICON_LC_FOLDER;
 
-// Kinds of file, as Fjell shows them (its src/ui/icons.hpp), each in its
+// Kinds of file, as fjell shows them (its src/ui/icons.hpp), each in its
 // category's hue (file_kind.cpp). Textures, audio and fonts are the kit's.
 inline constexpr const char* script = ICON_LC_FILE_CODE;           // C++
 inline constexpr const char* shader = ICON_LC_CODE;                // FJSL and GLSL

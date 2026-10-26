@@ -61,7 +61,7 @@ int run(const std::filesystem::path& folder) {
         FTK_CORE_CRITICAL("fjedit could not find its fonts beside it");
         return EXIT_FAILURE;
     }
-    // Fjell's files look as they do in Fjell.
+    // fjell's files look as they do in fjell.
     fjedit::register_file_kinds();
     // How this machine likes the code shown, and the folders opened lately,
     // whatever folder is open.

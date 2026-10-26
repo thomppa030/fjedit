@@ -20,7 +20,7 @@ std::string_view icon_of(const std::filesystem::path& path) {
 
 } // namespace
 
-TEST_CASE("Fjell's files show as Fjell shows them, each kind's icon in its category's hue", "[file_kind]") {
+TEST_CASE("fjell's files show as fjell shows them, each kind's icon in its category's hue", "[file_kind]") {
     register_file_kinds();
     CHECK(icon_of("ui/menu.fjss") == icon::ui_layout);
     CHECK(file_kind("ui/menu.fjss").hue == Hue::lilac);

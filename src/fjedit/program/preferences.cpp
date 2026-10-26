@@ -139,7 +139,7 @@ bool draw_code_editor(Preferences& preferences, const LanguageServerShown& clang
                    clangd.reads.empty() ? std::string("Running, with no compile commands found")
                                         : "Running, reads " + clangd.reads,
                    clangd.reads.empty() ? ui::Severity::Warning : ui::Severity::Success);
-        server_row("fjls", preferences.fjls, fjls, "Starts with the first script header, Fjell file or GLSL file opened",
+        server_row("fjls", preferences.fjls, fjls, "Starts with the first script header, fjell file or GLSL file opened",
                    "Running", ui::Severity::Success);
     }
     ui::subheading("Text");

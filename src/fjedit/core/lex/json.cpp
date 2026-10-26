@@ -1,4 +1,4 @@
-// JSON, and Fjell's files written in it: keys are members, other strings
+// JSON, and fjell's files written in it: keys are members, other strings
 // strings, numbers numbers, true, false and null keywords. Comments are
 // taken too, as .fjgraph files have them.
 
