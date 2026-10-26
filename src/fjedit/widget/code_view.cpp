@@ -17,6 +17,7 @@
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/layout.hpp"
 #include "ftk/ui/kit/plate.hpp"
+#include "ftk/ui/kit/popup.hpp"
 #include "ftk/ui/kit/scope.hpp"
 #include "ftk/ui/kit/scrollbar.hpp"
 #include "ftk/ui/kit/text.hpp"
@@ -87,6 +88,8 @@ constexpr float CARD_SHIFT = 4.0f;
 // at 13, before the value, with room for 4 more after it.
 constexpr float SWATCH = 11.0f;
 constexpr float SWATCH_GAP = 4.0f;
+// The popup a swatch opens the kit's picker in, under the view's label.
+constexpr const char* PICKER = "##colour";
 
 // The kit's mono face at `size`, on lines `line` apart.
 core::TextStyle face(ftk::ui::Font font, float size, float line) {
@@ -296,6 +299,94 @@ bool take_fold_press(const Frame& frame, const Document& document, EditorView& v
     return false;
 }
 
+// The pick ended: what it wrote kept as the one step it held, or without
+// `keep` taken back and forgotten, the selections as before it.
+void end_pick(Document& document, EditorView& view, bool keep) {
+    const EditorView::Picking picking = std::move(*view.picking);
+    view.picking.reset();
+    document.history().close();
+    if (keep) return;
+    (void)document.take_back(picking.steps);
+    view.selections = picking.before;
+}
+
+// A press on a colour value's swatch, anywhere down its row, begins picking
+// its colour (sheet 56, P1): the kit's picker to open under the swatch, the
+// history held for what the pick writes; a pick under way is kept first.
+// True when the press was on one.
+bool take_swatch_press(Document& document, EditorView& view, const Frame& frame, const TextLayout& layout,
+                       std::span<const ColourValue> values, float swatch, glm::vec2 point) {
+    if (view.service == nullptr || point.x < frame.text.min.x) return false;
+    const Buffer& buffer = document.buffer();
+    const std::size_t line = line_under(frame, view, buffer, point.y);
+    const float top = frame.rect.min.y + static_cast<float>(view.folds.row_of(line)) * frame.line - view.scroll.y;
+    for (const ColourValue& value : values) {
+        const Position at = buffer.clamp(value.span.from);
+        if (at.line != line) continue;
+        const float left = std::round(frame.origin_x + layout.x_of(buffer, at));
+        if (point.x < left || point.x >= left + swatch) continue;
+        if (view.picking) end_pick(document, view, true);
+        document.history().close();
+        view.picking = EditorView::Picking{.span = value.span,
+                                           .version = document.version(),
+                                           .was = buffer.text(value.span),
+                                           .before = view.selections,
+                                           .steps = document.history().done(),
+                                           .rgba = {value.rgba[0], value.rgba[1], value.rgba[2], value.rgba[3]},
+                                           .alpha = value.rgba[3] < 1.0f,
+                                           .open_at = glm::vec2{left, top + frame.line},
+                                           .asked = {}};
+        document.history().hold();
+        return true;
+    }
+    return false;
+}
+
+// The colour values the view lays out and draws: the service's, with the
+// one being picked where the pick wrote it and in the colour picked, which
+// the service may not have caught up with.
+std::vector<ColourValue> values_shown(std::span<const ColourValue> values, const EditorView& view) {
+    std::vector<ColourValue> out(values.begin(), values.end());
+    if (!view.picking) return out;
+    const EditorView::Picking& picking = *view.picking;
+    std::erase_if(out, [&](const ColourValue& value) {
+        return value.span.from == picking.span.from ||
+               (value.span.from < picking.span.to && picking.span.from < value.span.to);
+    });
+    const ColourValue picked{.span = picking.span,
+                             .rgba = {picking.rgba.r, picking.rgba.g, picking.rgba.b, picking.rgba.a}};
+    out.insert(std::ranges::upper_bound(out, picked.span.from, {}, [](const ColourValue& value) { return value.span.from; }),
+               picked);
+    return out;
+}
+
+// Where text `text` put in at `from` ends.
+Position end_of(Position from, std::string_view text) {
+    const std::size_t last_break = text.rfind('\n');
+    if (last_break == std::string_view::npos) return {from.line, from.byte + text.size()};
+    return {from.line + static_cast<std::size_t>(std::ranges::count(text, '\n')), text.size() - last_break - 1};
+}
+
+// The service's answer for the colour last picked, for the text as it is:
+// its first form written over the value, joining the step the pick holds.
+void write_pick(Document& document, EditorView& view) {
+    EditorView::Picking& picking = *view.picking;
+    if (!picking.asked || !picking.asked->answered) return;
+    const ColourForms forms = picking.asked->answer;
+    picking.asked.reset();
+    if (forms.version != document.version() || forms.changes.empty()) return;
+    const Change& change = forms.changes.front();
+    if (change.span != picking.span || document.buffer().text(change.span) == change.text) return;
+    const Edit edit{.changes = {change}};
+    const Selections before = view.selections;
+    Edit undo = document.apply(edit);
+    view.selections.map(edit);
+    document.history().record(
+        {.made = edit, .undo = std::move(undo), .before = before, .after = view.selections, .kind = EditKind::Other});
+    picking.span = {.from = change.span.from, .to = end_of(change.span.from, change.text)};
+    picking.version = document.version();
+}
+
 // The word at `at`, or just `at` where there is none.
 Span word_or_place(const Buffer& buffer, Position at) {
     const Span word = word_at(buffer, at);
@@ -313,9 +404,12 @@ Selection by_units(Span origin, Span unit) {
 // row (three times, or on the line numbers); with Shift it takes the primary
 // selection there; with Alt it begins a column, or adds a caret if it doesn't
 // drag. Dragging goes on in the same unit, and past the top or bottom it
-// scrolls. A press on a fold's chevron or pill opens or closes it instead.
+// scrolls. A press on a fold's chevron or pill opens or closes it instead,
+// and one on a colour value's swatch (of `values`, `swatch` across) picks its
+// colour.
 void take_mouse(core::Context& ui, const core::Interaction& in, const Frame& frame, Document& document,
-                EditorView& view, const TextLayout& layout, float pill_width) {
+                EditorView& view, const TextLayout& layout, float pill_width, std::span<const ColourValue> values,
+                float swatch) {
     using By = EditorView::Drag::By;
     const Buffer& buffer = document.buffer();
     EditorView::Drag& drag = view.drag;
@@ -325,7 +419,9 @@ void take_mouse(core::Context& ui, const core::Interaction& in, const Frame& fra
     const bool fold_press = in.pressed && in.button == ftk::ui::MouseButton::Left &&
                             take_fold_press(frame, document, view, layout, pill_width,
                                             line_under(frame, view, buffer, point.y), point);
-    if (in.pressed && in.button == ftk::ui::MouseButton::Left && !fold_press) {
+    const bool swatch_press = in.pressed && in.button == ftk::ui::MouseButton::Left && !fold_press &&
+                              take_swatch_press(document, view, frame, layout, values, swatch, point);
+    if (in.pressed && in.button == ftk::ui::MouseButton::Left && !fold_press && !swatch_press) {
         const Position at = position_under(frame, view, buffer, layout, point);
         // Ctrl and a click on the code: where what is named there is
         // defined, the caret left where it is.
@@ -1339,6 +1435,20 @@ void draw_renamed(core::DrawList& dl, const Document& document, const EditorView
     }
 }
 
+// The colour value being picked (sheet 56, P1): its text washed and
+// underlined in the accent, as a name renamed in place is.
+void draw_picked(core::DrawList& dl, const Document& document, const EditorView& view, const Frame& frame,
+                 const TextLayout& layout, const Shown& rows) {
+    const Buffer& buffer = document.buffer();
+    const Span span{.from = buffer.clamp(view.picking->span.from), .to = buffer.clamp(view.picking->span.to)};
+    const std::optional<std::size_t> index = rows.index_of(view.folds, span.from.line);
+    if (!index || rows.lines[*index] != span.from.line || span.to.line != span.from.line) return;
+    const glm::vec2 min{frame.origin_x + layout.x_of(buffer, span.from) + room_before(layout, span.from), rows.y(*index)};
+    const glm::vec2 max{frame.origin_x + layout.x_of(buffer, span.to), rows.y(*index) + frame.line};
+    dl.rect_filled(min, max, theme::selection_secondary());
+    dl.rect_filled({min.x, max.y - RENAMED_UNDERLINE}, max, theme::accent());
+}
+
 void draw(core::Context& ui, const Document& document, const EditorView& view, const Frame& frame,
           const TextLayout& layout, const Faces& faces, bool focused, std::span<const Diagnostic> problems,
           const SemanticTokens* colours, std::span<const ColourValue> values) {
@@ -1405,6 +1515,7 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
     }
     if (finding) draw_matches(dl, document, view, frame, layout, rows, false);
     if (view.renaming && view.renaming->begun && !rows.lines.empty()) draw_renamed(dl, document, view, frame, layout, rows);
+    if (view.picking && !rows.lines.empty()) draw_picked(dl, document, view, frame, layout, rows);
 
     // Selections, a line break taking a space's width. On a folded row, what
     // the fold hides is selected with its mark.
@@ -1638,22 +1749,25 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     faces.pill_width = ui.text().caret_x(ELLIPSIS, faces.pill, ELLIPSIS.size()) + 2.0f * PILL_PAD;
     faces.swatch = sizes.swatch;
     const Buffer& buffer = document.buffer();
-    // Room along the lines before each colour value the service knows, for
-    // its swatch: laid out for the keys and the mouse as the text is now,
-    // and again once their edits are in, for drawing.
-    static const std::vector<ColourValue> NO_VALUES;
-    const auto values_now = [&]() -> const std::vector<ColourValue>& {
-        return view.service != nullptr ? view.service->colour_values(view.path) : NO_VALUES;
-    };
-    Rooms rooms = swatch_rooms(values_now(), buffer, sizes.swatch + sizes.swatch_gap);
-    layout.set_rooms(&rooms);
-
     // The code, and down its right side the minimap and the scrollbar.
     const float side_width = (view.minimap ? MINIMAP_WIDTH : 0.0f) + SCROLLBAR_WIDTH;
     const core::Rect code{.min = rect.min, .max = {std::max(rect.min.x, rect.max.x - side_width), rect.max.y}};
     const core::Rect side{.min = {code.max.x, rect.min.y}, .max = rect.max};
 
     catch_up(document, view);
+    // An edit the pick didn't make, in another view, keeps what it picked.
+    if (view.picking && view.picking->version != document.version()) end_pick(document, view, true);
+
+    // Room along the lines before each colour value the service knows, for
+    // its swatch: laid out for the keys and the mouse as the text is now,
+    // and again once their edits are in, for drawing.
+    static const std::vector<ColourValue> NO_VALUES;
+    const auto values_now = [&] {
+        return values_shown(view.service != nullptr ? view.service->colour_values(view.path) : NO_VALUES, view);
+    };
+    std::vector<ColourValue> values = values_now();
+    Rooms rooms = swatch_rooms(values, buffer, sizes.swatch + sizes.swatch_gap);
+    layout.set_rooms(&rooms);
     const Frame frame = place(code, view, buffer, faces.digit_width, sizes.line);
     layout.set_page_lines(std::max<std::size_t>(1, static_cast<std::size_t>(rect.height() / sizes.line) - 1));
 
@@ -1783,13 +1897,22 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         rename = end_rename(view, document, context, key.key == ftk::ui::Key::Enter);
         return true;
     };
+    // A pick is kept by Enter and put back by Esc, which do nothing else;
+    // any other key keeps it first, so what the key does is a step of its
+    // own, and then does what it does.
+    const auto ends_pick = [&](const Chord& key) {
+        if (!view.picking) return false;
+        const bool ends = enter_or_escape(key);
+        end_pick(document, view, !ends || key.key == ftk::ui::Key::Enter);
+        return ends;
+    };
 
     if (focus.focused) {
         // Tab indents here rather than moving the keyboard on.
         ui.claim_key(ftk::ui::Key::Tab, id);
         if (view.vim) {
             take_vim_keys(ui, keymap, view, vim_context, run, [&](const Chord& key) {
-                if (ends_rename(key)) return;
+                if (ends_pick(key) || ends_rename(key)) return;
                 const bool inserting = view.vim->mode() == vim::Mode::Insert;
                 to_vim(key);
                 // The completion list is insert mode's, and goes with it.
@@ -1811,12 +1934,12 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
                     run("edit.type", text);
                     ask_completion();
                 },
-                ends_rename);
+                [&](const Chord& key) { return ends_pick(key) || ends_rename(key); });
         }
     }
 
     const Selections before_mouse = view.selections;
-    take_mouse(ui, in, frame, document, view, layout, faces.pill_width);
+    take_mouse(ui, in, frame, document, view, layout, faces.pill_width, values, sizes.swatch);
     // The rows kept around the caret are for the keys: a caret the mouse
     // placed never scrolls the text from under it.
     const bool placed = view.selections != before_mouse;
@@ -1849,8 +1972,15 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     view.folds.catch_up(document);
     for (const Selection& selection : view.selections.all()) (void)view.folds.reveal(selection.caret.line);
 
+    // Typed, or another edit the pick didn't make: what it picked is kept.
+    // Then the service's answer for the colour last picked is written over
+    // the value.
+    if (view.picking && view.picking->version != document.version()) end_pick(document, view, true);
+    if (view.picking) write_pick(document, view);
+
     const bool edited = document.version() != version;
-    if (edited) rooms = swatch_rooms(values_now(), buffer, sizes.swatch + sizes.swatch_gap);
+    values = values_now();
+    rooms = swatch_rooms(values, buffer, sizes.swatch + sizes.swatch_gap);
     if (edited || view.selections != before) {
         view.moved = ui.time();
         view.reveal = true;
@@ -1870,12 +2000,44 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const std::vector<Diagnostic>& problems =
         view.service != nullptr ? view.service->diagnostics(view.path) : NO_PROBLEMS;
     const SemanticTokens* colours = view.service != nullptr ? view.service->tokens(view.path) : nullptr;
-    draw(ui, document, view, drawn, layout, faces, focus.focused, problems, colours, values_now());
+    draw(ui, document, view, drawn, layout, faces, focus.focused, problems, colours, values);
 
     // The kit's pieces from here are the view's: their ids are under its
     // label.
     const ftk::ui::IdScope scope(label);
     draw_side(ui, document, view, rect, side, sizes.line, problems);
+
+    // The kit's picker under a swatch being picked from (sheet 56, P1),
+    // opened where the press left it; a click outside it, which closes it,
+    // keeps what was picked. Each colour dragged to asks the service how the
+    // value is written as it.
+    if (view.picking) {
+        EditorView::Picking& picking = *view.picking;
+        if (picking.open_at) {
+            ftk::ui::open_popup(PICKER, *picking.open_at);
+            picking.open_at.reset();
+        } else if (!ftk::ui::popup_open(PICKER)) {
+            end_pick(document, view, true);
+            ui.request_frame();
+        }
+    }
+    if (view.picking) {
+        EditorView::Picking& picking = *view.picking;
+        if (ftk::ui::color_popup(PICKER, picking.rgba, picking.alpha).changed && view.service != nullptr) {
+            picking.asked = view.service->colour_forms(view.path, picking.span,
+                                                       {picking.rgba.r, picking.rgba.g, picking.rgba.b, picking.rgba.a});
+        }
+        // Enter or Esc while the picker has the keyboard, a field of its own
+        // not taking them: kept, or put back, and the code has the keyboard
+        // again. The picker closes as the frame ends.
+        const bool enter = ui.key_pressed(ftk::ui::Key::Enter) && !ui.key_claimed(ftk::ui::Key::Enter);
+        const bool escape = ui.key_pressed(ftk::ui::Key::Escape) && !ui.key_claimed(ftk::ui::Key::Escape);
+        if (enter || escape) {
+            end_pick(document, view, enter);
+            ui.set_focus(id);
+            ui.request_frame();
+        }
+    }
 
     if (focus.focused) {
         // The input method's window goes at the primary caret, and the
@@ -1989,6 +2151,11 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
             .rename = rename,
             .asked = std::move(vim_asked),
             .zoom = zoom};
+}
+
+std::optional<std::string> picking_hint(const EditorView& view) {
+    if (!view.picking) return std::nullopt;
+    return std::format("Esc puts back {} \xC2\xB7 Enter keeps it", view.picking->was);
 }
 
 } // namespace fjedit

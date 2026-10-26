@@ -15,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -2028,9 +2029,10 @@ struct Coloured {
         return out;
     }
 
-    // The swatch: the one shape in red.
+    // The swatch: the one square in red, the picker's hue bar aside.
     [[nodiscard]] ftk::ui::core::Rect swatch() const {
-        const std::vector<ftk::ui::core::Rect> red = drawn_in_code(e.h, {1.0f, 0.0f, 0.0f, 1.0f});
+        std::vector<ftk::ui::core::Rect> red = drawn_in_code(e.h, {1.0f, 0.0f, 0.0f, 1.0f});
+        std::erase_if(red, [](const ftk::ui::core::Rect& r) { return r.max.x - r.min.x != r.max.y - r.min.y; });
         REQUIRE(red.size() == 1);
         return red.front();
     }
@@ -2066,12 +2068,13 @@ TEST_CASE("A swatch grows with the code's text size", "[code_view][colours]") {
     CHECK(swatch.max.y - swatch.min.y == 22.0f);
 }
 
-TEST_CASE("A click on a swatch puts the caret before its value, and the text's clicks land where it is drawn",
+TEST_CASE("Clicks around a swatch land where the text is drawn: before its value, and on each character after",
           "[code_view][colours]") {
     Coloured c;
     c.name_red();
     const ftk::ui::core::Rect swatch = c.swatch();
-    c.e.h.click_at(swatch.centre());
+    // Left of the swatch, on the space before it: before the space's end.
+    c.e.h.click_at({swatch.min.x - 1.0f, swatch.centre().y});
     CHECK(c.e.caret() == Position{0, 11});
     // Right of the middle of the value's first two characters: after each.
     // Each click waits out the one before, or two would be a double click.
@@ -2083,10 +2086,6 @@ TEST_CASE("A click on a swatch puts the caret before its value, and the text's c
         c.e.h.click_at({glyph.min.x + 0.8f * (glyph.max.x - glyph.min.x), glyph.centre().y});
         CHECK(c.e.caret() == Position{0, 12 + i});
     }
-    // Left of the swatch, on the space before it: before the space's end.
-    wait(c.e, 0.6);
-    c.e.h.click_at({swatch.min.x - 1.0f, swatch.centre().y});
-    CHECK(c.e.caret() == Position{0, 11});
 }
 
 TEST_CASE("A caret before a colour value is drawn before its swatch, Vim's block after it on the value",
@@ -2094,7 +2093,7 @@ TEST_CASE("A caret before a colour value is drawn before its swatch, Vim's block
     Coloured c;
     c.name_red();
     const ftk::ui::core::Rect swatch = c.swatch();
-    c.e.h.click_at(swatch.centre());
+    c.e.h.click_at({swatch.min.x - 1.0f, swatch.centre().y});
     c.e.h.step();
     std::vector<ftk::ui::core::Rect> carets = carets_drawn(c.e.h);
     REQUIRE(carets.size() == 1);
@@ -2102,11 +2101,143 @@ TEST_CASE("A caret before a colour value is drawn before its swatch, Vim's block
 
     c.e.view.vim.emplace();
     wait(c.e, 0.6);
-    c.e.h.click_at(swatch.centre());
+    c.e.h.click_at({swatch.min.x - 1.0f, swatch.centre().y});
     c.e.h.step();
     carets = carets_drawn(c.e.h);
     REQUIRE(carets.size() == 1);
     CHECK(c.e.caret() == Position{0, 11});
     // The block over the value's first character, past the swatch's room.
     CHECK(carets.front().min.x == swatch.min.x + 15.0f);
+}
+
+namespace {
+
+// A sheet with red named, its swatch pressed: the picker open under it.
+struct Picking : Coloured {
+    ftk::ui::core::Rect picker{};
+
+    Picking() {
+        name_red();
+        e.h.click_at(swatch().centre());
+        e.h.step(2);
+        const std::optional<ftk::ui::core::Rect> open = e.h.popup();
+        REQUIRE(open.has_value());
+        picker = *open;
+    }
+
+    // Drags across the picker's square, from `from` to `to` of its width in,
+    // a little way down, and gives the colour the service was asked about.
+    std::array<float, 4> drag(float from, float to) {
+        // The square starts inside the popup's padding.
+        const glm::vec2 corner = picker.min + glm::vec2{10.0f, 8.0f};
+        const float wide = picker.max.x - picker.min.x - 60.0f;
+        e.h.drag({corner.x + from * wide, corner.y + 30.0f}, {corner.x + to * wide, corner.y + 40.0f});
+        REQUIRE_FALSE(language.forms.empty());
+        return language.forms_colours.back();
+    }
+
+    // The service answers the last question with `text` over what it asked.
+    void answer(std::string_view text) {
+        FakeLanguage::answer(language.forms.back(),
+                             ColourForms{.changes = {{.span = language.forms_spans.back(), .text = std::string(text)}},
+                                         .version = e.document.version()});
+        e.h.step(2);
+    }
+};
+
+} // namespace
+
+TEST_CASE("A press on a swatch opens the kit's picker under it, the caret where it was", "[code_view][colours]") {
+    Picking p;
+    CHECK(p.e.caret() == Position{0, 0});
+    const ftk::ui::core::Rect swatch = p.swatch();
+    CHECK(p.picker.min.x == Catch::Approx(swatch.min.x));
+    CHECK(p.picker.min.y >= swatch.max.y);
+    CHECK(picking_hint(p.e.view) == "Esc puts back #ff0000 \xC2\xB7 Enter keeps it");
+}
+
+TEST_CASE("A colour dragged to in the picker is asked how the value is written, and the answer writes it",
+          "[code_view][colours]") {
+    Picking p;
+    const std::array<float, 4> asked = p.drag(0.2f, 0.7f);
+    // About the value as it stands, in the colour dragged to.
+    CHECK(p.language.forms_spans.back() == Span{{0, 11}, {0, 18}});
+    CHECK(asked != std::array<float, 4>{1.0f, 0.0f, 0.0f, 1.0f});
+    p.answer("#3fb8c4");
+    CHECK(p.e.text() == "a { color: #3fb8c4; }");
+    // Its swatch in the colour picked, where the value is now; the picker
+    // still open.
+    CHECK_FALSE(drawn_in_code(p.e.h, {asked[0], asked[1], asked[2], asked[3]}).empty());
+    CHECK(p.e.h.popup().has_value());
+    // The next colour is asked about the value as it is now written.
+    (void)p.drag(0.7f, 0.4f);
+    CHECK(p.language.forms_spans.back() == Span{{0, 11}, {0, 18}});
+}
+
+TEST_CASE("Enter keeps the colour picked, the whole pick one step of the history", "[code_view][colours]") {
+    Picking p;
+    (void)p.drag(0.2f, 0.7f);
+    p.answer("#3fb8c4");
+    (void)p.drag(0.7f, 0.4f);
+    p.answer("rgb(63, 184, 196)");
+    CHECK(p.e.text() == "a { color: rgb(63, 184, 196); }");
+    p.e.h.press(Key::Enter);
+    p.e.h.step(2);
+    CHECK(p.e.text() == "a { color: rgb(63, 184, 196); }");
+    CHECK_FALSE(p.e.h.popup().has_value());
+    CHECK_FALSE(picking_hint(p.e.view).has_value());
+    // One undo takes the whole pick back.
+    p.e.h.press(Key::Z, CTRL);
+    p.e.h.step();
+    CHECK(p.e.text() == "a { color: #ff0000; }");
+    CHECK_FALSE(p.e.document.history().can_undo());
+}
+
+TEST_CASE("Esc puts the value back as it was written, with nothing left to undo", "[code_view][colours]") {
+    Picking p;
+    (void)p.drag(0.2f, 0.7f);
+    p.answer("#3fb8c4");
+    p.e.h.press(Key::Escape);
+    p.e.h.step(2);
+    CHECK(p.e.text() == "a { color: #ff0000; }");
+    CHECK_FALSE(p.e.h.popup().has_value());
+    CHECK_FALSE(p.e.document.history().can_undo());
+}
+
+TEST_CASE("A click outside the picker keeps the colour picked, and so does typing", "[code_view][colours]") {
+    {
+        Picking p;
+        (void)p.drag(0.2f, 0.7f);
+        p.answer("#3fb8c4");
+        wait(p.e, 0.6);
+        p.e.h.click_at({PAST_END, row_y(5)});
+        p.e.h.step(2);
+        CHECK(p.e.text() == "a { color: #3fb8c4; }");
+        CHECK_FALSE(p.e.h.popup().has_value());
+        CHECK_FALSE(picking_hint(p.e.view).has_value());
+    }
+    {
+        // Typed while the code still has the keyboard, before the picker
+        // is touched: the pick is kept first, and what is typed goes in.
+        Picking p;
+        p.e.h.type("x");
+        p.e.h.step(2);
+        CHECK(p.e.text() == "xa { color: #ff0000; }");
+        CHECK_FALSE(picking_hint(p.e.view).has_value());
+        CHECK_FALSE(p.e.h.popup().has_value());
+    }
+}
+
+TEST_CASE("Once the picker has the keyboard, Enter there keeps the colour and gives the code the keyboard back",
+          "[code_view][colours]") {
+    Picking p;
+    (void)p.drag(0.2f, 0.7f);
+    p.answer("#3fb8c4");
+    p.e.h.press(Key::Enter);
+    p.e.h.step(2);
+    CHECK(p.e.text() == "a { color: #3fb8c4; }");
+    CHECK_FALSE(p.e.h.popup().has_value());
+    p.e.h.type("x");
+    p.e.h.step();
+    CHECK(p.e.text() == "xa { color: #3fb8c4; }");
 }

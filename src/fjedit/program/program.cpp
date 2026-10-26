@@ -1152,6 +1152,12 @@ void Program::draw_status() {
         }
         if (!note_.empty()) ui::status_item(ui::icon::warning, note_);
         if (!told_.empty()) ui::status_message(ui::StatusTone::Plain, told_);
+        // While a colour is picked from its swatch, what Esc and Enter do.
+        if (tab != nullptr) {
+            if (const std::optional<std::string> hint = picking_hint(*tab->view)) {
+                ui::status_message(ui::StatusTone::Plain, *hint);
+            }
+        }
         if (entry_answer_) {
             ui::status_note(entry_answer_->written ? ui::StatusTone::Success : ui::StatusTone::Error, entry_answer_->text,
                             entry_answer_->where);

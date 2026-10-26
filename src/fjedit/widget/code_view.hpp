@@ -25,6 +25,7 @@
 #include "ftk/ui/core/rect.hpp"
 
 #include <glm/vec2.hpp>
+#include <glm/vec4.hpp>
 
 #include <cstdint>
 #include <filesystem>
@@ -179,6 +180,31 @@ struct EditorView {
         bool begun{false};
     };
     std::optional<Renaming> renaming{};
+    /// A colour value's colour being picked from its swatch (sheet 56, P1):
+    /// the kit's picker open under the swatch and the value written over as
+    /// it is dragged, as one step held open, until Enter or a click outside
+    /// keeps it or Esc puts it back.
+    struct Picking {
+        /// Where the value is in the text at `version`, what it was written
+        /// as, and the selections, when the pick began.
+        Span span{};
+        uint64_t version{0};
+        std::string was{};
+        Selections before{};
+        /// How many steps the history had done when the pick began, which
+        /// putting the value back returns to.
+        std::size_t steps{0};
+        /// The colour picked so far, sRGB, and whether the picker shows
+        /// alpha: the value's colour had some.
+        glm::vec4 rgba{0.0f, 0.0f, 0.0f, 1.0f};
+        bool alpha{false};
+        /// Where the picker opens, until it does.
+        std::optional<glm::vec2> open_at{};
+        /// How the value is written as the colour last picked, asked and not
+        /// yet answered.
+        Asked<ColourForms> asked{};
+    };
+    std::optional<Picking> picking{};
     /// Its completion list, while one is open (sheet 39, P1).
     CompletionState completing{};
     /// Where what is named at the caret or a Ctrl click is defined, asked
@@ -257,5 +283,10 @@ struct CodeViewResult {
 /// pointer there before it does.
 CodeViewResult code_view(std::string_view label, Document& document, EditorView& view, const Keymap& keymap,
                          ftk::ui::core::Rect rect);
+
+/// What the status bar says while `view` picks a colour (sheet 56, P1):
+/// that Esc puts the value back as it was written and Enter keeps the new
+/// one. Nothing while it picks none.
+[[nodiscard]] std::optional<std::string> picking_hint(const EditorView& view);
 
 } // namespace fjedit
