@@ -1,4 +1,9 @@
-# fjedit
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/fjedit-lockup-dark.svg">
+    <img src="brand/fjedit-lockup-light.svg" alt="fjedit" width="360">
+  </picture>
+</p>
 
 A code editor built on [ftk](https://github.com/thomppa030/ftk). It edits C++
 with help from clangd, and the Fjell engine's own files: shaders, stylesheets,
