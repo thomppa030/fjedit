@@ -1,8 +1,9 @@
 #pragma once
 
 // How the code view lays its text out: the UI core's text, in one face and
-// size, with a tab reaching on to the next stop, and the lines of the view's
-// closed folds hidden. What moving a caret up and down asks of the text
+// size, with a tab reaching on to the next stop, room along a line for what
+// isn't text (a colour value's swatch), and the lines of the view's closed
+// folds hidden. What moving a caret up and down asks of the text
 // (fjedit::Layout), and what the view draws by.
 
 #include "fjedit/core/layout.hpp"
@@ -10,9 +11,26 @@
 #include "ftk/ui/core/text.hpp"
 
 #include <cstddef>
+#include <map>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace fjedit {
+
+/// Room along a line that isn't text, before the character at `byte`: where
+/// the view draws a colour value's swatch. A position at `byte` is before
+/// it, the character after it.
+struct Room {
+    std::size_t byte{0};
+    float width{0.0f};
+
+    bool operator==(const Room&) const = default;
+};
+
+/// The rooms along each line that has any, by line, each line's in the
+/// order of their bytes.
+using Rooms = std::map<std::size_t, std::vector<Room>>;
 
 class TextLayout final : public Layout {
 public:
@@ -35,12 +53,21 @@ public:
     /// shows every line.
     void set_folds(const Folds* folds) { folds_ = folds; }
 
-    /// How far along `line` byte `to` is, given byte `from` is at `x`: the
-    /// characters between, and each tab on to its next stop.
-    [[nodiscard]] float advance(std::string_view line, std::size_t from, std::size_t to, float x) const;
+    /// Lays `rooms` along their lines, while they live; null lays none.
+    void set_rooms(const Rooms* rooms) { rooms_ = rooms; }
 
-    /// The byte of `line` nearest `x` along it (see Layout::position_at()).
-    [[nodiscard]] std::size_t byte_at(std::string_view line, float x) const;
+    /// The rooms along line `line`; none where it has none.
+    [[nodiscard]] std::span<const Room> rooms_of(std::size_t line) const;
+
+    /// How far along `line` byte `to` is, given byte `from` is at `x`: the
+    /// characters between, each tab on to its next stop, and each of
+    /// `rooms` (the line's) before a byte from `from` up to `to`.
+    [[nodiscard]] float advance(std::string_view line, std::size_t from, std::size_t to, float x,
+                                std::span<const Room> rooms = {}) const;
+
+    /// The byte of `line` nearest `x` along it, laid out with `rooms` (see
+    /// Layout::position_at()); on a room, the byte after it.
+    [[nodiscard]] std::size_t byte_at(std::string_view line, float x, std::span<const Room> rooms = {}) const;
 
     [[nodiscard]] ftk::ui::core::TextStyle style() const { return style_; }
     [[nodiscard]] float line_height() const;
@@ -49,6 +76,11 @@ public:
 private:
     // Where the tab stop after `x` is.
     [[nodiscard]] float next_stop(float x) const;
+    // advance() and byte_at() between rooms: the text's alone, from byte
+    // `from` at `x`.
+    [[nodiscard]] float advance_text(std::string_view line, std::size_t from, std::size_t to, float x) const;
+    [[nodiscard]] std::size_t byte_in(std::string_view line, std::size_t from, std::size_t to, float from_x,
+                                      float x) const;
 
     ftk::ui::core::TextSystem* text_;
     ftk::ui::core::TextStyle style_;
@@ -56,6 +88,7 @@ private:
     std::size_t page_lines_{20};
     float space_;
     const Folds* folds_{nullptr};
+    const Rooms* rooms_{nullptr};
 };
 
 } // namespace fjedit

@@ -11,9 +11,11 @@
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/theme.hpp"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <span>
@@ -1998,3 +2000,113 @@ TEST_CASE("With Vim on, a dot makes an insert again with the completion taken in
     REQUIRE(c.e.document.buffer().line(1) == "    rotaterotate");
 }
 
+
+namespace {
+
+// A sheet with one colour, red, where its value is written, the service
+// naming it.
+struct Coloured {
+    FakeLanguage language;
+    Editor e;
+
+    explicit Coloured(float text_size = CODE_TEXT) : e("a { color: #ff0000; }", "hud.fjss") {
+        e.view.service = &language;
+        e.view.path = "hud.fjss";
+        e.view.text_size = text_size;
+        e.h.step(2);
+    }
+
+    void name_red() {
+        language.values = {{.span = {{0, 11}, {0, 18}}, .rgba = {1.0f, 0.0f, 0.0f, 1.0f}}};
+        e.h.step(2);
+    }
+
+    // The value's glyphs, drawn in the colour of a number, left to right.
+    [[nodiscard]] std::vector<ftk::ui::core::Rect> glyphs() const {
+        std::vector<ftk::ui::core::Rect> out = drawn_in_code(e.h, ftk::theme::code_number());
+        std::ranges::sort(out, {}, [](const ftk::ui::core::Rect& r) { return r.min.x; });
+        return out;
+    }
+
+    // The swatch: the one shape in red.
+    [[nodiscard]] ftk::ui::core::Rect swatch() const {
+        const std::vector<ftk::ui::core::Rect> red = drawn_in_code(e.h, {1.0f, 0.0f, 0.0f, 1.0f});
+        REQUIRE(red.size() == 1);
+        return red.front();
+    }
+};
+
+} // namespace
+
+TEST_CASE("A colour value's swatch is drawn before it in its colour, the text after it moved by its room",
+          "[code_view][colours]") {
+    Coloured c;
+    const std::vector<ftk::ui::core::Rect> before = c.glyphs();
+    REQUIRE_FALSE(before.empty());
+    c.name_red();
+    const ftk::ui::core::Rect swatch = c.swatch();
+    // 11 across at 13, in the middle of its row.
+    CHECK(swatch.max.x - swatch.min.x == 11.0f);
+    CHECK(swatch.max.y - swatch.min.y == 11.0f);
+    CHECK(swatch.min.y == std::round((CODE_LINE - 11.0f) * 0.5f));
+    // The value moved along by the swatch and the room after it, and starts
+    // past it.
+    const std::vector<ftk::ui::core::Rect> after = c.glyphs();
+    REQUIRE(after.size() == before.size());
+    CHECK(after.front().min.x == Catch::Approx(before.front().min.x + 15.0f));
+    CHECK(after.front().min.x > swatch.max.x);
+    CHECK(swatch.min.x <= before.front().min.x);
+}
+
+TEST_CASE("A swatch grows with the code's text size", "[code_view][colours]") {
+    Coloured c(2.0f * CODE_TEXT);
+    c.name_red();
+    const ftk::ui::core::Rect swatch = c.swatch();
+    CHECK(swatch.max.x - swatch.min.x == 22.0f);
+    CHECK(swatch.max.y - swatch.min.y == 22.0f);
+}
+
+TEST_CASE("A click on a swatch puts the caret before its value, and the text's clicks land where it is drawn",
+          "[code_view][colours]") {
+    Coloured c;
+    c.name_red();
+    const ftk::ui::core::Rect swatch = c.swatch();
+    c.e.h.click_at(swatch.centre());
+    CHECK(c.e.caret() == Position{0, 11});
+    // Right of the middle of the value's first two characters: after each.
+    // Each click waits out the one before, or two would be a double click.
+    const std::vector<ftk::ui::core::Rect> glyphs = c.glyphs();
+    REQUIRE(glyphs.size() >= 2);
+    for (std::size_t i = 0; i < 2; ++i) {
+        const ftk::ui::core::Rect& glyph = glyphs[i];
+        wait(c.e, 0.6);
+        c.e.h.click_at({glyph.min.x + 0.8f * (glyph.max.x - glyph.min.x), glyph.centre().y});
+        CHECK(c.e.caret() == Position{0, 12 + i});
+    }
+    // Left of the swatch, on the space before it: before the space's end.
+    wait(c.e, 0.6);
+    c.e.h.click_at({swatch.min.x - 1.0f, swatch.centre().y});
+    CHECK(c.e.caret() == Position{0, 11});
+}
+
+TEST_CASE("A caret before a colour value is drawn before its swatch, Vim's block after it on the value",
+          "[code_view][colours]") {
+    Coloured c;
+    c.name_red();
+    const ftk::ui::core::Rect swatch = c.swatch();
+    c.e.h.click_at(swatch.centre());
+    c.e.h.step();
+    std::vector<ftk::ui::core::Rect> carets = carets_drawn(c.e.h);
+    REQUIRE(carets.size() == 1);
+    CHECK(carets.front().centre().x == Catch::Approx(swatch.min.x));
+
+    c.e.view.vim.emplace();
+    wait(c.e, 0.6);
+    c.e.h.click_at(swatch.centre());
+    c.e.h.step();
+    carets = carets_drawn(c.e.h);
+    REQUIRE(carets.size() == 1);
+    CHECK(c.e.caret() == Position{0, 11});
+    // The block over the value's first character, past the swatch's room.
+    CHECK(carets.front().min.x == swatch.min.x + 15.0f);
+}

@@ -13,6 +13,7 @@
 
 #include "ftk/base/utf8.hpp"
 #include "ftk/ui/core/context.hpp"
+#include "ftk/ui/kit/color_field.hpp"
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/layout.hpp"
 #include "ftk/ui/kit/plate.hpp"
@@ -82,6 +83,10 @@ constexpr glm::vec2 CARD_PAD{12.0f, 10.0f};
 constexpr float CARD_NARROWEST = 160.0f;
 constexpr float CARD_WIDEST = 480.0f;
 constexpr float CARD_SHIFT = 4.0f;
+// A colour value's swatch (sheet 56, S1): the kit's, 11 across beside code
+// at 13, before the value, with room for 4 more after it.
+constexpr float SWATCH = 11.0f;
+constexpr float SWATCH_GAP = 4.0f;
 
 // The kit's mono face at `size`, on lines `line` apart.
 core::TextStyle face(ftk::ui::Font font, float size, float line) {
@@ -104,11 +109,14 @@ struct Sizes {
     float pill;
     float pill_height;
     float message;
+    float swatch;
+    float swatch_gap;
 
     explicit Sizes(float text_size)
         : text(text_size), line(code_line(text_size)),
           gutter(text_size * GUTTER_TEXT / CODE_TEXT), pill(text_size * PILL_TEXT / CODE_TEXT),
-          pill_height(std::round(text_size * PILL_HEIGHT / CODE_TEXT)), message(text_size * MESSAGE_TEXT / CODE_TEXT) {}
+          pill_height(std::round(text_size * PILL_HEIGHT / CODE_TEXT)), message(text_size * MESSAGE_TEXT / CODE_TEXT),
+          swatch(std::round(text_size * SWATCH / CODE_TEXT)), swatch_gap(std::round(text_size * SWATCH_GAP / CODE_TEXT)) {}
 };
 
 // The faces the view draws in besides the code's, and what it measures by
@@ -120,7 +128,34 @@ struct Faces {
     float digit_width{0.0f};
     float pill_width{0.0f};
     float pill_height{0.0f};
+    // A colour value's swatch across.
+    float swatch{0.0f};
 };
+
+// The room before each of `values` for its swatch and the gap after it,
+// `width` across.
+Rooms swatch_rooms(std::span<const ColourValue> values, const Buffer& buffer, float width) {
+    Rooms rooms;
+    for (const ColourValue& value : values) {
+        const Position at = buffer.clamp(value.span.from);
+        std::vector<Room>& along = rooms[at.line];
+        if (along.empty() || along.back().byte < at.byte) {
+            along.push_back({.byte = at.byte, .width = width});
+        } else if (std::ranges::none_of(along, [&](const Room& room) { return room.byte == at.byte; })) {
+            along.insert(std::ranges::upper_bound(along, at.byte, {}, &Room::byte), {.byte = at.byte, .width = width});
+        }
+    }
+    return rooms;
+}
+
+// The room the layout keeps before the character at `at`: how far past its
+// place the character is drawn.
+float room_before(const TextLayout& layout, Position at) {
+    for (const Room& room : layout.rooms_of(at.line)) {
+        if (room.byte == at.byte) return room.width;
+    }
+    return 0.0f;
+}
 
 // The selections and folds brought up to date with edits made in another
 // view.
@@ -1058,29 +1093,41 @@ void reveal(EditorView& view, const Frame& frame, const Buffer& buffer, const Te
 
 // Draws `text`'s bytes `from` to `to` in `colour`, the first at `x` along
 // from `origin_x`; returns where the last ends. Tabs draw nothing and reach
-// on to their stops.
+// on to their stops, and each of `rooms` (the line's) is left empty before
+// its character.
 float draw_run(core::Context& ui, const TextLayout& layout, std::string_view text, std::size_t from, std::size_t to,
-               float x, float origin_x, float y, Color colour) {
+               float x, float origin_x, float y, Color colour, std::span<const Room> rooms = {}) {
     core::DrawList& dl = ui.draw_list();
     while (from < to) {
-        const std::size_t tab = text.find('\t', from);
-        const std::size_t end = std::min(tab, to);
+        for (const Room& room : rooms) {
+            if (room.byte == from) x += room.width;
+        }
+        // Up to the next tab, or the next room.
+        std::size_t end = std::min(text.find('\t', from), to);
+        for (const Room& room : rooms) {
+            if (room.byte > from && room.byte < end) end = room.byte;
+        }
         if (end > from) {
             ui.text().draw(dl, {origin_x + x, y}, colour, text.substr(from, end - from), layout.style());
             x = layout.advance(text, from, end, x);
         }
         if (end == to) break;
-        x = layout.advance(text, end, end + 1, x);
-        from = end + 1;
+        if (text[end] == '\t') {
+            x = layout.advance(text, end, end + 1, x);
+            from = end + 1;
+        } else {
+            from = end;
+        }
     }
     return x;
 }
 
 // Line `line`'s text from byte `from` up to byte `to`, coloured by its
-// tokens, the first byte drawn at `x` along from `origin_x`; returns where
-// it ends.
+// tokens, the first byte drawn at `x` along from `origin_x`, laid out with
+// `rooms`; returns where it ends.
 float draw_tokens(core::Context& ui, const Document& document, std::span<const Token> tokens, const TextLayout& layout,
-                  std::size_t line, std::size_t from, std::size_t to, float x, float origin_x, float y) {
+                  std::size_t line, std::size_t from, std::size_t to, float x, float origin_x, float y,
+                  std::span<const Room> rooms) {
     const std::string_view text = document.buffer().line(line);
     to = std::min(to, text.size());
     std::size_t at = from;
@@ -1089,11 +1136,11 @@ float draw_tokens(core::Context& ui, const Document& document, std::span<const T
         if (token.begin >= to) break;
         const std::size_t begin = std::max<std::size_t>(token.begin, at);
         const std::size_t end = std::min<std::size_t>(token.end, to);
-        x = draw_run(ui, layout, text, at, begin, x, origin_x, y, theme::text());
-        x = draw_run(ui, layout, text, begin, end, x, origin_x, y, code_colour(token.kind));
+        x = draw_run(ui, layout, text, at, begin, x, origin_x, y, theme::text(), rooms);
+        x = draw_run(ui, layout, text, begin, end, x, origin_x, y, code_colour(token.kind), rooms);
         at = end;
     }
-    return draw_run(ui, layout, text, at, to, x, origin_x, y, theme::text());
+    return draw_run(ui, layout, text, at, to, x, origin_x, y, theme::text(), rooms);
 }
 
 // The tokens line `line` is coloured by: its lexer's, with the language
@@ -1294,7 +1341,7 @@ void draw_renamed(core::DrawList& dl, const Document& document, const EditorView
 
 void draw(core::Context& ui, const Document& document, const EditorView& view, const Frame& frame,
           const TextLayout& layout, const Faces& faces, bool focused, std::span<const Diagnostic> problems,
-          const SemanticTokens* colours) {
+          const SemanticTokens* colours, std::span<const ColourValue> values) {
     const Buffer& buffer = document.buffer();
     const Folds& folds = view.folds;
     core::DrawList& dl = ui.draw_list();
@@ -1398,16 +1445,18 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
         const float y = rows.y(index);
         const std::size_t line = rows.lines[index];
         const std::span<const Token> tokens = line_tokens(document, colours, line, scratch);
+        const std::span<const Room> rooms = layout.rooms_of(line);
         if (!composing.empty() && line == caret.line) {
-            (void)draw_tokens(ui, document, tokens, layout, line, 0, caret.byte, 0.0f, frame.origin_x, y);
+            (void)draw_tokens(ui, document, tokens, layout, line, 0, caret.byte, 0.0f, frame.origin_x, y, rooms);
             const float left = frame.origin_x + caret_x;
             ui.text().draw(dl, {left, y}, theme::text(), composing, layout.style());
             dl.line({left, y + frame.line - COMPOSING_UNDERLINE}, {left + composed_width, y + frame.line - COMPOSING_UNDERLINE},
                     theme::text());
             (void)draw_tokens(ui, document, tokens, layout, line, caret.byte, buffer.line(line).size(),
-                              caret_x + composed_width, frame.origin_x, y);
+                              caret_x + composed_width, frame.origin_x, y, rooms);
         } else {
-            (void)draw_tokens(ui, document, tokens, layout, line, 0, buffer.line(line).size(), 0.0f, frame.origin_x, y);
+            (void)draw_tokens(ui, document, tokens, layout, line, 0, buffer.line(line).size(), 0.0f, frame.origin_x, y,
+                              rooms);
         }
         for (const FoldMark& mark : drawn[index].marks) {
             const float left = std::round(frame.origin_x + mark.pill_from);
@@ -1416,12 +1465,25 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
                            theme::surface_raised(), faces.pill_height * 0.5f);
             ui.text().draw(dl, {left + PILL_PAD, y}, theme::text_secondary(), ELLIPSIS, faces.pill);
             if (mark.closer) {
+                // Its line laid out as text alone, as the row measures it.
                 std::vector<Token> closer_scratch;
                 (void)draw_tokens(ui, document, line_tokens(document, colours, mark.closer->line, closer_scratch), layout,
                                   mark.closer->line, mark.closer->byte, buffer.line(mark.closer->line).size(),
-                                  mark.closer_x, frame.origin_x, y);
+                                  mark.closer_x, frame.origin_x, y, {});
             }
         }
+    }
+
+    // Before each colour value in sight, its swatch (sheet 56, S1), in the
+    // room the layout keeps for it, half its alpha over checks.
+    for (const ColourValue& value : values) {
+        const Position at = buffer.clamp(value.span.from);
+        const std::optional<std::size_t> index = rows.index_of(folds, at.line);
+        if (!index || rows.lines[*index] != at.line) continue;
+        const float left = std::round(frame.origin_x + layout.x_of(buffer, at));
+        const float top = std::round(rows.y(*index) + (frame.line - faces.swatch) * 0.5f);
+        ftk::ui::draw_swatch({left, top}, {left + faces.swatch, top + faces.swatch},
+                             {value.rgba[0], value.rgba[1], value.rgba[2], value.rgba[3]}, value.rgba[3] < 1.0f);
     }
 
     // Each problem's code underlined with a wave, on the lines in sight; one
@@ -1489,19 +1551,20 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
                 dl.rect_filled({x - CARET_WIDTH * 0.5f, top}, {x + CARET_WIDTH * 0.5f, bottom}, theme::text());
                 continue;
             }
-            // The character's cell; at a line's end, or on an empty line, a
-            // space's.
+            // The character's cell, past a swatch's room before it; at a
+            // line's end, or on an empty line, a space's.
             const std::string_view text = buffer.line(at.line);
             const Position next = char_right(buffer, at);
             const std::size_t end = next.line == at.line ? next.byte : at.byte;
-            const float right = end > at.byte ? layout.x_of(buffer, next) : along + layout.space_width();
-            const float left_x = std::round(frame.origin_x + along);
+            const float glyph = along + room_before(layout, at);
+            const float right = end > at.byte ? layout.x_of(buffer, next) : glyph + layout.space_width();
+            const float left_x = std::round(frame.origin_x + glyph);
             const float right_x = std::round(frame.origin_x + right);
             if (shape == vim::CaretShape::Block) {
                 dl.rect_filled({left_x, top}, {right_x, bottom}, theme::text());
                 if (end > at.byte) {
                     (void)draw_run(ui, layout, text, at.byte, end, along, frame.origin_x, rows.y(*index),
-                                   theme::surface_base());
+                                   theme::surface_base(), layout.rooms_of(at.line));
                 }
             } else if (shape == vim::CaretShape::Underline) {
                 dl.rect_filled({left_x, bottom - CARET_WIDTH}, {right_x, bottom}, theme::text());
@@ -1573,7 +1636,17 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     faces.pill_height = sizes.pill_height;
     faces.digit_width = ui.text().caret_x("0", faces.numbers, 1);
     faces.pill_width = ui.text().caret_x(ELLIPSIS, faces.pill, ELLIPSIS.size()) + 2.0f * PILL_PAD;
+    faces.swatch = sizes.swatch;
     const Buffer& buffer = document.buffer();
+    // Room along the lines before each colour value the service knows, for
+    // its swatch: laid out for the keys and the mouse as the text is now,
+    // and again once their edits are in, for drawing.
+    static const std::vector<ColourValue> NO_VALUES;
+    const auto values_now = [&]() -> const std::vector<ColourValue>& {
+        return view.service != nullptr ? view.service->colour_values(view.path) : NO_VALUES;
+    };
+    Rooms rooms = swatch_rooms(values_now(), buffer, sizes.swatch + sizes.swatch_gap);
+    layout.set_rooms(&rooms);
 
     // The code, and down its right side the minimap and the scrollbar.
     const float side_width = (view.minimap ? MINIMAP_WIDTH : 0.0f) + SCROLLBAR_WIDTH;
@@ -1777,6 +1850,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     for (const Selection& selection : view.selections.all()) (void)view.folds.reveal(selection.caret.line);
 
     const bool edited = document.version() != version;
+    if (edited) rooms = swatch_rooms(values_now(), buffer, sizes.swatch + sizes.swatch_gap);
     if (edited || view.selections != before) {
         view.moved = ui.time();
         view.reveal = true;
@@ -1796,7 +1870,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const std::vector<Diagnostic>& problems =
         view.service != nullptr ? view.service->diagnostics(view.path) : NO_PROBLEMS;
     const SemanticTokens* colours = view.service != nullptr ? view.service->tokens(view.path) : nullptr;
-    draw(ui, document, view, drawn, layout, faces, focus.focused, problems, colours);
+    draw(ui, document, view, drawn, layout, faces, focus.focused, problems, colours, values_now());
 
     // The kit's pieces from here are the view's: their ids are under its
     // label.
