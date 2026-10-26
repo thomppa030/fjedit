@@ -100,6 +100,8 @@ int run(const std::filesystem::path& folder) {
                         browser.open("Open folder", ftk::FileBrowser::Mode::select_directory, "Open",
                                      {.start = program->workspace().root()});
                     },
+                .device = &app.device(),
+                .brand = brand,
             });
         browser.set_project(program->workspace().root());
         app.window().set_title(title_of(program->workspace().root()));

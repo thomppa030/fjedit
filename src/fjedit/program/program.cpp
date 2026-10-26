@@ -10,6 +10,7 @@
 #include "fjedit/program/icons.hpp"
 #include "fjedit/widget/file_kind.hpp"
 
+#include "ftk/base/log.hpp"
 #include "ftk/platform/platform.hpp"
 
 #include "ftk/ui/core/context.hpp"
@@ -181,9 +182,16 @@ Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOp
       services_(noting_paths(options.services ? std::move(*options.services)
                                               : std::vector<ServiceMaker>{clangd(), fjls()}),
                 workspace_.root()),
-      keys_path_(std::move(options.keys)) {
+      keys_path_(std::move(options.keys)), device_(options.device) {
     if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
     read_keys();
+    if (!options.brand.empty()) {
+        if (ftk::Result<ftk::SvgPicture> mark = ftk::SvgPicture::load(options.brand / "fjedit-mark-dark.svg")) {
+            mark_ = std::move(*mark);
+        } else {
+            FTK_CORE_WARN("fjedit shows the file icon for its mark: {}", mark.error());
+        }
+    }
 }
 
 ServiceMaker Program::clangd() {
@@ -959,7 +967,18 @@ void Program::draw_side() {
 void Program::draw_group(Group& group, std::size_t index) {
     const ui::IdScope scope(static_cast<int>(index));
     if (group.tabs.empty()) {
-        (void)ui::empty_state(ui::icon::file, "No file open", "Open one from the files on the left");
+        const char* title = "No file open";
+        const char* what_to_do = "Open one from the files on the left";
+        if (mark_) {
+            // fjedit's logomark where the file icon would be, drawn at the
+            // pixels it covers.
+            const float height = ui::EMPTY_PICTURE_HEIGHT;
+            const ui::Texture picture =
+                device_ != nullptr ? mark_->texture(*device_, height, ui::core::current().root_scale()) : ui::Texture{};
+            (void)ui::empty_state(picture, mark_->size(height), title, what_to_do);
+        } else {
+            (void)ui::empty_state(ui::icon::file, title, what_to_do);
+        }
         return;
     }
     std::optional<std::size_t> closed;

@@ -18,6 +18,7 @@
 #include "fjedit/program/preferences.hpp"
 #include "fjedit/widget/code_view.hpp"
 
+#include "ftk/app/picture.hpp"
 #include "ftk/ui/kit/dialog.hpp"
 
 #include <glm/vec2.hpp>
@@ -57,6 +58,14 @@ struct ProgramOptions {
     /// folder browser, which hands the folder picked to open_folder(). None
     /// leaves the entry unavailable.
     std::function<void()> pick_folder{};
+    /// The device its window draws with, which the program's pictures are
+    /// made on. None, as in a test's harness, leaves each picture's room
+    /// empty.
+    ftk::gpu::Device* device{nullptr};
+    /// fjedit's brand files, brand/ beside the program: a group with no file
+    /// open shows its logomark from there. None, or a mark that doesn't read,
+    /// shows the kit's file icon.
+    std::filesystem::path brand{};
 };
 
 class Program {
@@ -358,6 +367,10 @@ private:
     std::string note_;
     // What was just done (a rename), for the status bar until the next key.
     std::string told_;
+    // fjedit's logomark, shown in a group with no file open, and the device
+    // it is drawn on.
+    std::optional<ftk::SvgPicture> mark_;
+    ftk::gpu::Device* device_{nullptr};
 };
 
 } // namespace fjedit

@@ -6,12 +6,13 @@ ftk_target_defaults(fjedit)
 ftk_stage_editor_data(fjedit)
 
 # The brand files the program reads, in brand/ beside it: its tile, the icon
-# its windows carry. Copied with every build, changing nothing when nothing
-# changed.
+# its windows carry, and its logomark, shown in a group with no file open.
+# Copied with every build, changing nothing when nothing changed.
 set(brand "${CMAKE_CURRENT_SOURCE_DIR}/../brand")
 add_custom_target(fjedit-brand
     COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:fjedit>/brand"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${brand}/fjedit-tile.svg" "$<TARGET_FILE_DIR:fjedit>/brand"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${brand}/fjedit-tile.svg" "${brand}/fjedit-mark-dark.svg"
+            "$<TARGET_FILE_DIR:fjedit>/brand"
     VERBATIM)
 add_dependencies(fjedit fjedit-brand)
 # On Windows the .exe carries the tile as its icon.

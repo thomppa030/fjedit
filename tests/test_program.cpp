@@ -7,6 +7,7 @@
 #include "print.hpp"
 #include "temp_folder.hpp"
 
+#include "ftk/app/picture.hpp"
 #include "ftk/platform/child_process.hpp"
 #include "ftk/test/kit_harness.hpp"
 #include "ftk/ui/theme.hpp"
@@ -86,7 +87,8 @@ struct Running {
                            .services = languages == Languages::Clangd ? std::nullopt : std::optional(std::move(services)),
                            .wake = {},
                            .keys = keys_file(),
-                           .pick_folder = [this] { ++folders_picked; }});
+                           .pick_folder = [this] { ++folders_picked; },
+                           .brand = FJEDIT_BRAND});
         h.set_ui([this] { program->draw(); });
         h.step(3);
     }
@@ -172,6 +174,39 @@ TEST_CASE("A folder in the tree is drawn in Structure's grey, open or not, never
     REQUIRE(run.rows().size() == 3);
     CHECK(on_row("scripts", grey));
     CHECK_FALSE(on_row("scripts", ftk::theme::accent()));
+}
+
+TEST_CASE("fjedit's brand files read, its mark and its tile square", "[program][brand]") {
+    for (const char* name : {"fjedit-mark-dark.svg", "fjedit-tile.svg"}) {
+        const ftk::Result<ftk::SvgPicture> picture = ftk::SvgPicture::load(std::filesystem::path(FJEDIT_BRAND) / name);
+        REQUIRE(picture);
+        CHECK(picture->size(64.0f) == glm::vec2(64.0f, 64.0f));
+    }
+}
+
+TEST_CASE("A group with no file open shows fjedit's logomark where the kit's file icon was", "[program][brand]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    // How much the last frame drew in `colour` in the group: right of the
+    // tree, from its first row down to the status bar.
+    const ftk::ui::core::Rect row = run.h.find("coin.cpp", Role::TreeItem)->rect;
+    const auto in_group = [&](ftk::ui::Color colour) {
+        const uint32_t packed = ftk::ui::core::pack_colour(colour);
+        int drawn = 0;
+        for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+            for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+                const glm::vec2 at = (p.min + p.max) * 0.5f;
+                if (p.colour == packed && at.x > row.max.x && at.y > row.min.y &&
+                    at.y < run.h.size().y - ftk::theme::STATUS_BAR) {
+                    ++drawn;
+                }
+            }
+        }
+        return drawn;
+    };
+    // Its words, and over them no icon in the disabled colour: the mark's
+    // room, which a harness with no device leaves empty.
+    CHECK(in_group(ftk::theme::text_secondary()) > 0);
+    CHECK(in_group(ftk::theme::text_disabled()) == 0);
 }
 
 TEST_CASE("A file pressed in the tree opens in a tab in front, with the keyboard", "[program]") {

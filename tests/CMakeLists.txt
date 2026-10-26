@@ -68,6 +68,8 @@ add_executable(fjedit-program-tests
 ftk_target_defaults(fjedit-program-tests)
 ftk_leak_suppressions(fjedit-program-tests)
 target_link_libraries(fjedit-program-tests PRIVATE fjedit::program ftk::kit-harness Catch2::Catch2WithMain)
+# fjedit's brand files, read where they are in the source.
+target_compile_definitions(fjedit-program-tests PRIVATE FJEDIT_BRAND="${CMAKE_CURRENT_SOURCE_DIR}/../brand")
 
 # The language server connection, against a fake server of the tests' own,
 # and clangd when it is installed.
