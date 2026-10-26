@@ -182,7 +182,8 @@ Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOp
       services_(noting_paths(options.services ? std::move(*options.services)
                                               : std::vector<ServiceMaker>{clangd(), fjls()}),
                 workspace_.root()),
-      keys_path_(std::move(options.keys)), device_(options.device) {
+      keys_path_(std::move(options.keys)), device_(options.device), desktop_entry_(std::move(options.desktop_entry)),
+      desktop_data_home_(std::move(options.desktop_data_home)) {
     if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
     read_keys();
     if (!options.brand.empty()) {
@@ -333,6 +334,25 @@ void Program::go_to(const std::filesystem::path& path, Span span) {
 
 std::filesystem::path Program::keys_file() {
     return ftk::platform::config_dir() / "fjedit" / "keys.vim";
+}
+
+ftk::DesktopEntry Program::desktop_entry(const std::filesystem::path& program, const std::filesystem::path& brand) {
+    return {.id = "fjedit",
+            .name = "fjedit",
+            .comment = "Code editor",
+            .categories = {"Development", "TextEditor"},
+            .program = program,
+            .icon = brand / "fjedit-tile.svg"};
+}
+
+void Program::create_desktop_entry() {
+    const ftk::Result<std::filesystem::path> written = ftk::create_desktop_entry(*desktop_entry_, desktop_data_home_);
+    if (written) {
+        entry_answer_ =
+            EntryAnswer{.written = true, .text = "fjedit is in your app launcher", .where = written->string()};
+    } else {
+        entry_answer_ = EntryAnswer{.written = false, .text = "Couldn't write the desktop entry: " + written.error()};
+    }
 }
 
 std::span<const Program::Command> Program::commands() {
@@ -832,7 +852,10 @@ void Program::draw() {
     services_.update();
     check_disk(ui::core::current().time());
     // What was just done is said until the next key.
-    if (!ui::core::current().keystrokes().empty()) told_.clear();
+    if (!ui::core::current().keystrokes().empty()) {
+        told_.clear();
+        entry_answer_.reset();
+    }
     take_keys();
     draw_menus();
     const ui::WorkArea work = ui::work_area();
@@ -908,11 +931,20 @@ void Program::draw_menus() {
     const std::vector<ui::Menu> menus{
         {.label = "File",
          .entries = [&] {
-             return std::vector<ui::MenuEntry>{entry("Open folder", "file.open_folder", static_cast<bool>(pick_folder_)),
-                                               ui::MenuEntry::separator(),
-                                               entry("Save", "file.save", open_file), entry("Save all", "file.save_all"),
-                                               ui::MenuEntry::separator(), entry("Close", "file.close", open_file),
-                                               ui::MenuEntry::separator(), entry("Quit", "file.quit")};
+             std::vector<ui::MenuEntry> file{entry("Open folder", "file.open_folder", static_cast<bool>(pick_folder_)),
+                                             ui::MenuEntry::separator(),
+                                             entry("Save", "file.save", open_file), entry("Save all", "file.save_all"),
+                                             ui::MenuEntry::separator(), entry("Close", "file.close", open_file),
+                                             ui::MenuEntry::separator()};
+             // On a system with desktop entries, a group of its own.
+             if (desktop_entry_ && !desktop_data_home_.empty()) {
+                 file.push_back({.label = "Create desktop entry",
+                                 .icon = icon::desktop_entry,
+                                 .chosen = [this] { create_desktop_entry(); }});
+                 file.push_back(ui::MenuEntry::separator());
+             }
+             file.push_back(entry("Quit", "file.quit"));
+             return file;
          }},
         {.label = "Edit",
          .entries = [&] {
@@ -1120,6 +1152,10 @@ void Program::draw_status() {
         }
         if (!note_.empty()) ui::status_item(ui::icon::warning, note_);
         if (!told_.empty()) ui::status_message(ui::StatusTone::Plain, told_);
+        if (entry_answer_) {
+            ui::status_note(entry_answer_->written ? ui::StatusTone::Success : ui::StatusTone::Error, entry_answer_->text,
+                            entry_answer_->where);
+        }
         bar.right();
         const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
         if (document == nullptr) return;

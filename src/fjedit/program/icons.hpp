@@ -10,6 +10,7 @@ namespace fjedit::icon {
 
 // The editor
 inline constexpr const char* split = ICON_LC_COLUMNS_2;
+inline constexpr const char* desktop_entry = ICON_LC_APP_WINDOW; // File > Create desktop entry
 
 // Preferences
 inline constexpr const char* code_editor = ICON_LC_CODE;        // the Code editor page

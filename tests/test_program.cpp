@@ -7,6 +7,7 @@
 #include "print.hpp"
 #include "temp_folder.hpp"
 
+#include "ftk/app/desktop_entry.hpp"
 #include "ftk/app/picture.hpp"
 #include "ftk/platform/child_process.hpp"
 #include "ftk/test/kit_harness.hpp"
@@ -55,7 +56,8 @@ struct Running {
     enum class Languages { None, Fake, Both, Clangd };
 
     explicit Running(std::initializer_list<std::pair<const char*, const char*>> files,
-                     const std::function<void(const TempFolder&)>& before = {}, Languages languages = Languages::None) {
+                     const std::function<void(const TempFolder&)>& before = {}, Languages languages = Languages::None,
+                     const std::function<void(ProgramOptions&, const TempFolder&)>& more = {}) {
         for (const auto& [name, bytes] : files) folder.write(name, bytes);
         if (before) before(folder);
         std::vector<ServiceMaker> services;
@@ -81,14 +83,14 @@ struct Running {
                                     return made;
                                 }});
         }
-        program = std::make_unique<Program>(
-            folder.path, preferences,
-            ProgramOptions{.recovery = recovery_folder(),
-                           .services = languages == Languages::Clangd ? std::nullopt : std::optional(std::move(services)),
-                           .wake = {},
-                           .keys = keys_file(),
-                           .pick_folder = [this] { ++folders_picked; },
-                           .brand = FJEDIT_BRAND});
+        ProgramOptions options{.recovery = recovery_folder(),
+                               .services = languages == Languages::Clangd ? std::nullopt : std::optional(std::move(services)),
+                               .wake = {},
+                               .keys = keys_file(),
+                               .pick_folder = [this] { ++folders_picked; },
+                               .brand = FJEDIT_BRAND};
+        if (more) more(options, folder);
+        program = std::make_unique<Program>(folder.path, preferences, std::move(options));
         h.set_ui([this] { program->draw(); });
         h.step(3);
     }
@@ -118,6 +120,17 @@ struct Running {
     // the tree doesn't show it.
     [[nodiscard]] std::filesystem::path recovery_folder() const { return folder.path / ".recovery"; }
     [[nodiscard]] std::vector<Recovery::Kept> kept() const { return Recovery(recovery_folder()).kept(); }
+
+    // Opens the menu bar's `menu`: then the entry called `entry` in it, as the
+    // last frame drew it, or nothing when there is none. The kit records a
+    // menu's entries as list items, and the menus on the bar as menu items.
+    [[nodiscard]] const ftk::ui::core::SemanticNode* menu_entry(std::string_view menu, std::string_view entry) {
+        const auto* top = h.find(menu, Role::MenuItem);
+        REQUIRE(top != nullptr);
+        h.click_at(top->rect.centre());
+        h.step(2);
+        return h.find(entry, Role::ListItem);
+    }
 
     // A press on the button called `label`, as the last frame drew it.
     void press(std::string_view label) {
@@ -1002,6 +1015,54 @@ bool on_status_bar(Running& run, ftk::ui::Color colour) {
 }
 
 } // namespace
+
+TEST_CASE("File, Create desktop entry writes fjedit's entry, and the status bar says it did", "[program][desktop]") {
+    const std::filesystem::path program = "/opt/fjedit/fjedit";
+    Running run({{"coin.cpp", "int a;\n"}}, {}, Running::Languages::None,
+                [&](ProgramOptions& options, const TempFolder& folder) {
+                    options.desktop_entry = Program::desktop_entry(program, FJEDIT_BRAND);
+                    options.desktop_data_home = folder.path / ".share";
+                });
+    const std::filesystem::path share = run.folder.path / ".share";
+    const auto* entry = run.menu_entry("File", "Create desktop entry");
+    REQUIRE(entry != nullptr);
+    run.h.click_at(entry->rect.centre());
+    run.h.step(2);
+
+    CHECK(ftk::desktop_entry_program("fjedit", share) == program);
+    CHECK(std::filesystem::exists(share / "icons" / "hicolor" / "scalable" / "apps" / "fjedit.svg"));
+    CHECK(on_status_bar(run, ftk::theme::success()));
+    CHECK_FALSE(on_status_bar(run, ftk::theme::error()));
+    // Said until the next key.
+    run.h.press(Key::Down);
+    run.h.step();
+    CHECK_FALSE(on_status_bar(run, ftk::theme::success()));
+}
+
+TEST_CASE("A desktop entry that can't be written is said why on the status bar", "[program][desktop]") {
+    // A file stands where the entries' folder would be made.
+    Running run({{"coin.cpp", "int a;\n"}, {".share/applications", "not a folder"}}, {}, Running::Languages::None,
+                [](ProgramOptions& options, const TempFolder& folder) {
+                    options.desktop_entry = Program::desktop_entry("/opt/fjedit/fjedit", FJEDIT_BRAND);
+                    options.desktop_data_home = folder.path / ".share";
+                });
+    const auto* entry = run.menu_entry("File", "Create desktop entry");
+    REQUIRE(entry != nullptr);
+    run.h.click_at(entry->rect.centre());
+    run.h.step(2);
+    CHECK(on_status_bar(run, ftk::theme::error()));
+    CHECK_FALSE(on_status_bar(run, ftk::theme::success()));
+}
+
+TEST_CASE("With nowhere to write a desktop entry, the File menu offers none", "[program][desktop]") {
+    Running run({{"coin.cpp", "int a;\n"}}, {}, Running::Languages::None, [](ProgramOptions& options, const TempFolder&) {
+        options.desktop_entry = Program::desktop_entry("/opt/fjedit/fjedit", FJEDIT_BRAND);
+    });
+    // The menu is open, with the entries around where it would be.
+    CHECK(run.menu_entry("File", "Quit") != nullptr);
+    CHECK(run.h.find("Close", Role::ListItem) != nullptr);
+    CHECK(run.h.find("Create desktop entry", Role::ListItem) == nullptr);
+}
 
 TEST_CASE("The status bar shows how the language service of the file in front is", "[program][language]") {
     Running run({{"coin.cpp", "int a;\n"}}, {}, Running::Languages::Fake);

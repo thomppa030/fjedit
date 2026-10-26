@@ -18,6 +18,7 @@
 #include "fjedit/program/preferences.hpp"
 #include "fjedit/widget/code_view.hpp"
 
+#include "ftk/app/desktop_entry.hpp"
 #include "ftk/app/picture.hpp"
 #include "ftk/ui/kit/dialog.hpp"
 
@@ -66,6 +67,13 @@ struct ProgramOptions {
     /// open shows its logomark from there. None, or a mark that doesn't read,
     /// shows the kit's file icon.
     std::filesystem::path brand{};
+    /// What File › Create desktop entry writes: fjedit's, desktop_entry().
+    /// None leaves the entry out of the File menu.
+    std::optional<ftk::DesktopEntry> desktop_entry{};
+    /// Where it writes it: the user's folder for desktop entries,
+    /// ftk::desktop_data_home(). None, as on a system without desktop
+    /// entries, leaves the entry out of the File menu.
+    std::filesystem::path desktop_data_home{};
 };
 
 class Program {
@@ -81,6 +89,11 @@ public:
     /// Where this machine keeps one's own maps for Vim's keys: keys.vim in
     /// fjedit's settings folder, beside settings.ini.
     [[nodiscard]] static std::filesystem::path keys_file();
+
+    /// fjedit's desktop entry, which puts it in the desktop's launcher on
+    /// Linux: the program at `program`, its icon the tile in `brand`.
+    [[nodiscard]] static ftk::DesktopEntry desktop_entry(const std::filesystem::path& program,
+                                                         const std::filesystem::path& brand);
 
     /// One of the program's own commands: what keys call it by, and what a
     /// list of keys shows for it.
@@ -192,6 +205,8 @@ private:
     // the edits were made for; in the others, on disk.
     void make_edits(const WorkspaceEdit& edits);
     void take_keys();
+    // Writes fjedit's desktop entry, answered on the status bar.
+    void create_desktop_entry();
     // Every few seconds: files another program changed, reloaded when they
     // have no unsaved changes here and noted when they do; the tree read
     // again; and unsaved work kept.
@@ -371,6 +386,17 @@ private:
     // it is drawn on.
     std::optional<ftk::SvgPicture> mark_;
     ftk::gpu::Device* device_{nullptr};
+    // What File › Create desktop entry writes and where, and its answer, for
+    // the status bar until the next key: written or not, what it says, and
+    // the entry's path when it was written.
+    std::optional<ftk::DesktopEntry> desktop_entry_;
+    std::filesystem::path desktop_data_home_;
+    struct EntryAnswer {
+        bool written{false};
+        std::string text{};
+        std::string where{};
+    };
+    std::optional<EntryAnswer> entry_answer_;
 };
 
 } // namespace fjedit

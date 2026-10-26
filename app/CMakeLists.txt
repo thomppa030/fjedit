@@ -6,7 +6,8 @@ ftk_target_defaults(fjedit)
 ftk_stage_editor_data(fjedit)
 
 # The brand files the program reads, in brand/ beside it: its tile, the icon
-# its windows carry, and its logomark, shown in a group with no file open.
+# its windows and its desktop entry carry, and its logomark, shown in a group
+# with no file open.
 # Copied with every build, changing nothing when nothing changed.
 set(brand "${CMAKE_CURRENT_SOURCE_DIR}/../brand")
 add_custom_target(fjedit-brand

@@ -7,6 +7,7 @@
 
 #include "ftk/app/app_window.hpp"
 #include "ftk/app/app_identity.hpp"
+#include "ftk/app/desktop_entry.hpp"
 #include "ftk/app/file_browser.hpp"
 #include "ftk/base/delegate.hpp"
 #include "ftk/base/log.hpp"
@@ -102,6 +103,8 @@ int run(const std::filesystem::path& folder) {
                     },
                 .device = &app.device(),
                 .brand = brand,
+                .desktop_entry = fjedit::Program::desktop_entry(ftk::platform::executable_path(), brand),
+                .desktop_data_home = ftk::desktop_data_home(),
             });
         browser.set_project(program->workspace().root());
         app.window().set_title(title_of(program->workspace().root()));
