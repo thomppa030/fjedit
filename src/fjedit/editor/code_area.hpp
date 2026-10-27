@@ -185,6 +185,12 @@ public:
     /// the code's.
     [[nodiscard]] bool has_keyboard() const { return keyboard_; }
 
+    /// Whether the code takes `key` while a view of its has the keyboard:
+    /// one of the area's keys or its program's, a binding of the view in
+    /// front in the mode it is in, or with Vim on a key Vim reads. A host's
+    /// own shortcuts give way to it; the code binds no other.
+    [[nodiscard]] bool binds(const Chord& key) const;
+
     /// Find in files, open or not.
     [[nodiscard]] const FindInFiles& find_in_files() const { return find_in_files_; }
 

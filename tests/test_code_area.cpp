@@ -166,6 +166,35 @@ TEST_CASE("An area that shows files keeps them when shown others", "[editor][are
     CHECK(a.files->workspace().find(a.at("b.cpp")) == nullptr);
 }
 
+TEST_CASE("The code takes the keys it binds from its host, and leaves it the others", "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}});
+    a.open("a.cpp");
+    const auto ctrl = [](Key key, bool shift = false) {
+        return Chord{.key = key, .modifiers = {.ctrl = true, .shift = shift}};
+    };
+    // The area's keys, the view's, and those of the program it is in.
+    CHECK(a.code->binds(ctrl(Key::S)));
+    CHECK(a.code->binds(ctrl(Key::Z)));
+    CHECK(a.code->binds(ctrl(Key::I)));
+    CHECK(a.code->binds(Chord{.key = Key::F5}));
+    // The rest are the host's: its file tree, its settings, play, a capture.
+    CHECK_FALSE(a.code->binds(ctrl(Key::Space)));
+    CHECK_FALSE(a.code->binds(ctrl(Key::Comma)));
+    CHECK_FALSE(a.code->binds(ctrl(Key::P)));
+    CHECK_FALSE(a.code->binds(Chord{.key = Key::F9}));
+
+    // With Vim on, Vim reads Ctrl with a letter as well, but not the F keys,
+    // Ctrl with Shift, or Ctrl with a key that is no letter.
+    a.preferences.vim = true;
+    a.h.step(2);
+    CHECK(a.code->binds(ctrl(Key::P)));
+    CHECK(a.code->binds(ctrl(Key::S)));
+    CHECK(a.code->binds(Chord{.key = Key::J}));
+    CHECK_FALSE(a.code->binds(ctrl(Key::Space)));
+    CHECK_FALSE(a.code->binds(ctrl(Key::S, true)));
+    CHECK_FALSE(a.code->binds(Chord{.key = Key::F9}));
+}
+
 TEST_CASE("The area says while a view of its has the keyboard", "[editor][area]") {
     Area a({{"a.cpp", "int a;\n"}});
     CHECK_FALSE(a.code->has_keyboard());

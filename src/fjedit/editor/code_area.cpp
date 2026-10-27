@@ -25,6 +25,7 @@
 #include "ftk/ui/theme.hpp"
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <iterator>
 #include <variant>
@@ -94,6 +95,19 @@ ModeShown mode_shown(vim::Mode mode) {
 // after ## so two files of one name each have their own.
 std::string tab_label(const std::filesystem::path& path) {
     return path.filename().string() + "##" + path.generic_string();
+}
+
+// Whether Vim reads `key` in its own modes: what types, with Shift or
+// without, the keys that move and edit, and Ctrl with a letter. The F keys,
+// Ctrl with Shift or with a key that is no letter, and Alt, it gives no
+// meaning: they are a host's.
+bool vim_reads(const Chord& key) {
+    if (!key.text.empty()) return true;
+    const ui::Modifiers held = key.modifiers;
+    if (held.alt || held.super) return false;
+    if (key.key >= Key::F1 && key.key <= Key::F12) return false;
+    if (held.ctrl) return !held.shift && key.key >= Key::A && key.key <= Key::Z;
+    return true;
 }
 
 // How many lines `kept` and the file at `path` differ in, between the lines
@@ -329,6 +343,24 @@ void CodeArea::show(std::span<const GroupFiles> groups) {
     if (showing.empty()) return;
     groups_ = std::move(showing);
     active_ = 0;
+}
+
+bool CodeArea::binds(const Chord& key) const {
+    const std::array<Chord, 1> keys{key};
+    const auto bound = [&](std::string_view mode) {
+        const KeyMatch match = keymap_.find(mode, keys);
+        return match.command.has_value() || match.waiting;
+    };
+    if (bound(preferences_.vim ? VIM_PROGRAM : PROGRAM)) return true;
+    const Tab* tab = front_tab();
+    if (tab == nullptr) return false;
+    const EditorView& view = *tab->view;
+    if (view.vim) {
+        return bound(vim::keymap_mode(view.vim->mode())) ||
+               (view.completing.open && bound(Keymap::VIM_COMPLETING)) || vim_reads(key);
+    }
+    return bound(view.mode) || (view.completing.open && bound(Keymap::COMPLETING)) ||
+           (view.find.open && bound(Keymap::FINDING));
 }
 
 CodeStatus CodeArea::status() {
