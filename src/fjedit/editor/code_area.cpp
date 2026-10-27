@@ -294,6 +294,43 @@ std::optional<std::filesystem::path> CodeArea::front() const {
     return tab->path;
 }
 
+std::vector<GroupFiles> CodeArea::shown() const {
+    std::vector<GroupFiles> shown;
+    for (const Group& group : groups_) {
+        GroupFiles files{.files = {}, .front = group.front};
+        for (const Tab& tab : group.tabs) files.files.push_back(tab.path);
+        shown.push_back(std::move(files));
+    }
+    return shown;
+}
+
+void CodeArea::show(std::span<const GroupFiles> groups) {
+    if (std::ranges::any_of(groups_, [](const Group& group) { return !group.tabs.empty(); })) return;
+    std::vector<Group> showing;
+    for (const GroupFiles& kept : groups) {
+        Group group;
+        std::optional<std::size_t> front;
+        for (std::size_t i = 0; i < kept.files.size(); ++i) {
+            // A file gone since is left out, saying nothing.
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(kept.files[i], error)) continue;
+            const ftk::Result<Document*> document = files_.open(kept.files[i]);
+            if (!document) continue;
+            const std::filesystem::path named = files_.workspace().name(kept.files[i]);
+            if (std::ranges::contains(group.tabs, named, &Tab::path)) continue;
+            if (i == kept.front) front = group.tabs.size();
+            group.tabs.push_back({.path = named, .view = make_view(named, **document)});
+        }
+        if (group.tabs.empty()) continue;
+        group.front = front.value_or(0);
+        group.select = group.front;
+        showing.push_back(std::move(group));
+    }
+    if (showing.empty()) return;
+    groups_ = std::move(showing);
+    active_ = 0;
+}
+
 CodeStatus CodeArea::status() {
     CodeStatus status;
     const Tab* tab = front_tab();
@@ -663,6 +700,7 @@ void CodeArea::draw() {
     // Questions hang from the top of the code, under the tabs once there
     // are some.
     prompts_at_ = ui::cursor() + glm::vec2{ui::space_left().x * 0.5f, 0.0f};
+    keyboard_ = false;
     const float height = ui::space_left().y;
     // The groups side by side, each but the last as wide as it was left
     // and a rule after it.
@@ -766,7 +804,10 @@ void CodeArea::draw_group(Group& group, std::size_t index) {
         const glm::vec2 room = ui::space_left();
         if (document != nullptr && room.x > 0.0f && room.y > 0.0f) {
             const CodeViewResult result = code_view("Code", *document, *tab.view, keymap_, {.min = at, .max = at + room});
-            if (result.focused) active_ = index;
+            if (result.focused) {
+                active_ = index;
+                keyboard_ = true;
+            }
             if (result.go) going_ = result.go;
             for (const vim::Asked& asked : result.asked) vim_asked_.push_back(asked);
             if (result.zoom != 0) {

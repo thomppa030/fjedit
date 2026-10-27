@@ -114,3 +114,65 @@ TEST_CASE("A tab closed with unsaved changes asks first, and Don't save lets its
     CHECK(a.files->workspace().files().empty());
     CHECK(a.folder.read("a.cpp") == "int a;\n");
 }
+
+TEST_CASE("What the groups show is said, file by file and the one in front of each", "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}, {"b.cpp", "int b;\n"}, {"c.cpp", "int c;\n"}});
+    CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {}, .front = 0}});
+    a.open("a.cpp");
+    a.open("b.cpp");
+    // b.cpp again in a group beside, which c.cpp then opens in.
+    REQUIRE(a.code->run("view.split"));
+    a.h.step(2);
+    a.open("c.cpp");
+    CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {a.at("a.cpp"), a.at("b.cpp")}, .front = 1},
+                                                     {.files = {a.at("b.cpp"), a.at("c.cpp")}, .front = 1}});
+}
+
+TEST_CASE("An area shown what was kept shows the same groups, their files and the ones in front", "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}, {"b.cpp", "int b;\n"}, {"c.cpp", "int c;\n"}});
+    const std::vector<GroupFiles> kept{{.files = {a.at("a.cpp"), a.at("b.cpp")}, .front = 1},
+                                       {.files = {a.at("b.cpp"), a.at("c.cpp")}, .front = 0}};
+    a.code->show(kept);
+    a.h.step(2);
+    CHECK(a.code->shown() == kept);
+    CHECK(a.h.find("c.cpp", Role::Tab) != nullptr);
+    // One buffer for b.cpp in both groups.
+    CHECK(a.files->workspace().files().size() == 3);
+    CHECK_FALSE(a.files->unsaved(a.at("b.cpp")));
+}
+
+TEST_CASE("Files gone since are left out of what is shown again, and a group left with none goes", "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}});
+    a.code->show(std::vector<GroupFiles>{{.files = {a.folder.path / "gone.cpp"}, .front = 0},
+                                         {.files = {a.folder.path / "gone.cpp", a.folder.path / "a.cpp"}, .front = 0}});
+    a.h.step(2);
+    // Its front gone, the first file left is in front.
+    CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {a.at("a.cpp")}, .front = 0}});
+    CHECK(a.files->note().empty());
+
+    // None left at all: the one group with no file stays.
+    Area b({});
+    b.code->show(std::vector<GroupFiles>{{.files = {b.folder.path / "gone.cpp"}, .front = 0}});
+    b.h.step(2);
+    CHECK(b.code->shown() == std::vector<GroupFiles>{{.files = {}, .front = 0}});
+}
+
+TEST_CASE("An area that shows files keeps them when shown others", "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}, {"b.cpp", "int b;\n"}});
+    a.open("a.cpp");
+    a.code->show(std::vector<GroupFiles>{{.files = {a.folder.path / "b.cpp"}, .front = 0}});
+    a.h.step(2);
+    CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {a.at("a.cpp")}, .front = 0}});
+    CHECK(a.files->workspace().find(a.at("b.cpp")) == nullptr);
+}
+
+TEST_CASE("The area says while a view of its has the keyboard", "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}});
+    CHECK_FALSE(a.code->has_keyboard());
+    a.open("a.cpp");
+    CHECK(a.code->has_keyboard());
+    // Taken away, as a press in another of the host's panels takes it.
+    a.h.ui().set_focus(0);
+    a.h.step(2);
+    CHECK_FALSE(a.code->has_keyboard());
+}

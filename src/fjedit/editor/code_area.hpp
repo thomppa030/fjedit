@@ -54,6 +54,15 @@ struct CodeCommand {
     std::optional<Chord> key{};
 };
 
+/// What a group of tabs shows: its files, as their tabs stand, and the one in
+/// front. A host keeps them as the area was left and shows them again.
+struct GroupFiles {
+    std::vector<std::filesystem::path> files{};
+    std::size_t front{0};
+
+    bool operator==(const GroupFiles&) const = default;
+};
+
 /// A file as a dialog's list shows it: its kind's icon, its name, and its
 /// folder within `root` with `more` after it.
 [[nodiscard]] ftk::ui::UnsavedItem file_item(const std::filesystem::path& path, const std::filesystem::path& root,
@@ -162,6 +171,19 @@ public:
 
     /// How many groups of tabs stand side by side: one, or more once split.
     [[nodiscard]] std::size_t groups() const { return groups_.size(); }
+
+    /// What each group shows, left to right.
+    [[nodiscard]] std::vector<GroupFiles> shown() const;
+
+    /// Shows `groups` as a host kept them, in an area that shows no file yet:
+    /// each file still there in its group's tab, the one in front in front
+    /// (the first when it is gone), and a group left with none left out. An
+    /// area that shows files already keeps them and shows nothing more.
+    void show(std::span<const GroupFiles> groups);
+
+    /// A view of its had the keyboard when it was last drawn: the keys are
+    /// the code's.
+    [[nodiscard]] bool has_keyboard() const { return keyboard_; }
 
     /// Find in files, open or not.
     [[nodiscard]] const FindInFiles& find_in_files() const { return find_in_files_; }
@@ -281,6 +303,8 @@ private:
     Keymap keymap_;
     std::vector<Group> groups_;
     std::size_t active_{0};
+    // A view had the keyboard as the groups were last drawn.
+    bool keyboard_{false};
     // A tab asked to close with unsaved changes, while it is asked about,
     // and whether the question is open.
     std::optional<std::filesystem::path> closing_;
