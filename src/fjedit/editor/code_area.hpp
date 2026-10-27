@@ -124,8 +124,12 @@ public:
     /// drawn, filling it, then does what their views asked.
     void draw();
 
-    /// Draws find in files, while it is open, floating at the top of `over`.
-    void draw_find_in_files(ftk::ui::core::Rect over);
+    /// Draws find in files, while it is open, floating at the top of `over`;
+    /// with `over_windows`, in front of every window rather than in the one
+    /// being drawn, as over a host's docked panels. Returns whether it opened
+    /// a result in front, putting itself away: a host whose area is in a tab
+    /// brings the tab forward.
+    bool draw_find_in_files(ftk::ui::core::Rect over, bool over_windows = false);
 
     /// Draws the questions waiting: work kept from before, closing a tab
     /// with unsaved changes; and makes a rename once its edits come.
@@ -276,8 +280,8 @@ private:
     // Opens find in files, looking for what the view in front selects.
     void open_find_in_files();
     // Does what find in files asked: opens a file at a match, and lets go
-    // of the files it opened only to show them.
-    void take_find_in_files(const FindInFilesAsk& ask);
+    // of the files it opened only to show them. Whether it opened one.
+    bool take_find_in_files(const FindInFilesAsk& ask);
     // A view of `document`, the file at `path`, joined to the language
     // services, which are told of the file when one answers for it.
     [[nodiscard]] std::unique_ptr<EditorView> make_view(const std::filesystem::path& path, Document& document);

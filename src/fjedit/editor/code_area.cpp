@@ -696,7 +696,7 @@ void CodeArea::open_find_in_files() {
     find_in_files_.open(seed);
 }
 
-void CodeArea::take_find_in_files(const FindInFilesAsk& ask) {
+bool CodeArea::take_find_in_files(const FindInFilesAsk& ask) {
     for (const std::filesystem::path& path : ask.shown) {
         const bool in_a_tab = std::ranges::any_of(groups_, [&](const Group& group) {
             return std::ranges::contains(group.tabs, path, &Tab::path);
@@ -711,7 +711,9 @@ void CodeArea::take_find_in_files(const FindInFilesAsk& ask) {
             let_go(path);
         }
     }
-    if (ask.go) go_to(ask.go->path, ask.go->span);
+    if (!ask.go) return false;
+    go_to(ask.go->path, ask.go->span);
+    return true;
 }
 
 void CodeArea::take_keys() {
@@ -757,11 +759,11 @@ void CodeArea::draw() {
     for (const vim::Asked& asked : std::exchange(vim_asked_, {})) answer_vim(asked);
 }
 
-void CodeArea::draw_find_in_files(ftk::ui::core::Rect over) {
+bool CodeArea::draw_find_in_files(ftk::ui::core::Rect over, bool over_windows) {
     const std::optional<std::filesystem::path> shown = front();
     const std::filesystem::path folder = shown ? shown->parent_path() : files_.root();
-    take_find_in_files(find_in_files_.draw(over, folder, keymap_, static_cast<float>(preferences_.text_size),
-                                           preferences_.vim));
+    return take_find_in_files(find_in_files_.draw(over, folder, keymap_, static_cast<float>(preferences_.text_size),
+                                                  preferences_.vim, over_windows));
 }
 
 void CodeArea::draw_group(Group& group, std::size_t index) {

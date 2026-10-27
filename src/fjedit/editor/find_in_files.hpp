@@ -65,9 +65,10 @@ public:
     /// there. `folder` is where Folder looks: the folder of the file in
     /// front. The preview shows code at `text_size`, as the tabs do. With
     /// `vim` keys, Ctrl-J and Ctrl-K move through the matches as Down and Up
-    /// do.
+    /// do. With `over_windows` it floats in front of every window rather
+    /// than in the window being drawn: over a host's docked panels.
     [[nodiscard]] FindInFilesAsk draw(ftk::ui::core::Rect over, const std::filesystem::path& folder, const Keymap& keys,
-                                      float text_size, bool vim = false);
+                                      float text_size, bool vim = false, bool over_windows = false);
 
     /// The matches found for what it looks for now; empty while it searches.
     [[nodiscard]] const std::vector<FileHit>& hits() const { return hits_; }

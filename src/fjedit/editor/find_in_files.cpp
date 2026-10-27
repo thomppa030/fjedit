@@ -172,7 +172,7 @@ void FindInFiles::close(FindInFilesAsk& ask) {
 }
 
 FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem::path& folder, const Keymap& keys,
-                                 float text_size, bool vim) {
+                                 float text_size, bool vim, bool over_windows) {
     FindInFilesAsk ask;
     if (!open_) return ask;
     ui::core::Context& context = ui::core::current();
@@ -189,7 +189,7 @@ FindInFilesAsk FindInFiles::draw(ftk::ui::core::Rect over, const std::filesystem
     bool closing = false;
     bool preview_focused = false;
     const float width = std::min(WINDOW_WIDTH, over.width() - 2.0f * ui::PLATE_INSET);
-    if (auto plate = ui::Plate("##find_in_files", over.min, over.max, ui::PlatePlace::TopCenter, width)) {
+    if (auto plate = ui::Plate("##find_in_files", over.min, over.max, ui::PlatePlace::TopCenter, width, over_windows)) {
         const float inner = plate.inner_width();
         const float gap = ui::item_spacing().x;
 

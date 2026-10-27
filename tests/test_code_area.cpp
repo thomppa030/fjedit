@@ -77,10 +77,13 @@ TEST_CASE("Find in files floats over the room it is given, and opens what it fin
     a.h.type("spin_speed");
     for (int i = 0; i < 400 && a.code->find_in_files().hits().empty(); ++i) a.h.step();
     REQUIRE(a.code->find_in_files().hits().size() == 1);
+    CHECK(a.found_opened == 0);
     a.h.press(Key::Enter);
     a.h.step(2);
     CHECK_FALSE(a.code->find_in_files().is_open());
     CHECK(a.code->front() == a.at("a.cpp"));
+    // Said once, for a host to bring the area's tab forward.
+    CHECK(a.found_opened == 1);
 }
 
 TEST_CASE("The code area offers the work kept from before by itself, and Recover brings it back unsaved",

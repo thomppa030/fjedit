@@ -39,6 +39,8 @@ struct Area {
     // What the area asked of the program it is in.
     std::vector<std::string> ran;
     int left{0};
+    // The results find in files opened.
+    int found_opened{0};
 
     /// The folder holding `written`, `before` run on it before the area is
     /// made; its language services `services`, none when not given.
@@ -66,7 +68,7 @@ struct Area {
             ftk::ui::next_window_place({0.0f, 0.0f}, {1280.0f, 800.0f});
             (void)ftk::ui::begin_host_window("##code", {.scrollbar = false, .to_front = false});
             code->draw();
-            code->draw_find_in_files({.min = {0.0f, 0.0f}, .max = {1280.0f, 800.0f}});
+            if (code->draw_find_in_files({.min = {0.0f, 0.0f}, .max = {1280.0f, 800.0f}})) ++found_opened;
             ftk::ui::end_host_window();
             code->draw_prompts();
         });

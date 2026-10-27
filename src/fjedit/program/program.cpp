@@ -187,8 +187,9 @@ void Program::draw() {
         const glm::vec2 code_min = ui::cursor();
         const glm::vec2 code_max = code_min + ui::space_left();
         code_.draw();
-        // Find in files floats over the code, under the tabs.
-        code_.draw_find_in_files({.min = {code_min.x, code_.prompts_at().y}, .max = code_max});
+        // Find in files floats over the code, under the tabs; what it opens
+        // is in front already.
+        (void)code_.draw_find_in_files({.min = {code_min.x, code_.prompts_at().y}, .max = code_max});
     }
     ui::end_host_window();
     draw_status();
