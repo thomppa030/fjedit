@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <system_error>
+#include <utility>
 
 namespace fjedit {
 
@@ -46,7 +47,12 @@ std::vector<FolderEntry> read_folder(const std::filesystem::path& folder, bool h
 const std::vector<FolderEntry>& FileTree::entries(const std::filesystem::path& folder) {
     const auto found = listed_.find(folder);
     if (found != listed_.end()) return found->second;
-    return listed_.emplace(folder, read_folder(folder)).first->second;
+    std::vector<FolderEntry> read = read_folder(folder);
+    // By the rules of each folder above it, then its own.
+    GitIgnore ignore(folder, places_);
+    ignore.enter(folder);
+    std::erase_if(read, [&](const FolderEntry& entry) { return ignore.ignored(entry.path, entry.folder); });
+    return listed_.emplace(folder, std::move(read)).first->second;
 }
 
 std::optional<std::filesystem::path> FileTree::draw(const std::filesystem::path& selected) {

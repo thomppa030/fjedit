@@ -23,13 +23,17 @@ namespace {
 // A tree of a folder of the test's own, filling a window as a panel would.
 struct Tree {
     TempFolder folder;
+    // A home of its own for the user's git config, so the machine's never
+    // comes into it.
+    TempFolder home;
     FileTree tree;
     std::filesystem::path selected{};
     // The file pressed in the last frame that pressed one.
     std::optional<std::filesystem::path> pressed{};
     ftk::test::KitHarness h{{400.0f, 600.0f}};
 
-    explicit Tree(std::initializer_list<const char*> files) : tree(folder.path) {
+    explicit Tree(std::initializer_list<const char*> files)
+        : tree(folder.path, {.home = home.path, .config_home = home.path / ".config"}) {
         for (const char* name : files) folder.write(name, "");
         h.set_ui([this] {
             ftk::ui::next_window_place({0.0f, 0.0f}, {400.0f, 600.0f});
@@ -88,6 +92,19 @@ TEST_CASE("The tree shows its folder open; a folder opens on a press, and a file
     t.press_row("coin.cpp");
     REQUIRE(t.pressed.has_value());
     CHECK(*t.pressed == t.folder.path / "scripts" / "coin.cpp");
+}
+
+TEST_CASE("The tree leaves out what git ignores, by the rules of each folder down to it", "[editor][tree]") {
+    // A game's project: its builds, the game built and what the build
+    // writes among the scripts are ignored.
+    Tree t({".git/HEAD", "build/game.o", "game.so", "b.cpp", "scripts/coin.cpp", "scripts/build/coin.o",
+            "scripts/generated/coin.gen.cpp"});
+    t.folder.write(".gitignore", "build/\n*.so\n");
+    t.folder.write("scripts/.gitignore", "generated/\n");
+    t.tree.forget_listings();
+    t.h.step(2);
+    t.press_row("scripts");
+    CHECK(t.rows() == std::vector<std::string>{t.folder.path.filename().string(), "scripts", "coin.cpp", "b.cpp"});
 }
 
 TEST_CASE("The tree reads a folder again only once told to forget what it read", "[editor][tree]") {
