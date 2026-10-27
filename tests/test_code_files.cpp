@@ -199,3 +199,22 @@ TEST_CASE("A language server is started again when its path in the preferences c
     CHECK(f.languages_made == 2);
     CHECK_FALSE(f.files->update(1.0).restarted);
 }
+
+TEST_CASE("A program's own fjls is started over the one the preferences name, and stays", "[editor][files]") {
+    const TempFolder folder;
+    folder.write("hud.fjss", "");
+    Preferences preferences;
+    // Not there, so nothing runs and its note names the path it was started
+    // at.
+    const std::string own = (folder.path / "tools" / "fjls").string();
+    CodeFiles files(folder.path, preferences, {.fjls = own});
+    const ftk::Result<Document*> hud = files.open(folder.path / "hud.fjss");
+    REQUIRE(hud);
+    files.services().open(files.workspace().name(folder.path / "hud.fjss"), **hud);
+    const std::optional<ServiceStatus> status = files.services().status_of("fjls");
+    REQUIRE(status);
+    CHECK(status->note == own + " doesn't exist; it comes with the program");
+
+    preferences.fjls = "/opt/fjls";
+    CHECK_FALSE(files.update(0.5).restarted);
+}

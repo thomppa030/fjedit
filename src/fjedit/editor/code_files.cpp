@@ -9,7 +9,6 @@
 #include <format>
 #include <memory>
 #include <string_view>
-#include <tuple>
 #include <utility>
 
 namespace fjedit {
@@ -23,6 +22,7 @@ constexpr double DISK_CHECK = 2.0;
 
 CodeFiles::CodeFiles(std::filesystem::path root, Preferences& preferences, CodeFilesOptions options)
     : workspace_(std::move(root)), preferences_(preferences), wake_(std::move(options.wake)),
+      own_fjls_(std::move(options.fjls)),
       services_(noting_paths(options.services ? std::move(*options.services)
                                               : std::vector<ServiceMaker>{clangd(), fjls()}),
                 workspace_.root()) {
@@ -62,7 +62,7 @@ ServiceMaker CodeFiles::fjls() {
             .extensions = EXTENSIONS,
             .make = [this](const std::filesystem::path& root) -> std::unique_ptr<LanguageService> {
                 return std::make_unique<lsp::Client>(lsp::ClientOptions{
-                    .command = {preferences_.fjls},
+                    .command = {fjls_path()},
                     .root = root,
                     .extensions = EXTENSIONS,
                     .language_id = [](const std::filesystem::path& path) {
@@ -73,7 +73,7 @@ ServiceMaker CodeFiles::fjls() {
                         return extension.substr(1);
                     },
                     .arrived = wake_,
-                    .if_missing = "set its path in Preferences",
+                    .if_missing = own_fjls_.empty() ? "set its path in Preferences" : "it comes with the program",
                 });
             }};
 }
@@ -83,7 +83,7 @@ std::vector<ServiceMaker> CodeFiles::noting_paths(std::vector<ServiceMaker> make
         const bool clangd = maker.name == "clangd";
         if ((!clangd && maker.name != "fjls") || !maker.make) continue;
         std::string* started = clangd ? &clangd_started_ : &fjls_started_;
-        const std::string* wanted = clangd ? &preferences_.clangd : &preferences_.fjls;
+        const std::string* wanted = clangd ? &preferences_.clangd : &fjls_path();
         maker.make = [started, wanted, make = std::move(maker.make)](const std::filesystem::path& root) {
             *started = *wanted;
             return make(root);
@@ -94,12 +94,13 @@ std::vector<ServiceMaker> CodeFiles::noting_paths(std::vector<ServiceMaker> make
 
 bool CodeFiles::follow_server_paths() {
     bool restarted = false;
-    for (const auto& [name, started, wanted] : {std::tuple{"clangd", &clangd_started_, &preferences_.clangd},
-                                                std::tuple{"fjls", &fjls_started_, &preferences_.fjls}}) {
-        if (!services_.status_of(name) || *started == *wanted) continue;
+    const auto follow = [&](const char* name, const std::string& started, const std::string& wanted) {
+        if (!services_.status_of(name) || started == wanted) return;
         services_.restart(name);
         restarted = true;
-    }
+    };
+    follow("clangd", clangd_started_, preferences_.clangd);
+    follow("fjls", fjls_started_, fjls_path());
     return restarted;
 }
 

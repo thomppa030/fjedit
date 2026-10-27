@@ -41,6 +41,9 @@ struct CodeFilesOptions {
     /// given, clangd answers for C and C++, and fjls for a game's script
     /// headers and fjell's own files, each at the path the preferences give.
     std::optional<std::vector<ServiceMaker>> services{};
+    /// The fjls the program brings, started over the one the preferences
+    /// name, whatever they say; empty for theirs.
+    std::string fjls{};
     /// Wakes the frame loop from another thread, when a language service's
     /// answer comes: ftk::Window::wake() for a window.
     std::function<void()> wake{};
@@ -149,9 +152,11 @@ public:
 
 private:
     // clangd for C and C++, and fjls for a game's script headers and
-    // fjell's own files, at the paths the preferences give them.
+    // fjell's own files, at the paths the preferences give them, fjls at
+    // the program's own when it brings one.
     [[nodiscard]] ServiceMaker clangd();
     [[nodiscard]] ServiceMaker fjls();
+    [[nodiscard]] const std::string& fjls_path() const { return own_fjls_.empty() ? preferences_.fjls : own_fjls_; }
     // The makers, those of clangd and fjls noting the path each starts at.
     [[nodiscard]] std::vector<ServiceMaker> noting_paths(std::vector<ServiceMaker> makers);
     // Starts a server again when the path the preferences give it changed.
@@ -162,10 +167,11 @@ private:
 
     Workspace workspace_;
     Preferences& preferences_;
-    // What wakes the frame loop when a language service answers; the paths
-    // clangd and fjls were last started at; and the services, each running
-    // once a file it answers for opens.
+    // What wakes the frame loop when a language service answers; the fjls
+    // the program brings; the paths clangd and fjls were last started at;
+    // and the services, each running once a file it answers for opens.
     std::function<void()> wake_;
+    std::string own_fjls_;
     std::string clangd_started_;
     std::string fjls_started_;
     LanguageServices services_;
