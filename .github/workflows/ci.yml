@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 # Each job builds fjedit as someone cloning it gets it, with ftk fetched at the
-# commit CMakeLists.txt names, and runs the four test suites. The tests against
+# commit CMakeLists.txt names, and runs the five test suites. The tests against
 # a real clangd run where the runner has one, which is Windows; fjls's skip.
 jobs:
   linux:
