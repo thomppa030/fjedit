@@ -322,7 +322,7 @@ std::vector<TokenKind> token_kinds(const Json& token_types) {
             kind = TokenKind::Uniform;
         } else if (name == "builtin") {
             kind = TokenKind::Builtin;
-        } else if (name == "operator") {
+        } else if (name == "operator" || name == "bracket") {
             kind = TokenKind::Punctuation;
         } else if (name == "keyword" || name == "modifier") {
             kind = TokenKind::Keyword;

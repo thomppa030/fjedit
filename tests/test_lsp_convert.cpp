@@ -168,6 +168,13 @@ TEST_CASE("fjls's own token types colour as what only a server knows", "[lsp][co
                                             TokenKind::Punctuation, TokenKind::Text});
 }
 
+TEST_CASE("A template's angle brackets keep the lexer's punctuation", "[lsp][convert]") {
+    // clangd names a template's or a cast's < and > a bracket, and a less-than
+    // an operator: both are punctuation, as the lexer has them.
+    const std::vector<TokenKind> kinds = token_kinds(parsed(R"(["bracket","operator"])"));
+    REQUIRE(kinds == std::vector<TokenKind>{TokenKind::Punctuation, TokenKind::Punctuation});
+}
+
 TEST_CASE("Why a completion was asked goes to the server as its context", "[lsp][convert]") {
     REQUIRE(completion_context({}) == parsed(R"({"triggerKind":1})"));
     REQUIRE(completion_context({.kind = CompletionTrigger::Kind::Character, .character = "@"}) ==

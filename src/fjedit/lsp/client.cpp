@@ -18,8 +18,8 @@ namespace jsonrpc = ftk::jsonrpc;
 // The token types this side can colour, in the protocol's names and fjls's.
 const Json TOKEN_TYPES = {"namespace", "type",     "class",    "enum",   "interface", "struct",  "typeParameter",
                           "parameter", "variable", "property", "enumMember", "function", "method", "macro",
-                          "keyword",   "modifier", "comment",  "string", "number",    "operator", "concept",
-                          "uniform",   "builtin",  "hint"};
+                          "keyword",   "modifier", "comment",  "string", "number",    "operator", "bracket",
+                          "concept",   "uniform",  "builtin",  "hint"};
 
 // What fjedit tells a server it can do: positions in UTF-8 when the server
 // counts that way too, no snippets in completions, why a completion was
