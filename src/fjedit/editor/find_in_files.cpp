@@ -21,7 +21,9 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <iterator>
 #include <map>
+#include <mutex>
 #include <utility>
 
 namespace fjedit {
@@ -63,19 +65,26 @@ void FindInFiles::open(std::string_view seed) {
     if (!seed.empty()) query_ = seed;
 }
 
+// What a search's threads hand on, kept until the window takes it.
+struct FindInFiles::Found {
+    std::mutex mutex;
+    std::vector<FileHit> hits;
+};
+
 void FindInFiles::search(const Asked& asked) {
     searched_ = asked;
-    hits_.clear();
-    files_found_ = 0;
-    selected_ = 0;
-    preview_.reset();
-    previewed_.clear();
     // The search before goes on until it sees it is stopped, unwaited for.
+    // Its matches stay listed until this one's first come.
     stop_.request_stop();
     stop_ = {};
-    found_ = {};
+    found_.reset();
+    ended_ = {};
     searching_ = false;
-    if (asked.query.empty()) return;
+    if (asked.query.empty()) {
+        clear_hits();
+        return;
+    }
+    stale_ = true;
 
     // Open files as they stand now, unsaved changes and all.
     std::map<std::filesystem::path, std::string> open_texts;
@@ -83,10 +92,11 @@ void FindInFiles::search(const Asked& asked) {
     for (const std::filesystem::path& path : open_files) open_texts[path] = workspace_->find(path)->buffer().text();
 
     searching_ = true;
+    found_ = std::make_shared<Found>();
     const FindOptions options = find_options(asked.toggles);
     const std::filesystem::path root = workspace_->root();
-    found_ = pool_->submit([pool = pool_, asked, options, root, open_texts = std::move(open_texts), open_files,
-                            stop = stop_.get_token()] {
+    ended_ = pool_->submit([pool = pool_, found = found_, asked, options, root, open_texts = std::move(open_texts),
+                            open_files, stop = stop_.get_token()] {
         std::vector<std::filesystem::path> files;
         if (asked.scope == Scope::OpenFiles) {
             for (const std::filesystem::path& path : open_files) {
@@ -95,22 +105,48 @@ void FindInFiles::search(const Asked& asked) {
         } else {
             files = files_to_search(asked.scope == Scope::Folder ? asked.folder : root, asked.include, stop);
         }
-        return search_files(*pool, files, asked.query, options, open_texts, stop, LIMIT);
+        const FoundHits hand_on = [&found](std::vector<FileHit>&& hits) {
+            const std::lock_guard lock(found->mutex);
+            found->hits.insert(found->hits.end(), std::make_move_iterator(hits.begin()),
+                               std::make_move_iterator(hits.end()));
+        };
+        search_files(*pool, files, asked.query, options, hand_on, open_texts, stop, LIMIT);
     });
 }
 
 void FindInFiles::take_found() {
-    if (!searching_ || !found_.valid()) return;
-    if (found_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
-    hits_ = found_.get();
-    // The matches come file by file.
-    files_found_ = 0;
-    for (std::size_t i = 0; i < hits_.size(); ++i) {
-        if (i == 0 || hits_[i].path != hits_[i - 1].path) ++files_found_;
+    if (!searching_) return;
+    // Whether it has ended first: what it found before ending is then all
+    // there to take.
+    const bool ended = ended_.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    std::vector<FileHit> taken;
+    {
+        const std::lock_guard lock(found_->mutex);
+        taken.swap(found_->hits);
     }
-    searching_ = false;
+    // A search's first matches, or its end with none, take the place of
+    // the search before's.
+    if (stale_ && (!taken.empty() || ended)) clear_hits();
+    const bool first = hits_.empty();
+    // The matches come file by file.
+    for (FileHit& hit : taken) {
+        if (hits_.empty() || hits_.back().path != hit.path) ++files_found_;
+        hits_.push_back(std::move(hit));
+    }
+    if (first && !hits_.empty()) preview(hits_.front());
+    if (ended) {
+        ended_.get();
+        searching_ = false;
+    }
+}
+
+void FindInFiles::clear_hits() {
+    hits_.clear();
+    files_found_ = 0;
     selected_ = 0;
-    if (!hits_.empty()) preview(hits_.front());
+    stale_ = false;
+    preview_.reset();
+    previewed_.clear();
 }
 
 void FindInFiles::preview(const FileHit& hit) {
@@ -129,7 +165,9 @@ void FindInFiles::preview(const FileHit& hit) {
 }
 
 void FindInFiles::replace_all() {
-    if (!searched_) return;
+    // The list is whole, and of what it looks for now, only once the
+    // search has ended.
+    if (!searched_ || searching_) return;
     const FindOptions options = find_options(searched_->toggles);
     std::vector<std::filesystem::path> files;
     for (const FileHit& hit : hits_) {
@@ -161,12 +199,11 @@ void FindInFiles::replace_all() {
 void FindInFiles::close(FindInFilesAsk& ask) {
     open_ = false;
     stop_.request_stop();
-    found_ = {};
+    found_.reset();
+    ended_ = {};
     searching_ = false;
     searched_.reset();
-    hits_.clear();
-    preview_.reset();
-    previewed_.clear();
+    clear_hits();
     ask.shown.assign(shown_.begin(), shown_.end());
     shown_.clear();
 }

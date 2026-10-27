@@ -19,6 +19,8 @@ using ftk::ui::Key;
 
 namespace {
 
+constexpr ftk::ui::Modifiers CTRL{.ctrl = true};
+
 // Find in files over a folder of the test's own, floating over the whole of
 // its window as a program that holds no code view of its own floats it.
 struct Finding {
@@ -47,9 +49,10 @@ struct Finding {
         h.step(2);
     }
 
-    // Steps until it has its matches, or long enough that it won't.
+    // Steps until its search has ended, or long enough that it won't.
     void wait_for_hits() {
-        for (int i = 0; i < 400 && find.hits().empty(); ++i) h.step();
+        h.step();
+        for (int i = 0; i < 400 && find.searching(); ++i) h.step();
     }
 };
 
@@ -93,4 +96,29 @@ TEST_CASE("Find in files leaves out of what it hands back a file that was open b
     f.h.step();
     CHECK(f.let_go.empty());
     CHECK(f.workspace.files().size() == 1);
+}
+
+TEST_CASE("Find in files keeps the matches it has until a new search finds its own", "[editor][find_in_files]") {
+    Finding f({{"a.cpp", "float spin_speed;\n"}, {"b.cpp", "x = spin_speed;\n"}});
+    f.find.open("spin_speed");
+    f.wait_for_hits();
+    REQUIRE(f.find.hits().size() == 2);
+
+    // Looking for something else, the list stays as it was while the new
+    // search has found nothing yet, then takes its matches. What is typed
+    // is looked for from the frame after.
+    f.h.press(Key::A, CTRL);
+    f.h.type("float");
+    f.h.step();
+    CHECK(f.find.searching());
+    CHECK(f.find.hits().size() == 2);
+    f.wait_for_hits();
+    REQUIRE(f.find.hits().size() == 1);
+    CHECK(f.find.hits().front().line == "float spin_speed;");
+
+    // A search that finds nothing empties it.
+    f.h.press(Key::A, CTRL);
+    f.h.type("nowhere");
+    f.wait_for_hits();
+    CHECK(f.find.hits().empty());
 }

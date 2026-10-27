@@ -75,7 +75,8 @@ TEST_CASE("Find in files floats over the room it is given, and opens what it fin
     a.h.step();
     REQUIRE(a.code->find_in_files().is_open());
     a.h.type("spin_speed");
-    for (int i = 0; i < 400 && a.code->find_in_files().hits().empty(); ++i) a.h.step();
+    a.h.step();
+    for (int i = 0; i < 400 && a.code->find_in_files().searching(); ++i) a.h.step();
     REQUIRE(a.code->find_in_files().hits().size() == 1);
     CHECK(a.found_opened == 0);
     a.h.press(Key::Enter);

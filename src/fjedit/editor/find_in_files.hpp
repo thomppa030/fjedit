@@ -7,7 +7,8 @@
 // on the files, opens it; Enter opens the file at the match, Up and Down go
 // through the matches, Escape closes it. The search runs on the threads it
 // is given, again whenever what it looks for changes: a new search stops the
-// one before it and never waits for it to end.
+// one before it and never waits for it to end. Its matches are listed as
+// they are found; until its first come, the list keeps the search before's.
 
 #include "fjedit/core/file_search.hpp"
 #include "fjedit/core/keymap.hpp"
@@ -70,8 +71,11 @@ public:
     [[nodiscard]] FindInFilesAsk draw(ftk::ui::core::Rect over, const std::filesystem::path& folder, const Keymap& keys,
                                       float text_size, bool vim = false, bool over_windows = false);
 
-    /// The matches found for what it looks for now; empty while it searches.
+    /// The matches found for what it looks for now, so far; while a search
+    /// has found none yet, the search before's.
     [[nodiscard]] const std::vector<FileHit>& hits() const { return hits_; }
+    /// Whether a search is under way, its matches still coming.
+    [[nodiscard]] bool searching() const { return searching_; }
 
 private:
     // What a search looks for; a change starts it again.
@@ -86,6 +90,8 @@ private:
 
     void search(const Asked& asked);
     void take_found();
+    // Empties the list of matches and the preview.
+    void clear_hits();
     void replace_all();
     void close(FindInFilesAsk& ask);
     // Shows `hit`'s file in the preview, at the match.
@@ -101,14 +107,21 @@ private:
     ftk::ui::FindToggles toggles_;
     Scope scope_{Scope::Project};
 
-    // The search asked for last, what stops it, and what it will find.
+    // What a search's threads have found and the window not yet taken.
+    struct Found;
+
+    // The search asked for last, what stops it, what it has found so far,
+    // and when it has ended.
     std::optional<Asked> searched_;
     std::stop_source stop_;
-    std::future<std::vector<FileHit>> found_;
+    std::shared_ptr<Found> found_;
+    std::future<void> ended_;
     std::vector<FileHit> hits_;
     // How many files the matches are in.
     std::size_t files_found_{0};
     bool searching_{false};
+    // The list still holds the search before's matches.
+    bool stale_{false};
     std::size_t selected_{0};
     // The keys moved the match picked: the list brings it into view.
     bool reveal_{false};

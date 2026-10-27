@@ -94,15 +94,24 @@ TEST_CASE("A search stops at its limit, or when asked", "[file_search]") {
     REQUIRE(search_files(pool, files, "x", {}, {}, stop.get_token()).empty());
 }
 
-TEST_CASE("Files searched on many threads give their matches in order, and the limit takes the first", "[file_search]") {
-    // File i holds i + 1 matches, so the first 100 end in file 13, its
-    // ninth line: files 0 to 12 hold 91.
-    const TempFolder folder;
+namespace {
+
+// Forty files, the i-th holding i + 1 lines of x: 820 in all.
+void write_forty(const TempFolder& folder) {
     for (int i = 0; i < 40; ++i) {
         std::string text;
         for (int line = 0; line <= i; ++line) text += "x\n";
         folder.write(std::format("f{:02}.txt", i), text);
     }
+}
+
+} // namespace
+
+TEST_CASE("Files searched on many threads give their matches in order, and the limit takes the first", "[file_search]") {
+    // File i holds i + 1 matches, so the first 100 end in file 13, its
+    // ninth line: files 0 to 12 hold 91.
+    const TempFolder folder;
+    write_forty(folder);
     ftk::ThreadPool pool(3);
     const std::vector<fs::path> files = files_to_search(folder.path);
 
@@ -119,4 +128,19 @@ TEST_CASE("Files searched on many threads give their matches in order, and the l
     REQUIRE(std::vector<FileHit>(all.begin(), all.begin() + 100) == first);
     REQUIRE(first.back().path == folder.path / "f13.txt");
     REQUIRE(first.back().span.from.line == 8);
+}
+
+TEST_CASE("A search hands on its matches as it finds them, in order", "[file_search]") {
+    const TempFolder folder;
+    write_forty(folder);
+    ftk::ThreadPool pool(3);
+    const std::vector<fs::path> files = files_to_search(folder.path);
+    std::vector<std::vector<FileHit>> runs;
+    search_files(pool, files, "x", {}, [&runs](std::vector<FileHit>&& hits) { runs.push_back(std::move(hits)); });
+    std::vector<FileHit> handed;
+    for (const std::vector<FileHit>& run : runs) {
+        REQUIRE_FALSE(run.empty());
+        handed.insert(handed.end(), run.begin(), run.end());
+    }
+    REQUIRE(handed == search_files(pool, files, "x", {}));
 }

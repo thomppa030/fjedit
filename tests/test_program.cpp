@@ -542,9 +542,10 @@ namespace {
 
 constexpr ftk::ui::Modifiers CTRL_SHIFT{.ctrl = true, .shift = true};
 
-// Steps until find in files has its matches, or long enough that it won't.
+// Steps until find in files' search has ended, or long enough that it won't.
 void wait_for_hits(Running& run) {
-    for (int i = 0; i < 400 && run.program->code().find_in_files().hits().empty(); ++i) run.h.step();
+    run.h.step();
+    for (int i = 0; i < 400 && run.program->code().find_in_files().searching(); ++i) run.h.step();
 }
 
 } // namespace

@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <mutex>
 #include <system_error>
 #include <utility>
 
@@ -117,14 +120,18 @@ std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& 
     return files;
 }
 
-std::vector<FileHit> search_files(ftk::ThreadPool& pool, std::span<const std::filesystem::path> files,
-                                  std::string_view needle, FindOptions options,
-                                  const std::map<std::filesystem::path, std::string>& open, std::stop_token stop,
-                                  std::size_t limit) {
-    if (needle.empty() || limit == 0) return {};
-    // Each file's matches in its place, so they come out in order whichever
-    // thread found them.
-    std::vector<std::vector<FileHit>> found(files.size());
+void search_files(ftk::ThreadPool& pool, std::span<const std::filesystem::path> files, std::string_view needle,
+                  FindOptions options, const FoundHits& found,
+                  const std::map<std::filesystem::path, std::string>& open, std::stop_token stop, std::size_t limit) {
+    if (needle.empty() || limit == 0) return;
+    // Each file's matches wait in its place until every file before it is
+    // done, so they are handed on in order whichever thread found them.
+    std::vector<std::vector<FileHit>> searched(files.size());
+    std::vector<bool> done(files.size(), false);
+    std::mutex mutex;
+    // The files handed on, all of them before the rest, and their matches.
+    std::size_t handed = 0;
+    std::size_t given = 0;
     std::atomic<std::size_t> next{0};
     std::atomic<std::size_t> count{0};
     // Each thread takes the next file until none is left: a big file holds
@@ -135,18 +142,38 @@ std::vector<FileHit> search_files(ftk::ThreadPool& pool, std::span<const std::fi
         while (!stop.stop_requested() && count.load() < limit) {
             const std::size_t index = next.fetch_add(1);
             if (index >= files.size()) return;
-            found[index] = search_file(files[index], needle, options, open, limit);
-            count += found[index].size();
+            std::vector<FileHit> hits = search_file(files[index], needle, options, open, limit);
+            count += hits.size();
+
+            const std::lock_guard lock(mutex);
+            searched[index] = std::move(hits);
+            done[index] = true;
+            // The files done from the first not yet handed on, together.
+            std::vector<FileHit> run;
+            for (; handed < files.size() && done[handed]; ++handed) {
+                std::vector<FileHit>& file = searched[handed];
+                const std::size_t taken = std::min(file.size(), limit - given);
+                run.insert(run.end(), std::make_move_iterator(file.begin()),
+                           std::make_move_iterator(file.begin() + static_cast<std::ptrdiff_t>(taken)));
+                given += taken;
+                file = {};
+            }
+            if (!run.empty()) found(std::move(run));
         }
     });
+}
 
+std::vector<FileHit> search_files(ftk::ThreadPool& pool, std::span<const std::filesystem::path> files,
+                                  std::string_view needle, FindOptions options,
+                                  const std::map<std::filesystem::path, std::string>& open, std::stop_token stop,
+                                  std::size_t limit) {
     std::vector<FileHit> hits;
-    for (std::vector<FileHit>& file : found) {
-        for (FileHit& hit : file) {
-            if (hits.size() == limit) return hits;
-            hits.push_back(std::move(hit));
-        }
-    }
+    search_files(
+        pool, files, needle, options,
+        [&hits](std::vector<FileHit>&& found) {
+            hits.insert(hits.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+        },
+        open, stop, limit);
     return hits;
 }
 
