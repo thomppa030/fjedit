@@ -3,7 +3,10 @@
 #include "fjedit/core/text_file.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <system_error>
+#include <utility>
 
 namespace fjedit {
 
@@ -65,6 +68,25 @@ void walk(const std::filesystem::path& folder, const std::filesystem::path& root
     ignore.leave();
 }
 
+// The first `limit` matches in the file at `path`: as `open` holds it, or
+// as it is on disk; none when it isn't text.
+std::vector<FileHit> search_file(const std::filesystem::path& path, std::string_view needle, FindOptions options,
+                                 const std::map<std::filesystem::path, std::string>& open, std::size_t limit) {
+    const auto held = open.find(path);
+    std::string read;
+    if (held == open.end()) {
+        ftk::Result<std::string> bytes = read_text_file(path);
+        if (!bytes) return {};
+        read = std::move(*bytes);
+    }
+    const std::string_view text = held != open.end() ? std::string_view(held->second) : std::string_view(read);
+    std::vector<FileHit> hits;
+    for (const TextMatch& match : find_in_text(text, needle, options, limit)) {
+        hits.push_back({.path = path, .span = match.span, .line = std::string(match.line)});
+    }
+    return hits;
+}
+
 } // namespace
 
 bool included(const std::filesystem::path& relative, std::string_view include) {
@@ -95,23 +117,34 @@ std::vector<std::filesystem::path> files_to_search(const std::filesystem::path& 
     return files;
 }
 
-std::vector<FileHit> search_files(std::span<const std::filesystem::path> files, std::string_view needle,
-                                  FindOptions options, const std::map<std::filesystem::path, std::string>& open,
-                                  std::stop_token stop, std::size_t limit) {
-    std::vector<FileHit> hits;
-    if (needle.empty()) return hits;
-    for (const std::filesystem::path& path : files) {
-        if (stop.stop_requested() || hits.size() >= limit) break;
-        const auto held = open.find(path);
-        std::string read;
-        if (held == open.end()) {
-            ftk::Result<std::string> bytes = read_text_file(path);
-            if (!bytes) continue;
-            read = std::move(*bytes);
+std::vector<FileHit> search_files(ftk::ThreadPool& pool, std::span<const std::filesystem::path> files,
+                                  std::string_view needle, FindOptions options,
+                                  const std::map<std::filesystem::path, std::string>& open, std::stop_token stop,
+                                  std::size_t limit) {
+    if (needle.empty() || limit == 0) return {};
+    // Each file's matches in its place, so they come out in order whichever
+    // thread found them.
+    std::vector<std::vector<FileHit>> found(files.size());
+    std::atomic<std::size_t> next{0};
+    std::atomic<std::size_t> count{0};
+    // Each thread takes the next file until none is left: a big file holds
+    // up only the thread searching it. Once the files taken have the
+    // matches asked for, no more are taken, as every file left comes after
+    // them.
+    pool.parallel_for(0, pool.thread_count() + 1, 1, [&](uint32_t, uint32_t, uint32_t) {
+        while (!stop.stop_requested() && count.load() < limit) {
+            const std::size_t index = next.fetch_add(1);
+            if (index >= files.size()) return;
+            found[index] = search_file(files[index], needle, options, open, limit);
+            count += found[index].size();
         }
-        const std::string_view text = held != open.end() ? std::string_view(held->second) : std::string_view(read);
-        for (const TextMatch& match : find_in_text(text, needle, options, limit - hits.size())) {
-            hits.push_back({.path = path, .span = match.span, .line = std::string(match.line)});
+    });
+
+    std::vector<FileHit> hits;
+    for (std::vector<FileHit>& file : found) {
+        for (FileHit& hit : file) {
+            if (hits.size() == limit) return hits;
+            hits.push_back(std::move(hit));
         }
     }
     return hits;

@@ -6,11 +6,13 @@
 // are searched as they stand, unsaved changes and all.
 //
 //     const auto files = fjedit::files_to_search(root, "*.cpp, shaders/");
-//     const auto hits = fjedit::search_files(files, "spin_speed", {.whole_word = true}, open_texts);
+//     const auto hits = fjedit::search_files(pool, files, "spin_speed", {.whole_word = true}, open_texts);
 
 #include "fjedit/core/buffer.hpp"
 #include "fjedit/core/find.hpp"
 #include "fjedit/core/git_ignore.hpp"
+
+#include "ftk/base/thread_pool.hpp"
 
 #include <cstddef>
 #include <filesystem>
@@ -52,10 +54,12 @@ struct FileHit {
 
 /// Every match of `needle` in `files`, in their order and each file's in
 /// order. A file in `open` is searched as the bytes given there, any other
-/// as it is on disk; one that isn't text is passed over. It stops at
-/// `limit` matches, or early when `stop` asks, with what it has found.
-[[nodiscard]] std::vector<FileHit> search_files(std::span<const std::filesystem::path> files, std::string_view needle,
-                                                FindOptions options,
+/// as it is on disk; one that isn't text is passed over. The files are
+/// searched on `pool`'s threads and the calling one, a file at a time. It
+/// stops at `limit` matches, or early when `stop` asks, with what it has
+/// found.
+[[nodiscard]] std::vector<FileHit> search_files(ftk::ThreadPool& pool, std::span<const std::filesystem::path> files,
+                                                std::string_view needle, FindOptions options,
                                                 const std::map<std::filesystem::path, std::string>& open = {},
                                                 std::stop_token stop = {}, std::size_t limit = 10'000);
 

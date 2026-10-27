@@ -3,8 +3,11 @@
 #include "print.hpp"
 #include "temp_folder.hpp"
 
+#include "ftk/base/thread_pool.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <format>
 #include <map>
 #include <stop_token>
 #include <string>
@@ -62,11 +65,12 @@ TEST_CASE("The walk for the files to search stops when asked", "[file_search]") 
 
 TEST_CASE("Every match in every file, in order, open files as they stand", "[file_search]") {
     const TempFolder folder;
+    ftk::ThreadPool pool(3);
     folder.write("a.cpp", "float spin_speed;\nspin();\n");
     folder.write("b.cpp", "spin_speed = spin_speed * 2;\n");
     folder.write("blob.bin", std::string("spin_speed\0", 11));
     const std::vector<fs::path> files = files_to_search(folder.path);
-    std::vector<FileHit> hits = search_files(files, "spin_speed", {.whole_word = true});
+    std::vector<FileHit> hits = search_files(pool, files, "spin_speed", {.whole_word = true});
     REQUIRE(hits.size() == 3);
     REQUIRE(hits[0] == FileHit{folder.path / "a.cpp", {{0, 6}, {0, 16}}, "float spin_speed;"});
     REQUIRE(hits[2].path == folder.path / "b.cpp");
@@ -74,17 +78,45 @@ TEST_CASE("Every match in every file, in order, open files as they stand", "[fil
 
     // An open file is searched as it stands here, not as it is on disk.
     const std::map<fs::path, std::string> open{{folder.path / "a.cpp", "int x;\n"}};
-    hits = search_files(files, "spin_speed", {.whole_word = true}, open);
+    hits = search_files(pool, files, "spin_speed", {.whole_word = true}, open);
     REQUIRE(hits.size() == 2);
     REQUIRE(hits[0].path == folder.path / "b.cpp");
 }
 
 TEST_CASE("A search stops at its limit, or when asked", "[file_search]") {
     const TempFolder folder;
+    ftk::ThreadPool pool(3);
     folder.write("a.txt", "x x x x x");
     const std::vector<fs::path> files = files_to_search(folder.path);
-    REQUIRE(search_files(files, "x", {}, {}, {}, 3).size() == 3);
+    REQUIRE(search_files(pool, files, "x", {}, {}, {}, 3).size() == 3);
     std::stop_source stop;
     stop.request_stop();
-    REQUIRE(search_files(files, "x", {}, {}, stop.get_token()).empty());
+    REQUIRE(search_files(pool, files, "x", {}, {}, stop.get_token()).empty());
+}
+
+TEST_CASE("Files searched on many threads give their matches in order, and the limit takes the first", "[file_search]") {
+    // File i holds i + 1 matches, so the first 100 end in file 13, its
+    // ninth line: files 0 to 12 hold 91.
+    const TempFolder folder;
+    for (int i = 0; i < 40; ++i) {
+        std::string text;
+        for (int line = 0; line <= i; ++line) text += "x\n";
+        folder.write(std::format("f{:02}.txt", i), text);
+    }
+    ftk::ThreadPool pool(3);
+    const std::vector<fs::path> files = files_to_search(folder.path);
+
+    const std::vector<FileHit> all = search_files(pool, files, "x", {});
+    REQUIRE(all.size() == 820);
+    for (std::size_t i = 1; i < all.size(); ++i) {
+        const bool in_order = all[i - 1].path < all[i].path ||
+                              (all[i - 1].path == all[i].path && all[i - 1].span.from.line + 1 == all[i].span.from.line);
+        REQUIRE(in_order);
+    }
+
+    const std::vector<FileHit> first = search_files(pool, files, "x", {}, {}, {}, 100);
+    REQUIRE(first.size() == 100);
+    REQUIRE(std::vector<FileHit>(all.begin(), all.begin() + 100) == first);
+    REQUIRE(first.back().path == folder.path / "f13.txt");
+    REQUIRE(first.back().span.from.line == 8);
 }

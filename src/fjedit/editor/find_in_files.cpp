@@ -85,7 +85,7 @@ void FindInFiles::search(const Asked& asked) {
     searching_ = true;
     const FindOptions options = find_options(asked.toggles);
     const std::filesystem::path root = workspace_->root();
-    found_ = pool_->submit([asked, options, root, open_texts = std::move(open_texts), open_files,
+    found_ = pool_->submit([pool = pool_, asked, options, root, open_texts = std::move(open_texts), open_files,
                             stop = stop_.get_token()] {
         std::vector<std::filesystem::path> files;
         if (asked.scope == Scope::OpenFiles) {
@@ -95,7 +95,7 @@ void FindInFiles::search(const Asked& asked) {
         } else {
             files = files_to_search(asked.scope == Scope::Folder ? asked.folder : root, asked.include, stop);
         }
-        return search_files(files, asked.query, options, open_texts, stop, LIMIT);
+        return search_files(*pool, files, asked.query, options, open_texts, stop, LIMIT);
     });
 }
 
