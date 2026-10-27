@@ -778,7 +778,8 @@ void CodeArea::draw() {
         // A group may have closed its last tab and gone.
         if (index >= groups_.size()) break;
     }
-    // What the views asked, now that every one of them is drawn.
+    // What the groups and views asked, now that every one of them is drawn.
+    if (const std::optional<std::size_t> splitting = std::exchange(splitting_, std::nullopt)) split(*splitting);
     if (const std::optional<Location> going = std::exchange(going_, std::nullopt)) go_to(going->path, going->span);
     for (const vim::Asked& asked : std::exchange(vim_asked_, {})) answer_vim(asked);
 }
@@ -835,7 +836,7 @@ void CodeArea::draw_group(Group& group, std::size_t index) {
     const glm::vec2 below = ui::cursor();
     const float button = ui::frame_height();
     ui::set_cursor({right - button - TAB_END_PAD, row.y + (below.y - row.y - button) * 0.5f});
-    if (ui::icon_button("##split", icon::split, "Split (Ctrl \\)")) split(index);
+    if (ui::icon_button("##split", icon::split, "Split (Ctrl \\)")) splitting_ = index;
     ui::set_cursor(below);
 
     // The code of the tab in front, in the space under the tabs, under a

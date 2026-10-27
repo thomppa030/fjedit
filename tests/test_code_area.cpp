@@ -1,4 +1,5 @@
 #include "fjedit/editor/code_area.hpp"
+#include "fjedit/editor/icons.hpp"
 
 #include "code_area_running.hpp"
 
@@ -156,6 +157,26 @@ TEST_CASE("What the groups show is said, file by file and the one in front of ea
     a.open("c.cpp");
     CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {a.at("a.cpp"), a.at("b.cpp")}, .front = 1},
                                                      {.files = {a.at("b.cpp"), a.at("c.cpp")}, .front = 1}});
+}
+
+TEST_CASE("The tab row's Split button opens the file in front again beside it", "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}});
+    a.open("a.cpp");
+    // Pressed while its group is drawn, the button splits once every group
+    // is: a split moves the list of groups the drawing walks.
+    const auto* split = a.h.find(icon::split, Role::Button);
+    REQUIRE(split != nullptr);
+    a.h.click_at(split->rect.centre());
+    a.h.step(2);
+    REQUIRE(a.code->groups() == 2);
+    CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {a.at("a.cpp")}, .front = 0},
+                                                     {.files = {a.at("a.cpp")}, .front = 0}});
+    CHECK(a.files->workspace().files().size() == 1);
+
+    // The group beside has the keyboard.
+    a.h.type("x");
+    a.h.step();
+    CHECK(a.files->workspace().find(a.at("a.cpp"))->buffer().text() == "xint a;\n");
 }
 
 TEST_CASE("An area shown what was kept shows the same groups, their files and the ones in front", "[editor][area]") {

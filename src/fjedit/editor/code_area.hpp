@@ -340,6 +340,9 @@ private:
     // what uses them, so it goes first.
     ftk::ThreadPool pool_;
     FindInFiles find_in_files_{files_.workspace(), pool_};
+    // The group whose Split button was pressed, split once the groups are
+    // drawn: a split adds a group to the list being drawn.
+    std::optional<std::size_t> splitting_;
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;
