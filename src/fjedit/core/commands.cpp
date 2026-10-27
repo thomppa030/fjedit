@@ -181,49 +181,228 @@ void newline(CommandContext& c) {
     });
 }
 
-// Typing. A closer typed where only spaces stand before it on its line goes
-// back to the indent of the line its opener is on.
+// ── Pairs ───────────────────────────────────────────────────────────────────
+
+// The token of line `line` that holds byte `byte`, or null.
+const Token* token_at(const Syntax& syntax, std::size_t line, std::size_t byte) {
+    const std::span<const Token> tokens = syntax.tokens(line);
+    const auto after = std::upper_bound(tokens.begin(), tokens.end(), byte,
+                                        [](std::size_t b, const Token& token) { return b < token.begin; });
+    if (after == tokens.begin()) return nullptr;
+    const Token& token = *(after - 1);
+    return byte < token.end ? &token : nullptr;
+}
+
+// Whether a token of `kind` is text rather than code: a string or a comment.
+bool text_kind(TokenKind kind) {
+    return kind == TokenKind::String || kind == TokenKind::Comment;
+}
+
+// Whether `text`, a string's or a comment's token, closes it on its line: a
+// string by the quote it opened with, unescaped; a comment by `*/` or `-->`.
+bool closed(std::string_view text, TokenKind kind) {
+    if (kind == TokenKind::Comment) return text.ends_with("*/") || text.ends_with("-->");
+    const std::size_t quote = text.find_first_of("\"'");
+    if (quote == std::string_view::npos || text.size() < quote + 2 || text.back() != text[quote]) return false;
+    std::size_t escapes = 0;
+    for (std::size_t i = text.size() - 1; i > quote + 1 && text[i - 1] == '\\'; --i) ++escapes;
+    return escapes % 2 == 0;
+}
+
+// Whether a caret at `at` stands in a string or a comment: inside one, or at
+// the end of one its line leaves open (a line comment, a string not closed
+// yet).
+bool in_text(const CommandContext& c, Position at) {
+    const Syntax& syntax = c.document.syntax();
+    if (const Token* token = token_at(syntax, at.line, at.byte); token && token->begin < at.byte && text_kind(token->kind)) {
+        return true;
+    }
+    if (at.byte == 0) return false;
+    const Token* before = token_at(syntax, at.line, at.byte - 1);
+    if (before == nullptr || before->end != at.byte || !text_kind(before->kind)) return false;
+    return !closed(c.document.buffer().line(at.line).substr(before->begin, before->end - before->begin), before->kind);
+}
+
+// The closer typing `text` pairs with: an opener's, or for one of the
+// language's quotes, the quote; 0 for anything else.
+char pair_closer(const Language& language, std::string_view text) {
+    if (text.size() != 1) return 0;
+    const char typed = text[0];
+    if (typed == '(' || typed == '[' || typed == '{') return closer_of(typed);
+    return language.quotes.find(typed) != std::string_view::npos ? typed : 0;
+}
+
+// Whether `typed`, an opener or a quote, brings its closer at `at`: before
+// space, a closer, `;`, `,` or the line's end, and outside strings and
+// comments. A quote doesn't just after a word (`it's`, `1'000`), unless the
+// word is one of the language's string prefixes (`u8"`).
+bool closes_at(const CommandContext& c, Position at, char typed) {
+    const std::string_view line = c.document.buffer().line(at.line);
+    if (at.byte < line.size() && std::string_view(" \t)]};,").find(line[at.byte]) == std::string_view::npos) return false;
+    if (in_text(c, at)) return false;
+    if (typed == '(' || typed == '[' || typed == '{') return true;
+    const Language& language = c.document.language();
+    std::size_t word = at.byte;
+    while (word > 0 && word_byte(language, line[word - 1])) --word;
+    if (word == at.byte) return true;
+    return std::ranges::find(language.string_prefixes, line.substr(word, at.byte - word)) != language.string_prefixes.end();
+}
+
+// Whether `typed` at `at` steps over the same character just after it
+// instead of typing another. A closer does when the brackets of its kind
+// around `at` all have pairs, so another would close nothing; where one has
+// none, the closer is typed and pairs it. A quote does at the end of the
+// string `at` is in.
+bool steps_over(const CommandContext& c, Position at, char typed) {
+    const Buffer& buffer = c.document.buffer();
+    const std::string_view line = buffer.line(at.line);
+    if (at.byte >= line.size() || line[at.byte] != typed) return false;
+    const Syntax& syntax = c.document.syntax();
+    if (typed == ')' || typed == ']' || typed == '}') {
+        if (in_string_or_comment(syntax, at.line, at.byte)) return false;
+        const char open = typed == ')' ? '(' : typed == ']' ? '[' : '{';
+        for (std::optional<Position> opener = enclosing_opener(buffer, &syntax, at, open); opener;
+             opener = enclosing_opener(buffer, &syntax, *opener, open)) {
+            if (!matching_bracket(buffer, syntax, *opener)) return false;
+        }
+        return true;
+    }
+    if (c.document.language().quotes.find(typed) == std::string_view::npos) return false;
+    const Token* token = token_at(syntax, at.line, at.byte);
+    if (token == nullptr || token->kind == TokenKind::Comment || token->end != at.byte + 1) return false;
+    return line.find(typed, token->begin) < at.byte;
+}
+
+// The empty pair a caret at `at` stands in, which Backspace takes whole: an
+// opener and the closer it pairs with (`(|)`), or an empty string (`"|"`).
+std::optional<Span> empty_pair(const CommandContext& c, Position at) {
+    const Buffer& buffer = c.document.buffer();
+    const std::string_view line = buffer.line(at.line);
+    if (at.byte == 0 || at.byte >= line.size()) return std::nullopt;
+    const char before = line[at.byte - 1];
+    const char after = line[at.byte];
+    const Position open{at.line, at.byte - 1};
+    const Span pair{open, {at.line, at.byte + 1}};
+    if (before == '(' || before == '[' || before == '{') {
+        if (after != closer_of(before)) return std::nullopt;
+        const std::optional<BracketPair> found = matching_bracket(buffer, c.document.syntax(), open);
+        if (!found || found->open != open || found->close != at) return std::nullopt;
+        return pair;
+    }
+    if (before != after || c.document.language().quotes.find(before) == std::string_view::npos) return std::nullopt;
+    const Token* token = token_at(c.document.syntax(), at.line, open.byte);
+    if (token == nullptr || token->kind == TokenKind::Comment || token->begin != open.byte || token->end != at.byte + 1) {
+        return std::nullopt;
+    }
+    return pair;
+}
+
+// Where a selection goes once its typing is made.
+enum class Typed : uint8_t {
+    /// After what was typed.
+    After,
+    /// Between an opener or a quote and the closer typed with it.
+    Between,
+    /// Over its text again, now wrapped in the pair.
+    Wrapped,
+    /// Past the closer or quote it stepped over, nothing typed.
+    Over,
+    /// After a closer moved back to its opener's indent.
+    Indented,
+};
+
+struct Placed {
+    Typed how{Typed::After};
+    /// Where a caret that stepped over was.
+    Position at{};
+    /// How far along its line a closer moved back leaves the caret.
+    std::size_t column{0};
+    /// A wrapped selection's caret was at its start.
+    bool backwards{false};
+};
+
+// Typing. With pairs closing, an opener or a quote also types its closer
+// where closes_at() lets it and wraps a selection in the pair, and a closer
+// or a quote steps over its like where steps_over() says. A closer typed
+// where only spaces stand before it on its line goes back to the indent of
+// the line its opener is on.
 void type(CommandContext& c, std::string_view text) {
+    const Buffer& buffer = c.document.buffer();
     const bool closer = text == "}" || text == "]" || text == ")";
+    const char single = text.size() == 1 ? text[0] : '\0';
+    const char pair = c.close_pairs ? pair_closer(c.document.language(), text) : '\0';
     Edit edit;
-    std::vector<std::size_t> carets;
-    bool moved = false;
+    std::vector<Placed> placed;
     for (const Selection& selection : c.selections.all()) {
         const Span span = selection.span();
         const Position at = span.from;
-        if (closer && selection.empty() && at.byte > 0 && indent_before(c.document.buffer(), at).size() == at.byte) {
-            const char open = text[0] == '}' ? '{' : text[0] == ']' ? '[' : '(';
-            if (const std::optional<Position> opener = enclosing_opener(c.document.buffer(), &c.document.syntax(), at, open)) {
-                const std::string indent(leading_space(c.document.buffer(), opener->line));
+        if (c.close_pairs && selection.empty() && single != '\0' && steps_over(c, at, single)) {
+            placed.push_back({.how = Typed::Over, .at = at});
+            continue;
+        }
+        if (pair != '\0' && !selection.empty()) {
+            edit.changes.push_back({.span = {span.from, span.from}, .text = std::string(text)});
+            edit.changes.push_back({.span = {span.to, span.to}, .text = std::string(1, pair)});
+            placed.push_back({.how = Typed::Wrapped, .backwards = selection.caret < selection.anchor});
+            continue;
+        }
+        if (pair != '\0' && closes_at(c, at, single)) {
+            edit.changes.push_back({.span = span, .text = std::string(text) + pair});
+            placed.push_back({.how = Typed::Between});
+            continue;
+        }
+        if (closer && selection.empty() && at.byte > 0 && indent_before(buffer, at).size() == at.byte) {
+            const char open = single == '}' ? '{' : single == ']' ? '[' : '(';
+            if (const std::optional<Position> opener = enclosing_opener(buffer, &c.document.syntax(), at, open)) {
+                const std::string indent(leading_space(buffer, opener->line));
                 edit.changes.push_back({.span = {{at.line, 0}, at}, .text = indent + std::string(text)});
-                carets.push_back(indent.size() + 1);
-                moved = true;
+                placed.push_back({.how = Typed::Indented, .column = indent.size() + 1});
                 continue;
             }
         }
         edit.changes.push_back({.span = span, .text = std::string(text)});
-        carets.push_back(0);
+        placed.push_back({});
     }
-    if (!moved) {
-        replace_each(c, std::vector<std::string>(c.selections.size(), std::string(text)), EditKind::Typing);
+    // Every caret stepped over: they move on, and the typing stays in the
+    // step it was in.
+    if (edit.changes.empty()) {
+        std::vector<Selection> after;
+        for (const Placed& p : placed) after.push_back(Selection::at({p.at.line, p.at.byte + 1}));
+        c.selections.set(std::move(after), c.selections.primary_index());
         return;
     }
     commit(c, std::move(edit), EditKind::Typing, [&](const Edit& made) {
         const std::vector<Span> spans = spans_after(made);
         std::vector<Selection> after;
-        for (std::size_t i = 0; i < spans.size(); ++i) {
-            after.push_back(Selection::at(carets[i] != 0 ? Position{spans[i].from.line, carets[i]} : spans[i].to));
+        std::size_t change = 0;
+        for (const Placed& p : placed) {
+            switch (p.how) {
+                case Typed::After: after.push_back(Selection::at(spans[change++].to)); break;
+                case Typed::Between: {
+                    const Position end = spans[change++].to;
+                    after.push_back(Selection::at({end.line, end.byte - 1}));
+                    break;
+                }
+                case Typed::Wrapped: {
+                    const Position from = spans[change].to;
+                    const Position to = spans[change + 1].from;
+                    change += 2;
+                    after.push_back(p.backwards ? Selection{.anchor = to, .caret = from} : Selection{.anchor = from, .caret = to});
+                    break;
+                }
+                case Typed::Over: after.push_back(Selection::at(map(made, {p.at.line, p.at.byte + 1}, Bias::After))); break;
+                case Typed::Indented: after.push_back(Selection::at({spans[change++].from.line, p.column})); break;
+            }
         }
         return after;
     });
 }
 
-// The text a caret deletes, reaching from where it is.
-using Reach = Span (*)(const Buffer&, Position);
-
-// Deletes each selection, or for a caret, what `reach` gives from it. Spans
-// that overlap are deleted as one, and each caret ends where its own span
-// began.
+// Deletes each selection, or for a caret, what `reach` gives from it: the
+// text a caret deletes, reaching from where it is (`Span(const Buffer&,
+// Position)`). Spans that overlap are deleted as one, and each caret ends
+// where its own span began.
+template <typename Reach>
 void erase(CommandContext& c, Reach reach, EditKind kind = EditKind::Deleting) {
     std::vector<Span> spans;
     for (const Selection& selection : c.selections.all()) {
@@ -262,6 +441,15 @@ Span to_word_left(const Buffer& buffer, Position at) {
 
 Span to_word_right(const Buffer& buffer, Position at) {
     return {at, word_right(buffer, at)};
+}
+
+// Backspace: the character before each caret, or with pairs closing, an
+// empty pair whole (empty_pair()).
+void backspace(CommandContext& c) {
+    erase(c, [&](const Buffer& buffer, Position at) {
+        const std::optional<Span> pair = c.close_pairs ? empty_pair(c, at) : std::nullopt;
+        return pair ? *pair : to_char_left(buffer, at);
+    });
 }
 
 // Lines `first` to `last`, both counted.
@@ -760,7 +948,7 @@ const std::array COMMANDS = {
     Command{"edit.newline", "New line", newline},
     Command{"edit.tab", "Indent", tab},
     Command{"edit.outdent", "Outdent", outdent},
-    Command{"edit.backspace", "Delete the character before", [](CommandContext& c) { erase(c, to_char_left); }},
+    Command{"edit.backspace", "Delete the character before", backspace},
     Command{"edit.delete", "Delete the character after", [](CommandContext& c) { erase(c, to_char_right); }},
     Command{"edit.delete_word_left", "Delete the word before", [](CommandContext& c) { erase(c, to_word_left); }},
     Command{"edit.delete_word_right", "Delete the word after", [](CommandContext& c) { erase(c, to_word_right); }},

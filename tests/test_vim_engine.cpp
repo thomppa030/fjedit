@@ -38,7 +38,8 @@ struct Vim {
     CommandContext context() {
         view.folds.catch_up(view.document);
         return {.document = view.document, .selections = view.selections, .layout = view.layout,
-                .clipboard = &view.clipboard, .folds = &view.folds, .text = {}, .in_view = &sight};
+                .clipboard = &view.clipboard, .folds = &view.folds, .text = {}, .close_pairs = view.close_pairs,
+                .in_view = &sight};
     }
 
     // Keys typed, as the view gives them to Vim: each kept for a macro being
@@ -245,6 +246,21 @@ TEST_CASE("Insert mode's keys edit as they do without Vim", "[vim][engine]") {
     CHECK(v.shown() == "|b");
     v.keys("i<CR><Esc>");
     CHECK(v.shown() == "\n|b");
+}
+
+TEST_CASE("Insert mode closes pairs, steps over them and takes an empty one whole", "[vim][engine]") {
+    Vim closing("f|");
+    closing.view.close_pairs = true;
+    closing.keys("a(x<Esc>");
+    CHECK(closing.shown() == "f(|x)");
+    Vim over("f|");
+    over.view.close_pairs = true;
+    over.keys("a(x)y<Esc>");
+    CHECK(over.shown() == "f(x)|y");
+    Vim back("f|");
+    back.view.close_pairs = true;
+    back.keys("a(<BS>x<Esc>");
+    CHECK(back.shown() == "f|x");
 }
 
 TEST_CASE("Ctrl-W deletes the word before; Ctrl-U the line before, back to its indent, then its start",
@@ -797,6 +813,11 @@ TEST_CASE("A dot makes an insert again with what was typed in it", "[vim][repeat
     Vim undone("|ab");
     undone.keys("ix<Esc>.u");
     CHECK(undone.view.buffer().text() == "xab");
+    // A pair typed closed is typed closed again.
+    Vim paired("|a\nb");
+    paired.view.close_pairs = true;
+    paired.keys("A(x<Esc>j.");
+    CHECK(paired.shown() == "a(x)\nb(|x)");
 }
 
 TEST_CASE("A count before an insert types it that many times, after o on lines of its own", "[vim][repeat]") {

@@ -111,6 +111,9 @@ struct EditorView {
     /// The minimap is shown down the view's right side, before the
     /// scrollbar.
     bool minimap{true};
+    /// Typing an opener or a quote types its closer too
+    /// (CommandContext::close_pairs).
+    bool close_pairs{true};
     /// The code's text size; its lines, its line numbers and the marks on
     /// it scale with it.
     float text_size{CODE_TEXT};

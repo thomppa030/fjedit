@@ -246,6 +246,150 @@ TEST_CASE("Typing on after Enter is one step to undo", "[editing][indent]") {
     REQUIRE(view.shown() == "x {|");
 }
 
+namespace {
+
+// `marked` in a view whose typing closes pairs, in the language of `file`.
+struct Pairing : TestView {
+    explicit Pairing(std::string_view marked, std::string_view file = "x.cpp") : TestView(marked, file) {
+        close_pairs = true;
+    }
+};
+
+} // namespace
+
+TEST_CASE("An opener types its closer, the caret between them", "[editing][pairs]") {
+    Pairing end("f|");
+    end.type("(");
+    REQUIRE(end.shown() == "f(|)");
+    Pairing space("a| b");
+    space.type("{");
+    REQUIRE(space.shown() == "a{|} b");
+    Pairing closer("g(|)");
+    closer.type("(");
+    REQUIRE(closer.shown() == "g((|))");
+    Pairing semicolon("x|;");
+    semicolon.type("[");
+    REQUIRE(semicolon.shown() == "x[|];");
+}
+
+TEST_CASE("An opener before other text types only itself", "[editing][pairs]") {
+    Pairing view("|foo");
+    view.type("(");
+    REQUIRE(view.shown() == "(|foo");
+}
+
+TEST_CASE("Nothing closes in a string or a comment", "[editing][pairs]") {
+    Pairing string("s = \"a| b\";");
+    string.type("(");
+    REQUIRE(string.shown() == "s = \"a(| b\";");
+    Pairing open("s = \"a|");
+    open.type("(");
+    REQUIRE(open.shown() == "s = \"a(|");
+    Pairing comment("x; // see|");
+    comment.type("(");
+    REQUIRE(comment.shown() == "x; // see(|");
+}
+
+TEST_CASE("A quote closes, but not just after a word unless it is a string's prefix", "[editing][pairs]") {
+    Pairing double_quote("x = |;");
+    double_quote.type("\"");
+    REQUIRE(double_quote.shown() == "x = \"|\";");
+    Pairing single_quote("x = |;");
+    single_quote.type("'");
+    REQUIRE(single_quote.shown() == "x = '|';");
+    Pairing word("it|");
+    word.type("'");
+    REQUIRE(word.shown() == "it'|");
+    Pairing digit("n = 1|");
+    digit.type("'");
+    REQUIRE(digit.shown() == "n = 1'|");
+    Pairing prefix("s = u8|");
+    prefix.type("\"");
+    REQUIRE(prefix.shown() == "s = u8\"|\"");
+}
+
+TEST_CASE("Only the language's quotes close, and plain text's brackets", "[editing][pairs]") {
+    Pairing json_single("{|}", "x.json");
+    json_single.type("'");
+    REQUIRE(json_single.shown() == "{'|}");
+    Pairing json_double("{|}", "x.json");
+    json_double.type("\"");
+    REQUIRE(json_double.shown() == "{\"|\"}");
+    Pairing plain("a |", "notes.txt");
+    plain.type("\"(");
+    REQUIRE(plain.shown() == "a \"(|)");
+}
+
+TEST_CASE("A closer steps over its like while every bracket around it has a pair", "[editing][pairs]") {
+    Pairing call("f(x|)");
+    call.type(")");
+    REQUIRE(call.shown() == "f(x)|");
+    Pairing block("f() {|}");
+    block.type("}");
+    REQUIRE(block.shown() == "f() {}|");
+    // The outer ( has no pair: the ) typed closes the inner, and the one
+    // there the outer.
+    Pairing missing("if (a && (b|)");
+    missing.type(")");
+    REQUIRE(missing.shown() == "if (a && (b)|)");
+}
+
+TEST_CASE("A quote steps over the end of the string it is in", "[editing][pairs]") {
+    Pairing view("s = \"abc|\";");
+    view.type("\"");
+    REQUIRE(view.shown() == "s = \"abc\"|;");
+}
+
+TEST_CASE("Typing a call through leaves the text as typed, one step to undo", "[editing][pairs]") {
+    Pairing view("|");
+    view.type("f(a, \"b\");");
+    REQUIRE(view.shown() == "f(a, \"b\");|");
+    view.run("edit.undo");
+    REQUIRE(view.shown() == "|");
+}
+
+TEST_CASE("Backspace in an empty pair takes both", "[editing][pairs]") {
+    Pairing brackets("f(|)");
+    brackets.run("edit.backspace");
+    REQUIRE(brackets.shown() == "f|");
+    Pairing quotes("x = \"|\";");
+    quotes.run("edit.backspace");
+    REQUIRE(quotes.shown() == "x = |;");
+    Pairing filled("f(|x)");
+    filled.run("edit.backspace");
+    REQUIRE(filled.shown() == "f|x)");
+    TestView off("f(|)");
+    off.run("edit.backspace");
+    REQUIRE(off.shown() == "f|)");
+}
+
+TEST_CASE("An opener or a quote typed over a selection wraps it, still selected", "[editing][pairs]") {
+    Pairing view("x = [foo];");
+    view.type("(");
+    REQUIRE(view.shown() == "x = ([foo]);");
+    view.type("\"");
+    REQUIRE(view.shown() == "x = (\"[foo]\");");
+    view.run("edit.undo");
+    REQUIRE(view.shown() == "x = [foo];");
+}
+
+TEST_CASE("Each caret closes and steps over on its own", "[editing][pairs]") {
+    Pairing both("a|\nb|");
+    both.type("(");
+    REQUIRE(both.shown() == "a(|)\nb(|)");
+    both.type(")");
+    REQUIRE(both.shown() == "a()|\nb()|");
+    Pairing mixed("f(|)\ng|");
+    mixed.type(")");
+    REQUIRE(mixed.shown() == "f()|\ng)|");
+}
+
+TEST_CASE("With pairs closing off, an opener types only itself", "[editing][pairs]") {
+    TestView view("f|");
+    view.type("(");
+    REQUIRE(view.shown() == "f(|");
+}
+
 TEST_CASE("Enter goes as deep as the file indents", "[editing][indent]") {
     TestView view("a {\n  b {|");
     view.run("edit.newline");

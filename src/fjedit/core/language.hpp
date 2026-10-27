@@ -5,6 +5,7 @@
 #include "fjedit/core/structure.hpp"
 #include "fjedit/core/syntax.hpp"
 
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -22,6 +23,13 @@ struct Language {
     /// as completion reads the word being typed: FJSS's names run through
     /// `-` (`justify-content`, `--accent`).
     std::string_view word_also{};
+    /// The quotes typing closes as it closes brackets ("\"'"); none where
+    /// the text has no strings.
+    std::string_view quotes{};
+    /// Words a string's opening quote may follow as part of the string, a
+    /// C++ prefix (`u8"…"`, `R"(…)"`): a quote typed after one closes as
+    /// one typed after a space does.
+    std::span<const std::string_view> string_prefixes{};
 };
 
 /// Whether `c` belongs to a word of `language`.

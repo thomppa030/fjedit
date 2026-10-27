@@ -178,7 +178,8 @@ TEST_CASE("Text typed with Ctrl is a shortcut's, with Ctrl and Alt AltGr's", "[c
     e.h.hold({.ctrl = true, .alt = true});
     e.h.type("{");
     e.h.hold({});
-    REQUIRE(e.text() == "{");
+    // AltGr's { is typed as any opener is, its closer with it.
+    REQUIRE(e.text() == "{}");
 }
 
 TEST_CASE("Keys and text that share a frame run in the order they came, each one", "[code_view]") {

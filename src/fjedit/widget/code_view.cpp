@@ -1807,7 +1807,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const auto vim_context = [&] {
         view.folds.catch_up(document);
         return CommandContext{.document = document, .selections = view.selections, .layout = layout,
-                              .clipboard = &clipboard, .folds = &view.folds, .text = {}, .in_view = &in_view};
+                              .clipboard = &clipboard, .folds = &view.folds, .text = {},
+                              .close_pairs = view.close_pairs, .in_view = &in_view};
     };
     const auto to_vim = [&](const Chord& key) {
         CommandContext context = vim_context();
@@ -1838,7 +1839,8 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
         }
         view.folds.catch_up(document);
         CommandContext context{.document = document, .selections = view.selections, .layout = layout,
-                               .clipboard = &clipboard, .folds = &view.folds, .text = text};
+                               .clipboard = &clipboard, .folds = &view.folds, .text = text,
+                               .close_pairs = view.close_pairs};
         (void)run_command(command, context);
     };
     // What a menu or a palette asked for, first.

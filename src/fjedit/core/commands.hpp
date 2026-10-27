@@ -61,6 +61,10 @@ struct CommandContext {
     Folds* folds{nullptr};
     /// What `edit.type` types.
     std::string_view text{};
+    /// Typing an opener or a quote types its closer too, wraps a selection
+    /// in the pair, and steps over a closer already there; Backspace takes
+    /// an empty pair whole. Off, typing types only what it is given.
+    bool close_pairs{false};
     /// The rows the view has in sight; what moves by them does nothing
     /// without them.
     InView* in_view{nullptr};

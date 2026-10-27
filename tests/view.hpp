@@ -27,6 +27,8 @@ struct TestView {
     fjedit::Selections selections;
     fjedit::MonospaceLayout layout{4, 3};
     fjedit::Folds folds;
+    /// Typing closes pairs (CommandContext::close_pairs).
+    bool close_pairs{false};
     std::string clipboard_text;
     fjedit::Clipboard clipboard{
         .get = [this] { return clipboard_text; },
@@ -74,7 +76,8 @@ struct TestView {
     void run(std::string_view name, std::string_view text = {}) {
         folds.catch_up(document);
         fjedit::CommandContext context{.document = document, .selections = selections, .layout = layout,
-                                       .clipboard = &clipboard, .folds = &folds, .text = text};
+                                       .clipboard = &clipboard, .folds = &folds, .text = text,
+                                       .close_pairs = close_pairs};
         REQUIRE(fjedit::run_command(name, context));
         folds.catch_up(document);
     }

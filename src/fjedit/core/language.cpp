@@ -14,23 +14,29 @@ public:
     [[nodiscard]] LineState lex(std::string_view, const LineState&, std::vector<Token>&) const override { return {}; }
 };
 
+// What may stand before a C++ string's opening quote: its encoding, and R
+// for a raw string.
+constexpr std::string_view CPP_STRING_PREFIXES[] = {"u8", "u", "U", "L", "R", "u8R", "uR", "UR", "LR"};
+
 const Language& cpp() {
-    static const Language language{.name = "C++", .lexer = lex::cpp(), .line_comment = "//"};
+    static const Language language{.name = "C++", .lexer = lex::cpp(), .line_comment = "//", .quotes = "\"'",
+                                   .string_prefixes = CPP_STRING_PREFIXES};
     return language;
 }
 
 const Language& glsl() {
-    static const Language language{.name = "GLSL", .lexer = lex::glsl(), .line_comment = "//"};
+    static const Language language{.name = "GLSL", .lexer = lex::glsl(), .line_comment = "//", .quotes = "\""};
     return language;
 }
 
 const Language& fjsl() {
-    static const Language language{.name = "FJSL", .lexer = lex::fjsl(), .line_comment = "//"};
+    static const Language language{.name = "FJSL", .lexer = lex::fjsl(), .line_comment = "//", .quotes = "\""};
     return language;
 }
 
 const Language& fjss() {
-    static const Language language{.name = "FJSS", .lexer = lex::fjss(), .line_comment = "", .word_also = "-"};
+    static const Language language{.name = "FJSS", .lexer = lex::fjss(), .line_comment = "", .word_also = "-",
+                                   .quotes = "\"'"};
     return language;
 }
 
@@ -38,12 +44,12 @@ const Language& widget() {
     // A widget's tags, attributes and properties run through hyphens and
     // colons: health-bar, on:click, class:low, style---fill.
     static const Language language{.name = "Widget", .lexer = lex::markup(), .line_comment = "",
-                                   .folding = Folding::Indentation, .word_also = "-:"};
+                                   .folding = Folding::Indentation, .word_also = "-:", .quotes = "\"'"};
     return language;
 }
 
 const Language& json() {
-    static const Language language{.name = "JSON", .lexer = lex::json(), .line_comment = "//"};
+    static const Language language{.name = "JSON", .lexer = lex::json(), .line_comment = "//", .quotes = "\""};
     return language;
 }
 
