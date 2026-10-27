@@ -73,6 +73,7 @@ find_package(Threads REQUIRED)
 add_library(fjedit-editor STATIC
     fjedit/editor/code_area.cpp
     fjedit/editor/code_files.cpp
+    fjedit/editor/code_status.cpp
     fjedit/editor/file_tree.cpp
     fjedit/editor/find_in_files.cpp
     fjedit/editor/preferences.cpp)

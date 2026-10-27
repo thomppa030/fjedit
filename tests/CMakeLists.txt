@@ -67,6 +67,7 @@ add_executable(fjedit-editor-tests
     log_for_tests.cpp
     test_code_area.cpp
     test_code_files.cpp
+    test_code_status.cpp
     test_file_tree.cpp
     test_find_in_files.cpp
     test_preferences.cpp)

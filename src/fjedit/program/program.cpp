@@ -1,6 +1,5 @@
 #include "fjedit/program/program.hpp"
 
-#include "fjedit/core/vim/notation.hpp"
 #include "fjedit/program/icons.hpp"
 
 #include "ftk/base/log.hpp"
@@ -56,26 +55,6 @@ std::optional<ftk::SvgPicture> load_mark(const std::filesystem::path& brand) {
         return std::nullopt;
     }
     return std::move(*mark);
-}
-
-// How the status bar names Vim's mode, and the tone of its pill (sheet 47,
-// M1).
-struct ModeShown {
-    const char* name;
-    ui::StatusTone tone;
-};
-
-ModeShown mode_shown(vim::Mode mode) {
-    switch (mode) {
-        case vim::Mode::Insert: return {"Insert", ui::StatusTone::On};
-        case vim::Mode::Replace: return {"Replace", ui::StatusTone::Warning};
-        case vim::Mode::Visual: return {"Visual", ui::StatusTone::Selected};
-        case vim::Mode::VisualLine: return {"Visual line", ui::StatusTone::Selected};
-        case vim::Mode::VisualBlock: return {"Visual block", ui::StatusTone::Selected};
-        case vim::Mode::Command: return {"Command", ui::StatusTone::Plain};
-        case vim::Mode::Normal: break;
-    }
-    return {"Normal", ui::StatusTone::Plain};
 }
 
 } // namespace
@@ -289,105 +268,28 @@ void Program::draw_side() {
 }
 
 void Program::draw_status() {
-    if (auto bar = ui::StatusBar()) {
-        const EditorView* view = code_.front_view();
-        const std::optional<std::filesystem::path> front = code_.front();
-        // With Vim on, the mode of the view in front first, then the keys of
-        // a command half typed in it, in the mono face.
-        if (view != nullptr && view->vim) {
-            const vim::Engine& engine = *view->vim;
-            const ModeShown mode = mode_shown(engine.mode());
-            ui::status_pill(nullptr, mode.name, mode.tone);
-            if (const std::optional<char> recording = engine.recording()) {
-                ui::status_item(nullptr, std::format("recording @{}", *recording));
-            }
-            std::string keys = engine.pending();
-            for (const Chord& key : view->pending) keys += vim::notation(key);
-            for (const Chord& key : view->maps.waiting()) keys += vim::notation(key);
-            if (!keys.empty()) {
-                const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
-                ui::status_item(nullptr, keys);
-            }
-            // What the last key had to say, where Vim says it.
-            if (const vim::Message& said = engine.message(); !said.text.empty()) {
-                ui::status_message(said.error ? ui::StatusTone::Error : ui::StatusTone::Plain, said.text);
-            }
-            // The first line of keys.vim that couldn't be used.
-            if (const std::vector<vim::KeysError>& keys_errors = code_.keys_errors(); !keys_errors.empty()) {
-                const vim::KeysError& first = keys_errors.front();
-                ui::status_note(ui::StatusTone::Warning, first.message,
-                                first.line == 0 ? std::string("keys.vim") : std::format("keys.vim:{}", first.line));
-            }
-            ui::status_rule();
-        }
-
-        // The problems in the files open, and the first of the worst in the
-        // file in front, with the file and line it is at.
-        std::size_t errors = 0;
-        std::size_t warnings = 0;
-        const Diagnostic* first = nullptr;
-        LanguageServices& services = files_.services();
-        for (const std::filesystem::path& path : services.files()) {
-            for (const Diagnostic& problem : services.diagnostics(path)) {
-                errors += problem.severity == Severity::Error ? 1 : 0;
-                warnings += problem.severity == Severity::Warning ? 1 : 0;
-                if (!front || path != *front || problem.severity > Severity::Warning) continue;
-                if (first == nullptr || problem.severity < first->severity) first = &problem;
-            }
-        }
-        const bool served = view != nullptr && view->service != nullptr;
-        if (served || errors + warnings > 0) {
-            ui::status_item(ui::icon::error, std::to_string(errors));
-            ui::status_item(ui::icon::warning, std::to_string(warnings));
-        }
-        if (first != nullptr) {
-            const std::string_view message = first->message;
-            ui::status_note(message.substr(0, message.find('\n')),
-                            std::format("{}:{}", front->filename().string(), first->span.from.line + 1));
-        }
-        if (!files_.note().empty()) ui::status_item(ui::icon::warning, files_.note());
-        if (!code_.told().empty()) ui::status_message(ui::StatusTone::Plain, code_.told());
-        // While a colour is picked from its swatch, what Esc and Enter do.
-        if (view != nullptr) {
-            if (const std::optional<std::string> hint = picking_hint(*view)) {
-                ui::status_message(ui::StatusTone::Plain, *hint);
-            }
-        }
-        if (entry_answer_) {
-            ui::status_note(entry_answer_->written ? ui::StatusTone::Success : ui::StatusTone::Error, entry_answer_->text,
-                            entry_answer_->where);
-        }
-        bar.right();
-        const Document* document = front ? files_.workspace().find(*front) : nullptr;
-        if (document == nullptr) return;
-        const Buffer& buffer = document->buffer();
-        const Position caret = view->selections.primary().caret;
-        const Indent indent = document->indent();
-        const std::size_t column = column_of(buffer.line(caret.line), caret.byte, std::max<std::size_t>(indent.width, 1));
-        ui::status_item(nullptr, std::format("Ln {}, Col {}", caret.line + 1, column + 1));
-        ui::status_rule();
-        ui::status_item(nullptr, std::format("{}: {}", indent.tabs ? "Tabs" : "Spaces", indent.width));
-        ui::status_rule();
-        ui::status_item(nullptr, buffer.byte_order_mark() ? "UTF-8 with BOM" : "UTF-8");
-        ui::status_rule();
-        ui::status_item(nullptr, document->language().name);
-        // Each language service the file in front asks, as a dot in how it
-        // is.
-        for (const ServiceShown& service : services.shown(*front)) {
-            ui::status_rule();
-            switch (service.status.state) {
-                case ServiceState::Ready:
-                    ui::status_state(ui::StatusTone::Success, service.name, service.name + " is running");
-                    break;
-                case ServiceState::Starting:
-                    ui::status_state(ui::StatusTone::Warning, service.name, service.status.note);
-                    break;
-                case ServiceState::Stopped:
-                    ui::status_state(ui::StatusTone::Error, service.name, service.status.note);
-                    break;
-            }
-        }
+    auto bar = ui::StatusBar();
+    if (!bar) return;
+    const CodeStatus status = code_.status();
+    // With Vim on, the mode of the view in front first, then the keys of a
+    // command half typed in it.
+    draw_vim_status(status);
+    // The problems in the files open, and the first of the worst in the
+    // file in front, with the file and line it is at.
+    if (status.problems) {
+        ui::status_item(ui::icon::error, std::to_string(status.problems->errors));
+        ui::status_item(ui::icon::warning, std::to_string(status.problems->warnings));
     }
+    if (status.first_problem) ui::status_note(status.first_problem->message, status.first_problem->where);
+    if (!status.note.empty()) ui::status_item(ui::icon::warning, status.note);
+    if (!status.told.empty()) ui::status_message(ui::StatusTone::Plain, status.told);
+    if (status.hint) ui::status_message(ui::StatusTone::Plain, *status.hint);
+    if (entry_answer_) {
+        ui::status_note(entry_answer_->written ? ui::StatusTone::Success : ui::StatusTone::Error, entry_answer_->text,
+                        entry_answer_->where);
+    }
+    bar.right();
+    draw_place_status(status);
 }
 
 void Program::ask_quit() {

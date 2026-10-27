@@ -19,6 +19,7 @@
 #include "ftk/ui/kit/region.hpp"
 #include "ftk/ui/kit/scope.hpp"
 #include "ftk/ui/kit/settings_file.hpp"
+#include "ftk/ui/kit/status_bar.hpp"
 #include "ftk/ui/kit/tabs.hpp"
 #include "ftk/ui/kit/window.hpp"
 #include "ftk/ui/theme.hpp"
@@ -67,6 +68,26 @@ Keymap area_keys(std::span<const CodeCommand> own, std::span<const CodeCommand> 
         }
     }
     return keys;
+}
+
+// How a status bar names Vim's mode, and the tone of its pill (sheet 47,
+// M1).
+struct ModeShown {
+    const char* name;
+    ui::StatusTone tone;
+};
+
+ModeShown mode_shown(vim::Mode mode) {
+    switch (mode) {
+        case vim::Mode::Insert: return {"Insert", ui::StatusTone::On};
+        case vim::Mode::Replace: return {"Replace", ui::StatusTone::Warning};
+        case vim::Mode::Visual: return {"Visual", ui::StatusTone::Selected};
+        case vim::Mode::VisualLine: return {"Visual line", ui::StatusTone::Selected};
+        case vim::Mode::VisualBlock: return {"Visual block", ui::StatusTone::Selected};
+        case vim::Mode::Command: return {"Command", ui::StatusTone::Plain};
+        case vim::Mode::Normal: break;
+    }
+    return {"Normal", ui::StatusTone::Plain};
 }
 
 // The label a file's tab is drawn and known by: its name, and its path
@@ -273,9 +294,63 @@ std::optional<std::filesystem::path> CodeArea::front() const {
     return tab->path;
 }
 
-const EditorView* CodeArea::front_view() const {
+CodeStatus CodeArea::status() {
+    CodeStatus status;
     const Tab* tab = front_tab();
-    return tab != nullptr ? tab->view.get() : nullptr;
+    if (tab != nullptr && tab->view->vim) {
+        const vim::Engine& engine = *tab->view->vim;
+        const ModeShown mode = mode_shown(engine.mode());
+        std::string keys = engine.pending();
+        for (const Chord& key : tab->view->pending) keys += vim::notation(key);
+        for (const Chord& key : tab->view->maps.waiting()) keys += vim::notation(key);
+        status.vim = CodeStatus::Vim{.mode = mode.name,
+                                     .tone = mode.tone,
+                                     .recording = engine.recording(),
+                                     .keys = std::move(keys),
+                                     .said = engine.message(),
+                                     .keys_error = keys_errors_.empty() ? std::nullopt : std::optional(keys_errors_.front())};
+    }
+
+    // The problems in the files open, and the first of the worst in the
+    // file in front, with the file and line it is at.
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    const Diagnostic* first = nullptr;
+    LanguageServices& services = files_.services();
+    for (const std::filesystem::path& path : services.files()) {
+        for (const Diagnostic& problem : services.diagnostics(path)) {
+            errors += problem.severity == Severity::Error ? 1 : 0;
+            warnings += problem.severity == Severity::Warning ? 1 : 0;
+            if (tab == nullptr || path != tab->path || problem.severity > Severity::Warning) continue;
+            if (first == nullptr || problem.severity < first->severity) first = &problem;
+        }
+    }
+    const bool served = tab != nullptr && tab->view->service != nullptr;
+    if (served || errors + warnings > 0) status.problems = CodeStatus::Problems{.errors = errors, .warnings = warnings};
+    if (first != nullptr) {
+        const std::string_view message = first->message;
+        status.first_problem = CodeStatus::Problem{
+            .message = std::string(message.substr(0, message.find('\n'))),
+            .where = std::format("{}:{}", tab->path.filename().string(), first->span.from.line + 1)};
+    }
+
+    status.note = files_.note();
+    status.told = told_;
+    if (tab != nullptr) status.hint = picking_hint(*tab->view);
+
+    const Document* document = tab != nullptr ? files_.workspace().find(tab->path) : nullptr;
+    if (document == nullptr) return status;
+    const Buffer& buffer = document->buffer();
+    const Position caret = tab->view->selections.primary().caret;
+    const Indent indent = document->indent();
+    const std::size_t column = column_of(buffer.line(caret.line), caret.byte, std::max<std::size_t>(indent.width, 1));
+    status.place = CodeStatus::Place{.line = caret.line + 1,
+                                     .column = column + 1,
+                                     .indent = indent,
+                                     .byte_order_mark = buffer.byte_order_mark(),
+                                     .language = std::string(document->language().name),
+                                     .services = services.shown(tab->path)};
+    return status;
 }
 
 CodeArea::Tab* CodeArea::front_tab() {

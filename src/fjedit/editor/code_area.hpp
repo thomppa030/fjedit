@@ -16,6 +16,7 @@
 #include "fjedit/core/jump_list.hpp"
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/editor/code_files.hpp"
+#include "fjedit/editor/code_status.hpp"
 #include "fjedit/editor/find_in_files.hpp"
 #include "fjedit/editor/preferences.hpp"
 #include "fjedit/widget/code_view.hpp"
@@ -154,8 +155,10 @@ public:
     /// The file in front in the group that last had the keyboard, when one
     /// is open there.
     [[nodiscard]] std::optional<std::filesystem::path> front() const;
-    /// Its view, when one is open there.
-    [[nodiscard]] const EditorView* front_view() const;
+
+    /// What the code says on a status bar now, of the file in front and the
+    /// files open.
+    [[nodiscard]] CodeStatus status();
 
     /// How many groups of tabs stand side by side: one, or more once split.
     [[nodiscard]] std::size_t groups() const { return groups_.size(); }

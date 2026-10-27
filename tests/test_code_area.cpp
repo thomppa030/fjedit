@@ -1,20 +1,10 @@
 #include "fjedit/editor/code_area.hpp"
 
-#include "temp_folder.hpp"
-
-#include "ftk/test/kit_harness.hpp"
-#include "ftk/ui/kit/viewport_toolbar.hpp"
-#include "ftk/ui/kit/window.hpp"
+#include "code_area_running.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <filesystem>
-#include <format>
-#include <functional>
-#include <initializer_list>
-#include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 
 using namespace fjedit;
@@ -25,77 +15,20 @@ namespace {
 
 constexpr ftk::ui::Modifiers CTRL_SHIFT{.ctrl = true, .shift = true};
 
-// A code area on a folder of the test's own, alone in a window as a tab of
-// fjell's holds it: no program of its own around it, one command of the
-// program it is in ("game.play", on F5), and find in files floating over the
-// whole window.
-struct Area {
-    TempFolder folder;
-    Preferences preferences;
-    std::unique_ptr<CodeFiles> files;
-    std::unique_ptr<CodeArea> code;
-    ftk::test::KitHarness h{{1280.0f, 800.0f}};
-    // What the area asked of the program it is in.
-    std::vector<std::string> ran;
-    int left{0};
-
-    explicit Area(std::initializer_list<std::pair<const char*, const char*>> written,
-                  const std::function<void(const TempFolder&)>& before = {}) {
-        for (const auto& [name, bytes] : written) folder.write(name, bytes);
-        if (before) before(folder);
-        files = std::make_unique<CodeFiles>(
-            folder.path, preferences,
-            CodeFilesOptions{.recovery = folder.path / ".recovery", .services = std::vector<ServiceMaker>{}});
-        code = std::make_unique<CodeArea>(
-            *files, preferences,
-            CodeAreaOptions{.keys = folder.path / ".config" / "keys.vim",
-                            .commands = {{.name = "game.play", .title = "Play", .key = Chord{.key = Key::F5}}},
-                            .run = [this](std::string_view command) {
-                                ran.emplace_back(command);
-                                return true;
-                            },
-                            .leave = [this] { ++left; },
-                            .program_name = "fjell"});
-        h.set_ui([this] {
-            code->take_keys();
-            ftk::ui::next_window_place({0.0f, 0.0f}, {1280.0f, 800.0f});
-            (void)ftk::ui::begin_host_window("##code", {.scrollbar = false, .to_front = false});
-            code->draw();
-            code->draw_find_in_files({.min = {0.0f, 0.0f}, .max = {1280.0f, 800.0f}});
-            ftk::ui::end_host_window();
-            code->draw_prompts();
-        });
-        h.step(3);
-    }
-
-    [[nodiscard]] std::filesystem::path at(std::string_view name) const {
-        return files->workspace().name(folder.path / name);
-    }
-
-    // Vim's `:` line, typed and entered.
-    void ex(std::string_view line) {
-        h.type(std::format(":{}", line));
-        h.press(Key::Enter);
-        h.step(2);
-    }
-};
-
 } // namespace
 
 TEST_CASE("The code area opens a file in a tab in front, and goes to a place in it", "[editor][area]") {
     Area a({{"a.cpp", "int a;\nint speed;\n"}});
     CHECK_FALSE(a.code->front().has_value());
-    a.code->open(a.folder.path / "a.cpp");
-    a.h.step(2);
-    REQUIRE(a.code->front() == a.at("a.cpp"));
+    a.open("a.cpp");
     CHECK(a.h.find("a.cpp", Role::Tab) != nullptr);
 
     a.code->go_to(a.folder.path / "a.cpp", {{1, 4}, {1, 9}});
     a.h.step(2);
-    REQUIRE(a.code->front_view() != nullptr);
-    const Selection& selected = a.code->front_view()->selections.primary();
-    CHECK(selected.anchor == Position{1, 4});
-    CHECK(selected.caret == Position{1, 9});
+    const CodeStatus status = a.code->status();
+    REQUIRE(status.place.has_value());
+    CHECK(status.place->line == 2);
+    CHECK(status.place->column == 10);
 }
 
 TEST_CASE("The program's commands run by their keys and by name; others are no command", "[editor][area]") {
@@ -123,8 +56,7 @@ TEST_CASE("With Vim on, :qa asks the program to leave, and is refused over unsav
           "[editor][area][vim]") {
     Area a({{"a.txt", "abc\n"}});
     a.preferences.vim = true;
-    a.code->open(a.folder.path / "a.txt");
-    a.h.step(2);
+    a.open("a.txt");
     a.ex("qa");
     CHECK(a.left == 1);
 
@@ -168,8 +100,7 @@ TEST_CASE("The code area offers the work kept from before by itself, and Recover
 
 TEST_CASE("A tab closed with unsaved changes asks first, and Don't save lets its file go", "[editor][area]") {
     Area a({{"a.cpp", "int a;\n"}});
-    a.code->open(a.folder.path / "a.cpp");
-    a.h.step(2);
+    a.open("a.cpp");
     a.h.type("x");
     a.h.step();
     REQUIRE(a.code->run("file.close"));
