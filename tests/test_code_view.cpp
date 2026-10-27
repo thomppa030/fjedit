@@ -377,6 +377,8 @@ TEST_CASE("The other uses of the word at the caret are boxed", "[code_view][mark
 
 TEST_CASE("Indent guides, the caret's block brighter", "[code_view][marks]") {
     Editor e("a {\n    b {\n        c;\n    }\n}");
+    // Bracket colours colour the caret's block's guide instead.
+    e.view.bracket_colours = false;
     e.h.click_at({PAST_END, 10.0f});
     // Line 1 and 3 one level in, line 2 two: four guides, none active.
     REQUIRE(drawn_in_code(e.h, ftk::theme::code_indent_guide()).size() == 4);
@@ -386,6 +388,58 @@ TEST_CASE("Indent guides, the caret's block brighter", "[code_view][marks]") {
     e.h.step();
     // On c: the second guide of line 2 is the caret's block's.
     REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide_active()) == 1);
+}
+
+// The 1 px wide shapes among `shapes`: guides, not glyphs.
+std::size_t guides_among(const std::vector<ftk::ui::core::Rect>& shapes) {
+    return static_cast<std::size_t>(
+        std::ranges::count_if(shapes, [](const ftk::ui::core::Rect& r) { return r.max.x - r.min.x <= 1.0f; }));
+}
+
+TEST_CASE("Brackets are drawn in their levels' colours", "[code_view][brackets]") {
+    Editor e("f(a[b]) {}");
+    e.h.step();
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_bracket_level(0)).size() == 4);
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_bracket_level(1)).size() == 2);
+}
+
+TEST_CASE("A bracket without a pair is drawn in the error colour", "[code_view][brackets]") {
+    Editor e("f(a");
+    e.h.step();
+    REQUIRE(drawn_in_code(e.h, ftk::theme::error()).size() == 1);
+}
+
+TEST_CASE("With bracket colours off, brackets are punctuation", "[code_view][brackets]") {
+    Editor e("f(a[b]) {}");
+    e.view.bracket_colours = false;
+    e.h.step();
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_bracket_level(0)).empty());
+    // Right of the gutter, whose caret's line number is in the same grey.
+    std::vector<ftk::ui::core::Rect> punctuation = drawn_in_code(e.h, ftk::theme::code_punctuation());
+    std::erase_if(punctuation, [](const ftk::ui::core::Rect& r) { return r.min.x < FOLD_X; });
+    REQUIRE(punctuation.size() == 6);
+}
+
+TEST_CASE("A template's angle brackets take their level's colour where the language service names them",
+          "[code_view][brackets]") {
+    FakeLanguage language;
+    language.colours = SemanticTokens{.lines = {{Token{.begin = 11, .end = 12, .kind = TokenKind::Bracket},
+                                                 Token{.begin = 15, .end = 16, .kind = TokenKind::Bracket}}}};
+    Editor e("std::vector<int> v = a < b;");
+    e.view.service = &language;
+    e.h.step(2);
+    REQUIRE(drawn_in_code(e.h, ftk::theme::code_bracket_level(0)).size() == 2);
+}
+
+TEST_CASE("The caret's block's guide takes the colour of the bracket opening it", "[code_view][brackets]") {
+    Editor e("a {\n    b {\n        c;\n    }\n}");
+    e.h.click_at({PAST_END, 10.0f});
+    e.h.press(Key::Down);
+    e.h.press(Key::Down);
+    e.h.step();
+    // On c: b's block, opened at level 1.
+    REQUIRE(guides_among(drawn_in_code(e.h, ftk::theme::code_bracket_level(1))) == 1);
+    REQUIRE(drawn_in(e.h, ftk::theme::code_indent_guide_active()) == 0);
 }
 
 TEST_CASE("A fold's chevron closes it, and the rows after it move up", "[code_view][folds]") {
@@ -411,7 +465,8 @@ TEST_CASE("A closed fold draws a pill, the closer after it, and opens at a click
     e.h.step();
     const std::vector<ftk::ui::core::Rect> shown = pills(e.h);
     REQUIRE(shown.size() == 1);
-    const auto closer = std::ranges::count_if(drawn(e.h, ftk::theme::code_punctuation()), [&](const auto& glyph) {
+    // The closer, in its level's colour.
+    const auto closer = std::ranges::count_if(drawn(e.h, ftk::theme::code_bracket_level(0)), [&](const auto& glyph) {
         return glyph.min.x >= shown[0].max.x && glyph.max.y <= CODE_LINE;
     });
     REQUIRE(closer == 1);

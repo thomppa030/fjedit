@@ -1218,25 +1218,53 @@ float draw_run(core::Context& ui, const TextLayout& layout, std::string_view tex
     return x;
 }
 
+// The colour a bracket is drawn in: its level's, or without a pair the
+// error colour; an angle bracket without one keeps `colour`, as its
+// language service reports it (sheet 60).
+Color bracket_colour(const LeveledBracket& bracket, char c, Color colour) {
+    if (bracket.level) return theme::code_bracket_level(*bracket.level);
+    return c == '<' || c == '>' ? colour : theme::error();
+}
+
+// draw_run() of bytes `from` up to `to`, its brackets among `brackets` (the
+// line's) each in its own colour (bracket_colour()). `next` is the first of
+// `brackets` not yet passed, kept from one run of the line to the next.
+float draw_bracketed(core::Context& ui, const TextLayout& layout, std::string_view text, std::size_t from, std::size_t to,
+                     float x, float origin_x, float y, Color colour, std::span<const Room> rooms,
+                     std::span<const LeveledBracket> brackets, std::size_t& next) {
+    while (next < brackets.size() && brackets[next].at.byte < from) ++next;
+    std::size_t at = from;
+    for (; next < brackets.size() && brackets[next].at.byte < to; ++next) {
+        const std::size_t byte = brackets[next].at.byte;
+        x = draw_run(ui, layout, text, at, byte, x, origin_x, y, colour, rooms);
+        x = draw_run(ui, layout, text, byte, byte + 1, x, origin_x, y, bracket_colour(brackets[next], text[byte], colour),
+                     rooms);
+        at = byte + 1;
+    }
+    return draw_run(ui, layout, text, at, to, x, origin_x, y, colour, rooms);
+}
+
 // Line `line`'s text from byte `from` up to byte `to`, coloured by its
-// tokens, the first byte drawn at `x` along from `origin_x`, laid out with
-// `rooms`; returns where it ends.
-float draw_tokens(core::Context& ui, const Document& document, std::span<const Token> tokens, const TextLayout& layout,
-                  std::size_t line, std::size_t from, std::size_t to, float x, float origin_x, float y,
-                  std::span<const Room> rooms) {
+// tokens and its brackets by their levels (`brackets`, the line's; none
+// with bracket colours off), the first byte drawn at `x` along from
+// `origin_x`, laid out with `rooms`; returns where it ends.
+float draw_tokens(core::Context& ui, const Document& document, std::span<const Token> tokens,
+                  std::span<const LeveledBracket> brackets, const TextLayout& layout, std::size_t line, std::size_t from,
+                  std::size_t to, float x, float origin_x, float y, std::span<const Room> rooms) {
     const std::string_view text = document.buffer().line(line);
     to = std::min(to, text.size());
     std::size_t at = from;
+    std::size_t next = 0;
     for (const Token& token : tokens) {
         if (token.end <= at) continue;
         if (token.begin >= to) break;
         const std::size_t begin = std::max<std::size_t>(token.begin, at);
         const std::size_t end = std::min<std::size_t>(token.end, to);
-        x = draw_run(ui, layout, text, at, begin, x, origin_x, y, theme::text(), rooms);
-        x = draw_run(ui, layout, text, begin, end, x, origin_x, y, code_colour(token.kind), rooms);
+        x = draw_bracketed(ui, layout, text, at, begin, x, origin_x, y, theme::text(), rooms, brackets, next);
+        x = draw_bracketed(ui, layout, text, begin, end, x, origin_x, y, code_colour(token.kind), rooms, brackets, next);
         at = end;
     }
-    return draw_run(ui, layout, text, at, to, x, origin_x, y, theme::text(), rooms);
+    return draw_bracketed(ui, layout, text, at, to, x, origin_x, y, theme::text(), rooms, brackets, next);
 }
 
 // The tokens line `line` is coloured by: its lexer's, with the language
@@ -1248,6 +1276,18 @@ std::span<const Token> line_tokens(const Document& document, const SemanticToken
     if (colours == nullptr || line >= colours->lines.size() || colours->lines[line].empty()) return lexed;
     scratch = overlaid(lexed, colours->lines[line]);
     return scratch;
+}
+
+// The view's brackets' levels brought up to date with the document and
+// `colours`, its language service's: counted again only when either has
+// changed since (LanguageService::tokens()).
+void count_levels(const Document& document, EditorView& view, const SemanticTokens* colours) {
+    if (view.levels_for == document.version() && view.levels_colours == colours) return;
+    view.levels = bracket_levels(document.buffer(), document.syntax(),
+                                 colours != nullptr ? std::span<const std::vector<Token>>(colours->lines)
+                                                    : std::span<const std::vector<Token>>());
+    view.levels_for = document.version();
+    view.levels_colours = colours;
 }
 
 // The rows in sight: the line each begins with, the first drawn at `top`.
@@ -1319,8 +1359,35 @@ std::size_t indent_level(const Buffer& buffer, std::size_t line, std::size_t wid
     return std::min(above, below);
 }
 
+// The level of the bracket that opens the block whose guide is at `guide`
+// levels of indent, around `caret`: the innermost opener still open there
+// whose line is indented that far. Nothing when no bracket opens it, as in
+// a language folding by indentation.
+std::optional<uint32_t> block_level(const Buffer& buffer, const BracketLevels& levels, Position caret,
+                                    std::size_t guide, std::size_t width) {
+    // Paired brackets nest: going back from the caret, an opener holds it
+    // once every closer passed has met its opener.
+    std::size_t closers = 0;
+    for (auto at = std::ranges::lower_bound(levels.brackets, caret, {}, &LeveledBracket::at); at != levels.brackets.begin();) {
+        --at;
+        if (!at->level) continue;
+        const char c = buffer.line(at->at.line)[at->at.byte];
+        if (c == ')' || c == ']' || c == '}' || c == '>') {
+            ++closers;
+        } else if (closers > 0) {
+            --closers;
+        } else {
+            const std::size_t indent = indent_level(buffer, at->at.line, width);
+            if (indent == guide) return at->level;
+            if (indent < guide) return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
 // Indent guides: one at the start of each level of every row's indent; the
-// guide of the block the primary caret is in brighter.
+// guide of the block the primary caret is in brighter, or with bracket
+// colours on, in the colour of the bracket opening the block (sheet 60, G3).
 void draw_guides(core::DrawList& dl, const Document& document, const EditorView& view, const Frame& frame,
                  const TextLayout& layout, const Shown& rows) {
     const Buffer& buffer = document.buffer();
@@ -1335,12 +1402,19 @@ void draw_guides(core::DrawList& dl, const Document& document, const EditorView&
     const std::size_t caret_level = indent_level(buffer, caret, width);
     std::size_t active_from = 1;
     std::size_t active_to = 0;
+    Color active_colour = theme::code_indent_guide_active();
     if (caret_level > 0) {
         const std::size_t guide = caret_level - 1;
         active_from = caret;
         while (active_from > first && indent_level(buffer, active_from - 1, width) > guide) --active_from;
         active_to = caret;
         while (active_to + 1 < last && indent_level(buffer, active_to + 1, width) > guide) ++active_to;
+        if (view.bracket_colours) {
+            if (const std::optional<uint32_t> level =
+                    block_level(buffer, view.levels, view.selections.primary().caret, guide, width)) {
+                active_colour = theme::code_bracket_level(*level);
+            }
+        }
     }
 
     for (std::size_t index = 0; index < rows.lines.size(); ++index) {
@@ -1350,8 +1424,7 @@ void draw_guides(core::DrawList& dl, const Document& document, const EditorView&
         for (std::size_t level = 0; level < levels; ++level) {
             const bool active = level + 1 == caret_level && line >= active_from && line <= active_to;
             const float x = std::round(frame.origin_x + static_cast<float>(level) * step);
-            dl.rect_filled({x, y}, {x + 1.0f, y + frame.line},
-                           active ? theme::code_indent_guide_active() : theme::code_indent_guide());
+            dl.rect_filled({x, y}, {x + 1.0f, y + frame.line}, active ? active_colour : theme::code_indent_guide());
         }
     }
 }
@@ -1549,25 +1622,29 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
     const float caret_x = layout.x_of(buffer, caret);
     const float composed_width = layout.advance(composing, 0, composing.size(), caret_x) - caret_x;
 
-    // The text, coloured by its tokens; on a folded row, each fold's pill
-    // and the closer's line after it.
+    // The text, coloured by its tokens and its brackets by their levels; on
+    // a folded row, each fold's pill and the closer's line after it.
+    const auto brackets_on = [&](std::size_t line) {
+        return view.bracket_colours ? view.levels.on_line(line) : std::span<const LeveledBracket>();
+    };
     std::vector<Token> scratch;
     for (std::size_t index = 0; index < rows.lines.size(); ++index) {
         const float y = rows.y(index);
         const std::size_t line = rows.lines[index];
         const std::span<const Token> tokens = line_tokens(document, colours, line, scratch);
+        const std::span<const LeveledBracket> brackets = brackets_on(line);
         const std::span<const Room> rooms = layout.rooms_of(line);
         if (!composing.empty() && line == caret.line) {
-            (void)draw_tokens(ui, document, tokens, layout, line, 0, caret.byte, 0.0f, frame.origin_x, y, rooms);
+            (void)draw_tokens(ui, document, tokens, brackets, layout, line, 0, caret.byte, 0.0f, frame.origin_x, y, rooms);
             const float left = frame.origin_x + caret_x;
             ui.text().draw(dl, {left, y}, theme::text(), composing, layout.style());
             dl.line({left, y + frame.line - COMPOSING_UNDERLINE}, {left + composed_width, y + frame.line - COMPOSING_UNDERLINE},
                     theme::text());
-            (void)draw_tokens(ui, document, tokens, layout, line, caret.byte, buffer.line(line).size(),
+            (void)draw_tokens(ui, document, tokens, brackets, layout, line, caret.byte, buffer.line(line).size(),
                               caret_x + composed_width, frame.origin_x, y, rooms);
         } else {
-            (void)draw_tokens(ui, document, tokens, layout, line, 0, buffer.line(line).size(), 0.0f, frame.origin_x, y,
-                              rooms);
+            (void)draw_tokens(ui, document, tokens, brackets, layout, line, 0, buffer.line(line).size(), 0.0f,
+                              frame.origin_x, y, rooms);
         }
         for (const FoldMark& mark : drawn[index].marks) {
             const float left = std::round(frame.origin_x + mark.pill_from);
@@ -1578,9 +1655,9 @@ void draw(core::Context& ui, const Document& document, const EditorView& view, c
             if (mark.closer) {
                 // Its line laid out as text alone, as the row measures it.
                 std::vector<Token> closer_scratch;
-                (void)draw_tokens(ui, document, line_tokens(document, colours, mark.closer->line, closer_scratch), layout,
-                                  mark.closer->line, mark.closer->byte, buffer.line(mark.closer->line).size(),
-                                  mark.closer_x, frame.origin_x, y, {});
+                (void)draw_tokens(ui, document, line_tokens(document, colours, mark.closer->line, closer_scratch),
+                                  brackets_on(mark.closer->line), layout, mark.closer->line, mark.closer->byte,
+                                  buffer.line(mark.closer->line).size(), mark.closer_x, frame.origin_x, y, {});
             }
         }
     }
@@ -2002,6 +2079,7 @@ CodeViewResult code_view(std::string_view label, Document& document, EditorView&
     const std::vector<Diagnostic>& problems =
         view.service != nullptr ? view.service->diagnostics(view.path) : NO_PROBLEMS;
     const SemanticTokens* colours = view.service != nullptr ? view.service->tokens(view.path) : nullptr;
+    if (view.bracket_colours) count_levels(document, view, colours);
     draw(ui, document, view, drawn, layout, faces, focus.focused, problems, colours, values);
 
     // The kit's pieces from here are the view's: their ids are under its

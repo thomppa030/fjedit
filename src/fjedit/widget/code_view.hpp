@@ -15,6 +15,7 @@
 #include "fjedit/core/keymap.hpp"
 #include "fjedit/core/language_service.hpp"
 #include "fjedit/core/selections.hpp"
+#include "fjedit/core/structure.hpp"
 #include "fjedit/core/vim/engine.hpp"
 #include "fjedit/core/vim/maps.hpp"
 #include "fjedit/widget/completion.hpp"
@@ -114,6 +115,17 @@ struct EditorView {
     /// Typing an opener or a quote types its closer too
     /// (CommandContext::close_pairs).
     bool close_pairs{true};
+    /// Brackets are drawn in their levels' colours, one without a pair in
+    /// the error colour, and the caret's block's guide in its block's
+    /// colour (sheet 60).
+    bool bracket_colours{true};
+    /// The brackets' levels as last counted: for the document's version
+    /// `levels_for`, with `levels_colours`, its language service's colours
+    /// then. Counting a whole file takes milliseconds, so it waits for
+    /// either to change.
+    BracketLevels levels;
+    std::optional<uint64_t> levels_for;
+    const SemanticTokens* levels_colours{nullptr};
     /// The code's text size; its lines, its line numbers and the marks on
     /// it scale with it.
     float text_size{CODE_TEXT};
