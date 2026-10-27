@@ -151,6 +151,11 @@ public:
     /// Opens the file at `path` with `span` selected, the keyboard in it.
     void go_to(const std::filesystem::path& path, Span span);
 
+    /// Closes every tab, unsaved changes and all, as a host closing the code
+    /// does: each file let go with the work kept for it against a crash, and
+    /// one group left, showing nothing.
+    void close_all();
+
     /// Runs one of the area's commands or a view's by name ("file.save"), or
     /// one of the program's it was given; false when there is none.
     bool run(std::string_view command);

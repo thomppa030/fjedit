@@ -118,6 +118,32 @@ TEST_CASE("A tab closed with unsaved changes asks first, and Don't save lets its
     CHECK(a.folder.read("a.cpp") == "int a;\n");
 }
 
+TEST_CASE("Closing every tab lets every file go, unsaved changes and all, and leaves one empty group",
+          "[editor][area]") {
+    Area a({{"a.cpp", "int a;\n"}, {"b.cpp", "int b;\n"}});
+    a.open("a.cpp");
+    a.h.type("x");
+    a.h.step();
+    REQUIRE(a.files->unsaved(a.at("a.cpp")));
+    a.open("b.cpp");
+    REQUIRE(a.code->run("view.split"));
+    a.h.step(2);
+    REQUIRE(a.code->groups() == 2);
+
+    a.code->close_all();
+    a.h.step(2);
+    CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {}, .front = 0}});
+    CHECK_FALSE(a.code->front().has_value());
+    CHECK(a.h.find("a.cpp", Role::Tab) == nullptr);
+    CHECK(a.files->workspace().files().empty());
+    CHECK(a.folder.read("a.cpp") == "int a;\n");
+
+    // Opened again, it is the file on the disk, alone in its tab.
+    a.open("a.cpp");
+    CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {a.at("a.cpp")}, .front = 0}});
+    CHECK(a.files->workspace().find(a.at("a.cpp"))->buffer().text() == "int a;\n");
+}
+
 TEST_CASE("What the groups show is said, file by file and the one in front of each", "[editor][area]") {
     Area a({{"a.cpp", "int a;\n"}, {"b.cpp", "int b;\n"}, {"c.cpp", "int c;\n"}});
     CHECK(a.code->shown() == std::vector<GroupFiles>{{.files = {}, .front = 0}});

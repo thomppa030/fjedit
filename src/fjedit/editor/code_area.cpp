@@ -278,6 +278,28 @@ void CodeArea::let_go(const std::filesystem::path& path) {
     files_.let_go(path);
 }
 
+void CodeArea::close_all() {
+    // Each file once, however many tabs show it.
+    std::vector<std::filesystem::path> shown;
+    for (const Group& group : groups_) {
+        for (const Tab& tab : group.tabs) {
+            if (!std::ranges::contains(shown, tab.path)) shown.push_back(tab.path);
+        }
+    }
+    for (const std::filesystem::path& path : shown) {
+        let_go(path);
+        files_.forget_kept(path);
+    }
+    groups_ = std::vector<Group>(1);
+    active_ = 0;
+    // What was asked of a tab, or of the views, goes with them.
+    closing_.reset();
+    asking_ = false;
+    going_.reset();
+    vim_asked_.clear();
+    renaming_.reset();
+}
+
 void CodeArea::files_updated(const CodeFiles::Update& update) {
     if (update.looked) path_listings_.clear();
     if (!update.restarted) return;
