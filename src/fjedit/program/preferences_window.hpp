@@ -5,13 +5,12 @@
 // Save: a change applies at once, and the settings file keeps it. Beside it,
 // the settings file's section for the folders opened lately.
 
-#include "fjedit/core/language_service.hpp"
 #include "fjedit/editor/preferences.hpp"
+#include "fjedit/editor/preferences_rows.hpp"
 
 #include "ftk/ui/kit/settings_file.hpp"
 
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,14 +30,6 @@ struct WindowLayout {
 /// The settings file's section that keeps `layout`. `layout` outlives the
 /// section.
 [[nodiscard]] ftk::ui::SettingsSection layout_section(WindowLayout& layout);
-
-/// How a language server is, for the Preferences window to show: its
-/// status, once it has been started, and for clangd the compile commands it
-/// reads in the folder open, when it finds some.
-struct LanguageServerShown {
-    std::optional<ServiceStatus> status{};
-    std::string reads{};
-};
 
 /// What the Preferences window asked of the program as it was drawn.
 struct PreferencesAsk {

@@ -58,7 +58,7 @@ fjedit fetches ftk at a commit. To build against a checkout instead, keep a
 | `fjedit::core` | The text and how it is edited, without a window |
 | `fjedit::widget` | The code view, drawn with ftk's UI core in the theme's colours |
 | `fjedit::lsp` | A language server run as a child process and talked to through ftk's JSON-RPC: what clangd and fjls run as |
-| `fjedit::editor` | What a program edits a folder's code with, whatever window it lays out: the files open with their language servers and the work kept for them, the groups of tabs with their keys and prompts, find in files, the file tree, and the code's status as data |
+| `fjedit::editor` | What a program edits a folder's code with, whatever window it lays out: the files open with their language servers and the work kept for them, the groups of tabs with their keys and prompts, find in files, the file tree, the code's status as data, and the Code editor page's rows both programs' Preferences draw |
 | `fjedit::program` | The program on a folder: its window, menus, Preferences and status bar, built on `fjedit::editor` |
 
 A program that already builds ftk itself (fjell does) can add fjedit beside it:

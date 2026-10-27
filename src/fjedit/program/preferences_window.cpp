@@ -2,23 +2,16 @@
 
 #include "fjedit/program/icons.hpp"
 
-#include "ftk/ui/kit/button.hpp"
-#include "ftk/ui/kit/choice.hpp"
 #include "ftk/ui/kit/feedback.hpp"
-#include "ftk/ui/kit/field.hpp"
-#include "ftk/ui/kit/text_field.hpp"
-#include "ftk/ui/kit/text.hpp"
 #include "ftk/ui/kit/icons.hpp"
 #include "ftk/ui/kit/layout.hpp"
 #include "ftk/ui/kit/pages.hpp"
 #include "ftk/ui/kit/row.hpp"
 #include "ftk/ui/kit/save_bar.hpp"
 #include "ftk/ui/kit/search.hpp"
-#include "ftk/ui/kit/section.hpp"
 #include "ftk/ui/theme.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -48,92 +41,13 @@ constexpr std::string_view FILES_KEY = "Files=";
 // The window as sheet 39 first shows it.
 constexpr glm::vec2 SIZE{780.0f, 500.0f};
 
-// A server's path, and how it is under it: `ready` when it runs, `waiting`
-// before it has started.
-void server_row(const char* name, std::string& path, const LanguageServerShown& shown, const char* waiting,
-                const std::string& ready, ui::Severity ready_severity) {
-    ui::row(name, [&] {
-        const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
-        if (ui::text_field((std::string("##") + name).c_str(), path).committed) ui::settings_changed();
-    });
-    if (!shown.status) {
-        ui::hint(waiting);
-    } else if (shown.status->state == ServiceState::Ready) {
-        ui::status(ready_severity, ready.c_str());
-    } else if (shown.status->state == ServiceState::Starting) {
-        ui::status(ui::Severity::Warning, "Starting");
-    } else {
-        ui::status(ui::Severity::Error, shown.status->note.c_str());
-    }
-}
-
-// `path` as the user reads it: their home folder as ~.
-std::string shown_path(const std::filesystem::path& path) {
-    const std::string whole = path.generic_string();
-    const char* home = std::getenv("HOME");
-    if (home == nullptr || *home == '\0') return whole;
-    const std::string start = std::filesystem::path(home).generic_string();
-    if (!whole.starts_with(start + "/")) return whole;
-    return "~" + whole.substr(start.size());
-}
-
-// The Code editor page's settings, as rows a search can filter. Returns
-// whether keys.vim's Open was pressed.
+// The Code editor page's settings, as rows a search can filter, in the
+// groups both programs draw. Returns whether keys.vim's Open was pressed.
 bool draw_code_editor(Preferences& preferences, const LanguageServerShown& clangd, const LanguageServerShown& fjls,
                       const std::filesystem::path& keys) {
-    bool open_keys = false;
-    ui::subheading("Language servers");
-    if (auto table = ui::PropertyTable("##server")) {
-        server_row("clangd", preferences.clangd, clangd, "Starts with the first C or C++ file opened",
-                   clangd.reads.empty() ? std::string("Running, with no compile commands found")
-                                        : "Running, reads " + clangd.reads,
-                   clangd.reads.empty() ? ui::Severity::Warning : ui::Severity::Success);
-        server_row("fjls", preferences.fjls, fjls, "Starts with the first script header, fjell file or GLSL file opened",
-                   "Running", ui::Severity::Success);
-    }
-    ui::subheading("Text");
-    if (auto table = ui::PropertyTable("##text")) {
-        ui::row("Text size", [&] {
-            if (ui::stepper("##text_size", preferences.text_size, TEXT_SIZE_MIN, TEXT_SIZE_MAX, ui::Unit::Pixels).changed) {
-                ui::settings_changed();
-            }
-        });
-        ui::row("Minimap", [&] {
-            if (ui::checkbox("##minimap", preferences.minimap).changed) ui::settings_changed();
-        });
-        ui::row("Line numbers", [&] {
-            if (ui::segmented<LineNumbers>("##line_numbers", preferences.line_numbers, LINE_NUMBERS).changed) {
-                ui::settings_changed();
-            }
-        });
-        ui::row("Around the caret", [&] {
-            if (ui::stepper("##around_caret", preferences.around_caret, 0, AROUND_CARET_MAX, ui::Unit::Lines).changed) {
-                ui::settings_changed();
-            }
-        });
-        ui::hint("Lines kept in sight above and below the caret");
-    }
-    ui::subheading("Keys");
-    if (auto table = ui::PropertyTable("##keys")) {
-        ui::row("Vim keys", [&] {
-            if (ui::checkbox("##vim", preferences.vim).changed) ui::settings_changed();
-        });
-        if (!keys.empty()) {
-            ui::row("Your maps", [&] {
-                // The path is cut to leave Open in reach, however long it is.
-                const float room = ui::space_left().x - ui::item_spacing().x - ui::button_width("Open");
-                {
-                    const ui::FontScope mono(theme::mono_font(), theme::SMALL_TEXT);
-                    ui::align_text_to_frame();
-                    ui::cut_text(shown_path(keys), room, theme::text_secondary());
-                }
-                ui::same_line();
-                open_keys = ui::button("Open");
-            });
-            ui::hint("keys.vim, in Vim's map syntax. Saved here, it applies at once.");
-        }
-    }
-    return open_keys;
+    draw_server_rows(preferences, clangd, fjls);
+    draw_text_rows(preferences);
+    return draw_key_rows(preferences, keys);
 }
 
 } // namespace

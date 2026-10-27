@@ -66,6 +66,8 @@ public:
     [[nodiscard]] LanguageServices& services() { return services_; }
     [[nodiscard]] const LanguageServices& services() const { return services_; }
     [[nodiscard]] const std::filesystem::path& root() const { return workspace_.root(); }
+    /// The fjls the program brings; empty when the preferences name it.
+    [[nodiscard]] const std::string& own_fjls() const { return own_fjls_; }
 
     /// The document of the file at `path`, read the first time it is asked
     /// for, with the files' marks (`A`-`Z`) it had when it was let go. What

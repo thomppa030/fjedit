@@ -69,15 +69,16 @@ find_package(Threads REQUIRED)
 # fjedit-editor is what a program needs to edit a folder's code, whatever
 # window it lays out: the files open with their language servers and the
 # work kept for them, the groups of tabs with their keys and questions, find
-# in files, the file tree, and the code's status as data. fjedit's program
-# is built on it, and so is fjell's Code tab.
+# in files, the file tree, the code's status as data and the Code editor
+# page's rows. fjedit's program is built on it, and so is fjell's Code tab.
 add_library(fjedit-editor STATIC
     fjedit/editor/code_area.cpp
     fjedit/editor/code_files.cpp
     fjedit/editor/code_status.cpp
     fjedit/editor/file_tree.cpp
     fjedit/editor/find_in_files.cpp
-    fjedit/editor/preferences.cpp)
+    fjedit/editor/preferences.cpp
+    fjedit/editor/preferences_rows.cpp)
 add_library(fjedit::editor ALIAS fjedit-editor)
 ftk_target_defaults(fjedit-editor)
 target_link_libraries(fjedit-editor PUBLIC fjedit::widget fjedit::lsp ftk::app ftk::app-ui ftk::platform Threads::Threads)

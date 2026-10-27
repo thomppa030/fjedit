@@ -81,24 +81,6 @@ void Program::update_files(double now) {
     code_.files_updated(update);
 }
 
-LanguageServerShown Program::clangd_shown() const {
-    LanguageServerShown shown{.status = files_.services().status_of("clangd"), .reads = {}};
-    // Where clangd looks for them in the folder open, as it does from a
-    // file at its top.
-    for (const char* name : {"compile_commands.json", "build/compile_commands.json", "compile_flags.txt"}) {
-        std::error_code error;
-        if (std::filesystem::exists(files_.root() / name, error)) {
-            shown.reads = name;
-            break;
-        }
-    }
-    return shown;
-}
-
-LanguageServerShown Program::fjls_shown() const {
-    return {.status = files_.services().status_of("fjls"), .reads = {}};
-}
-
 ftk::DesktopEntry Program::desktop_entry(const std::filesystem::path& program, const std::filesystem::path& brand) {
     return {.id = "fjedit",
             .name = "fjedit",
@@ -193,7 +175,7 @@ void Program::draw() {
     }
     ui::end_host_window();
     draw_status();
-    if (preferences_window_.draw(preferences_, clangd_shown(), fjls_shown(), code_.keys_path()).open_keys) {
+    if (preferences_window_.draw(preferences_, clangd_shown(files_), fjls_shown(files_), code_.keys_path()).open_keys) {
         code_.open_keys();
     }
     code_.draw_prompts();

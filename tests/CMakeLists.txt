@@ -70,7 +70,8 @@ add_executable(fjedit-editor-tests
     test_code_status.cpp
     test_file_tree.cpp
     test_find_in_files.cpp
-    test_preferences.cpp)
+    test_preferences.cpp
+    test_preferences_rows.cpp)
 ftk_target_defaults(fjedit-editor-tests)
 ftk_leak_suppressions(fjedit-editor-tests)
 # The code area draws fjedit's mark through ftk's Vulkan backend, which the

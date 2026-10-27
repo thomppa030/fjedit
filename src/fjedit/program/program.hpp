@@ -146,9 +146,6 @@ private:
     // and the folders listed read again then; what the views asked of a
     // server started again let go.
     void update_files(double now);
-    // How clangd and fjls are, for the Preferences window.
-    [[nodiscard]] LanguageServerShown clangd_shown() const;
-    [[nodiscard]] LanguageServerShown fjls_shown() const;
 
     CodeFiles files_;
     CodeArea code_;
