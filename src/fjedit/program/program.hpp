@@ -10,9 +10,7 @@
 
 #include "fjedit/core/jump_list.hpp"
 #include "fjedit/core/keymap.hpp"
-#include "fjedit/core/language_services.hpp"
-#include "fjedit/core/recovery.hpp"
-#include "fjedit/core/workspace.hpp"
+#include "fjedit/editor/code_files.hpp"
 #include "fjedit/editor/file_tree.hpp"
 #include "fjedit/editor/find_in_files.hpp"
 #include "fjedit/program/preferences_window.hpp"
@@ -25,13 +23,11 @@
 #include <glm/vec2.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -145,7 +141,8 @@ public:
     /// Quitting was asked for and answered: the window may close.
     [[nodiscard]] bool quitting() const { return quitting_; }
 
-    [[nodiscard]] const Workspace& workspace() const { return workspace_; }
+    /// The files open, their language services and the work kept for them.
+    [[nodiscard]] const CodeFiles& files() const { return files_; }
 
     /// The file in front in the group that last had the keyboard, when one
     /// is open there.
@@ -201,21 +198,13 @@ private:
     // A new name for what a view asked to rename, then the service's
     // edits for it, made once they come.
     void ask_rename();
-    // Makes `edits`: in the files open, as one step each while they are as
-    // the edits were made for; in the others, on disk.
-    void make_edits(const WorkspaceEdit& edits);
     void take_keys();
     // Writes fjedit's desktop entry, answered on the status bar.
     void create_desktop_entry();
-    // Every few seconds: files another program changed, reloaded when they
-    // have no unsaved changes here and noted when they do; the tree read
-    // again; and unsaved work kept.
-    void check_disk(double now);
-    // Keeps what each unsaved file holds when it changed since it was last
-    // kept, and forgets what was kept for those now saved.
-    void keep_unsaved();
-    // Forgets the work kept for `path`: saved, or let go.
-    void forget_kept(const std::filesystem::path& path);
+    // The files brought up to date: every few seconds the disk looked at,
+    // and the folders listed read again then; what the views asked of a
+    // server started again let go.
+    void update_files(double now);
 
     // The tab in front, when there is one.
     [[nodiscard]] Tab* front_tab();
@@ -225,8 +214,6 @@ private:
     void close_front();
     // How many tabs show the file at `path`, in every group.
     [[nodiscard]] std::size_t tabs_showing(const std::filesystem::path& path) const;
-    // The first file opened that has unsaved changes, when one has.
-    [[nodiscard]] std::optional<std::filesystem::path> first_unsaved() const;
     // The folder `folder`, typed after Vim's `:e` from the folder open,
     // listed as the file tree lists it; hidden ones too with `hidden`.
     [[nodiscard]] std::vector<vim::PathEntry> list_paths(std::string_view folder, bool hidden);
@@ -268,7 +255,8 @@ private:
     // A view of `document`, the file at `path`, joined to the language
     // services, which are told of the file when one answers for it.
     [[nodiscard]] std::unique_ptr<EditorView> make_view(const std::filesystem::path& path, Document& document);
-    // Lets the file at `path` go: its services first, then the workspace.
+    // Lets the file at `path` go: the places jumped from in it wait for it
+    // to open again in each group's jump list, then the files let it go.
     void let_go(const std::filesystem::path& path);
     // keys.vim read: its maps for every view, its binds into the keymap on
     // the program's own keys, its settings applied, and what it says that
@@ -282,20 +270,11 @@ private:
     [[nodiscard]] bool has_command(std::string_view name) const;
     // Opens the file at `path` with `span` selected, the keyboard in it.
     void go_to(const std::filesystem::path& path, Span span);
-    // clangd for C and C++, and fjls for a game's script headers and
-    // fjell's own files, at the paths the preferences give them.
-    [[nodiscard]] ServiceMaker clangd();
-    [[nodiscard]] ServiceMaker fjls();
-    // The makers, those of clangd and fjls noting the path each starts at.
-    [[nodiscard]] std::vector<ServiceMaker> noting_paths(std::vector<ServiceMaker> makers);
-    // Starts a server again when the path the preferences give it changed:
-    // what the views asked of the one before is let go.
-    void follow_server_paths();
     // How clangd and fjls are, for the Preferences window.
     [[nodiscard]] LanguageServerShown clangd_shown() const;
     [[nodiscard]] LanguageServerShown fjls_shown() const;
 
-    Workspace workspace_;
+    CodeFiles files_;
     Keymap keymap_;
     FileTree tree_;
     std::vector<Group> groups_;
@@ -312,13 +291,6 @@ private:
     // on shares.
     std::shared_ptr<vim::Registers> registers_{std::make_shared<vim::Registers>()};
     std::shared_ptr<vim::Settings> vim_settings_{std::make_shared<vim::Settings>()};
-    // Files changed on disk while they had unsaved changes here, until
-    // answered; and when the disk is next looked at.
-    std::set<std::filesystem::path> changed_;
-    double next_check_{0.0};
-    // Unsaved work kept against a crash, and each file's version as kept.
-    std::optional<Recovery> recovery_;
-    std::map<std::filesystem::path, uint64_t> kept_;
     // Work kept from before, offered back once at the start, and the list
     // asked about.
     bool recover_looked_{false};
@@ -340,27 +312,13 @@ private:
     // what uses them, so it goes first.
     ftk::ThreadPool pool_;
     // Find in files, over the code.
-    FindInFiles find_in_files_{workspace_, pool_};
-    // What wakes the frame loop when a language service answers; and the
-    // services, each running once a file it answers for opens.
-    std::function<void()> wake_;
-    LanguageServices services_;
-    // The paths clangd and fjls were last started at.
-    std::string clangd_started_;
-    std::string fjls_started_;
+    FindInFiles find_in_files_{files_.workspace(), pool_};
     // A place a view asked to go to in another file, taken once the views
     // are drawn.
     std::optional<Location> going_;
     // What the view in front's Vim asked of the program, answered once the
     // views are drawn.
     std::vector<vim::Asked> vim_asked_;
-    // The files' marks (`A`-`Z`) of files let go, each with its file, until
-    // the file opens again.
-    struct FileMark {
-        std::filesystem::path path;
-        Position at;
-    };
-    std::map<char, FileMark> closed_marks_;
     // The folders listed after Vim's `:e`, each with or without its hidden
     // entries, until the disk is next looked at; and how every view's Vim
     // asks for them.
@@ -378,8 +336,6 @@ private:
     std::filesystem::path keys_path_;
     std::shared_ptr<const std::vector<vim::Mapping>> maps_{std::make_shared<const std::vector<vim::Mapping>>()};
     std::vector<vim::KeysError> keys_errors_;
-    // What went wrong last, for the status bar.
-    std::string note_;
     // What was just done (a rename), for the status bar until the next key.
     std::string told_;
     // fjedit's logomark, shown in a group with no file open, and the device

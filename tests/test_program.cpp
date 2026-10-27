@@ -142,7 +142,7 @@ struct Running {
     }
 
     [[nodiscard]] const Document& document(std::string_view name) const {
-        const Document* found = program->workspace().find(folder.path / name);
+        const Document* found = program->files().workspace().find(folder.path / name);
         REQUIRE(found != nullptr);
         return *found;
     }
@@ -225,18 +225,18 @@ TEST_CASE("A group with no file open shows fjedit's logomark where the kit's fil
 TEST_CASE("A file pressed in the tree opens in a tab in front, with the keyboard", "[program]") {
     Running run({{"coin.cpp", "int a;\n"}, {"toon.fjsl", "void fragment() {}\n"}});
     run.press_row("coin.cpp");
-    REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
     REQUIRE(run.h.find("coin.cpp", Role::Tab) != nullptr);
     run.h.type("x");
     REQUIRE(run.document("coin.cpp").buffer().text() == "xint a;\n");
-    REQUIRE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->files().workspace().unsaved(run.folder.path / "coin.cpp"));
 
     // A second file, then back to the first by its tab.
     run.press_row("toon.fjsl");
-    REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "toon.fjsl"));
+    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "toon.fjsl"));
     run.h.click_at(run.h.find("coin.cpp", Role::Tab)->rect.centre());
     run.h.step();
-    REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
 }
 
 TEST_CASE("Ctrl S saves the file in front", "[program]") {
@@ -245,7 +245,7 @@ TEST_CASE("Ctrl S saves the file in front", "[program]") {
     run.h.type("x");
     run.h.press(Key::S, CTRL);
     REQUIRE(run.folder.read("coin.cpp") == "xint a;\n");
-    REQUIRE_FALSE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+    REQUIRE_FALSE(run.program->files().workspace().unsaved(run.folder.path / "coin.cpp"));
 }
 
 TEST_CASE("Closing a tab with unsaved changes asks first", "[program]") {
@@ -261,7 +261,7 @@ TEST_CASE("Closing a tab with unsaved changes asks first", "[program]") {
     run.h.click_at(dont_save->rect.centre());
     run.h.step(2);
     REQUIRE_FALSE(run.program->front().has_value());
-    REQUIRE(run.program->workspace().files().empty());
+    REQUIRE(run.program->files().workspace().files().empty());
     REQUIRE(run.folder.read("coin.cpp") == "int a;\n");
 }
 
@@ -278,7 +278,7 @@ TEST_CASE("A file that isn't text opens nothing", "[program]") {
     run.folder.write("blob.bin", std::string("a\0b", 3));
     run.press_row("blob.bin");
     REQUIRE_FALSE(run.program->front().has_value());
-    REQUIRE(run.program->workspace().files().empty());
+    REQUIRE(run.program->files().workspace().files().empty());
 }
 
 TEST_CASE("The menus' entries run on the view in front", "[program]") {
@@ -313,7 +313,7 @@ TEST_CASE("A file changed elsewhere with nothing unsaved here comes in as it is"
     write_later(run.folder.path / "coin.cpp", "int b;\n");
     run.h.step(DISK_FRAMES);
     REQUIRE(run.document("coin.cpp").buffer().text() == "int b;\n");
-    REQUIRE_FALSE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+    REQUIRE_FALSE(run.program->files().workspace().unsaved(run.folder.path / "coin.cpp"));
 }
 
 TEST_CASE("A file changed elsewhere with unsaved changes here asks, and Load from disk takes it", "[program][disk]") {
@@ -358,7 +358,7 @@ TEST_CASE("Unsaved work is kept every few seconds, and forgotten once saved", "[
     const std::vector<Recovery::Kept> kept = run.kept();
     REQUIRE(kept.size() == 1);
     REQUIRE(kept[0].bytes == "xint a;\n");
-    REQUIRE(kept[0].path == run.program->workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(kept[0].path == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
 
     run.h.press(Key::S, CTRL);
     run.h.step();
@@ -371,9 +371,9 @@ TEST_CASE("Work kept from before is offered at the start and comes back unsaved"
         REQUIRE(Recovery(folder.path / ".recovery").keep(named.name("coin.cpp"), "int kept;\n").has_value());
     });
     run.press("Recover 1 file");
-    REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
     REQUIRE(run.document("coin.cpp").buffer().text() == "int kept;\n");
-    REQUIRE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->files().workspace().unsaved(run.folder.path / "coin.cpp"));
     REQUIRE(run.folder.read("coin.cpp") == "int a;\n");
 }
 
@@ -481,14 +481,14 @@ TEST_CASE("Splitting opens the file in front again beside it, one document betwe
     // The new group has the keyboard; what is typed there is the file's.
     run.h.type("x");
     REQUIRE(run.document("coin.cpp").buffer().text() == "xint a;\n");
-    REQUIRE(run.program->workspace().files().size() == 1);
+    REQUIRE(run.program->files().workspace().files().size() == 1);
 
     // Closing the split's only tab closes the split, and asks nothing: the
     // other tab still shows the changes.
     run.h.press(Key::W, CTRL);
     run.h.step(2);
     REQUIRE(run.program->groups() == 1);
-    REQUIRE(run.program->workspace().unsaved(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->files().workspace().unsaved(run.folder.path / "coin.cpp"));
     // The group left has the keyboard.
     run.h.type("y");
     REQUIRE(run.document("coin.cpp").buffer().text() == "yxint a;\n");
@@ -517,7 +517,7 @@ TEST_CASE("Find in files finds in every file, and Enter opens the first at its m
     run.h.press(Key::Enter);
     run.h.step(2);
     REQUIRE_FALSE(run.program->find_in_files().is_open());
-    REQUIRE(run.program->front() == run.program->workspace().name(run.folder.path / "a.cpp"));
+    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "a.cpp"));
 }
 
 TEST_CASE("Find in files draws the matches in view, and Down brings the one picked into it", "[program][find_in_files]") {
@@ -550,7 +550,7 @@ TEST_CASE("With Vim on, Ctrl-J and Ctrl-K move through find in files' matches", 
     run.h.step();
     run.h.press(Key::Enter);
     run.h.step(2);
-    CHECK(run.program->front() == run.program->workspace().name(run.folder.path / "b.cpp"));
+    CHECK(run.program->front() == run.program->files().workspace().name(run.folder.path / "b.cpp"));
 }
 
 TEST_CASE("Find in files searches open files with their unsaved changes", "[program][find_in_files]") {
@@ -574,7 +574,7 @@ TEST_CASE("Replace in every file changes open files in place and writes the rest
     run.h.type("rpm");
     run.press(ftk::ui::icon::replace);
     REQUIRE(run.document("a.cpp").buffer().text() == "float rpm;\n");
-    REQUIRE(run.program->workspace().unsaved(run.folder.path / "a.cpp"));
+    REQUIRE(run.program->files().workspace().unsaved(run.folder.path / "a.cpp"));
     REQUIRE(run.folder.read("b.cpp") == "x = rpm;\n");
 }
 
@@ -583,11 +583,11 @@ TEST_CASE("Escape closes find in files, letting go of the files it only showed",
     run.h.press(Key::F, CTRL_SHIFT);
     run.h.type("spin_speed");
     wait_for_hits(run);
-    REQUIRE(run.program->workspace().files().size() == 1);
+    REQUIRE(run.program->files().workspace().files().size() == 1);
     run.h.press(Key::Escape);
     run.h.step();
     REQUIRE_FALSE(run.program->find_in_files().is_open());
-    REQUIRE(run.program->workspace().files().empty());
+    REQUIRE(run.program->files().workspace().files().empty());
 }
 
 namespace {
@@ -817,7 +817,7 @@ TEST_CASE("A C++ file opened is told to its language service, closed and saved t
     REQUIRE(run.language == nullptr);
     run.press_row("coin.cpp");
     REQUIRE(run.language != nullptr);
-    const std::filesystem::path coin = run.program->workspace().name(run.folder.path / "coin.cpp");
+    const std::filesystem::path coin = run.program->files().workspace().name(run.folder.path / "coin.cpp");
     REQUIRE(run.language->opened == std::vector<std::filesystem::path>{coin});
 
     run.h.type("x");
@@ -834,7 +834,7 @@ TEST_CASE("A definition in another file opens it there, the place selected", "[p
     run.h.press(Key::F12);
     run.h.step();
     REQUIRE(run.language->definitions.size() == 1);
-    const std::filesystem::path header = run.program->workspace().name(run.folder.path / "coin.hpp");
+    const std::filesystem::path header = run.program->files().workspace().name(run.folder.path / "coin.hpp");
     FakeLanguage::answer(run.language->definitions.front(), std::vector<Location>{{header, {{1, 4}, {1, 9}}}});
     run.h.step(3);
     REQUIRE(run.program->front() == header);
@@ -892,8 +892,8 @@ TEST_CASE("F2 renames in place, and the rename's edits are made in every file", 
     REQUIRE(run.language->new_names == std::vector<std::string>{"pace"});
     REQUIRE(run.language->renames.front().at == Position{0, 4});
 
-    const std::filesystem::path coin = run.program->workspace().name(run.folder.path / "coin.cpp");
-    const std::filesystem::path other = run.program->workspace().name(run.folder.path / "other.cpp");
+    const std::filesystem::path coin = run.program->files().workspace().name(run.folder.path / "coin.cpp");
+    const std::filesystem::path other = run.program->files().workspace().name(run.folder.path / "other.cpp");
     WorkspaceEdit edits;
     edits[coin] = {.version = run.document("coin.cpp").version(),
                    .edit = {.changes = {{.span = {{0, 4}, {0, 9}}, .text = "pace"}, {.span = {{1, 17}, {1, 22}}, .text = "pace"}}}};
@@ -901,7 +901,7 @@ TEST_CASE("F2 renames in place, and the rename's edits are made in every file", 
     FakeLanguage::answer(run.language->renames.front(), ftk::Result<WorkspaceEdit>(edits));
     run.h.step(2);
     REQUIRE(run.document("coin.cpp").buffer().text() == "int pace;\nint f() { return pace; }\n");
-    REQUIRE(run.program->workspace().unsaved(coin));
+    REQUIRE(run.program->files().workspace().unsaved(coin));
     REQUIRE(run.folder.read("other.cpp") == "extern int pace;\n");
 }
 
@@ -1067,7 +1067,7 @@ TEST_CASE("A new path for clangd in the preferences starts it again, the views j
     run.program->preferences().clangd = "/opt/llvm/bin/clangd";
     run.h.step(2);
     REQUIRE(run.languages_made == 2);
-    const std::filesystem::path coin = run.program->workspace().name(run.folder.path / "coin.cpp");
+    const std::filesystem::path coin = run.program->files().workspace().name(run.folder.path / "coin.cpp");
     REQUIRE(run.language->opened == std::vector<std::filesystem::path>{coin});
     // The view asks the new one.
     run.h.press(Key::F12);
@@ -1082,7 +1082,7 @@ TEST_CASE("A script header is told to clangd and fjls both, each with its dot on
     Running run({{"mover.hpp", "struct Mover;\n"}, {"look.fjss", ".a { color: red; }\n"}}, {}, Running::Languages::Both);
     run.press_row("mover.hpp");
     run.h.step();
-    const std::filesystem::path mover = run.program->workspace().name(run.folder.path / "mover.hpp");
+    const std::filesystem::path mover = run.program->files().workspace().name(run.folder.path / "mover.hpp");
     REQUIRE(run.language != nullptr);
     REQUIRE(run.fjls != nullptr);
     REQUIRE(run.language->opened == std::vector<std::filesystem::path>{mover});
@@ -1099,7 +1099,7 @@ TEST_CASE("A script header is told to clangd and fjls both, each with its dot on
     // A stylesheet is fjls's alone.
     run.press_row("look.fjss");
     run.h.step();
-    const std::filesystem::path look = run.program->workspace().name(run.folder.path / "look.fjss");
+    const std::filesystem::path look = run.program->files().workspace().name(run.folder.path / "look.fjss");
     REQUIRE(run.fjls->opened == std::vector<std::filesystem::path>{mover, look});
     REQUIRE(run.language->opened == std::vector<std::filesystem::path>{mover});
 
@@ -1140,7 +1140,7 @@ TEST_CASE("With Vim on, :w saves; :q is refused over unsaved changes, asking not
     CHECK(run.h.find("Don't save", Role::Button) == nullptr);
     ex(run, "q!");
     CHECK_FALSE(run.program->front().has_value());
-    CHECK(run.program->workspace().files().empty());
+    CHECK(run.program->files().workspace().files().empty());
     CHECK(run.folder.read("a.txt") == "bc\n");
 }
 
@@ -1155,7 +1155,7 @@ TEST_CASE("With Vim on, :q closes a tab whose changes another tab shows, and :wq
     REQUIRE(run.program->groups() == 2);
     ex(run, "q");
     CHECK(run.program->groups() == 1);
-    CHECK(run.program->workspace().unsaved(run.folder.path / "a.txt"));
+    CHECK(run.program->files().workspace().unsaved(run.folder.path / "a.txt"));
     ex(run, "wq");
     CHECK_FALSE(run.program->front().has_value());
     CHECK(run.folder.read("a.txt") == "bc\n");
@@ -1198,8 +1198,8 @@ TEST_CASE("With Vim on, :e opens a file from the folder and reads the one in fro
     run.program->preferences().vim = true;
     run.press_row("a.txt");
     run.h.step();
-    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
-    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "sub/b.txt");
+    const std::filesystem::path a = run.program->files().workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->files().workspace().name(run.folder.path / "sub/b.txt");
     ex(run, "e sub/b.txt");
     CHECK(run.program->front() == b);
     ex(run, "bp");
@@ -1220,7 +1220,7 @@ TEST_CASE("With Vim on, :e opens a file from the folder and reads the one in fro
     CHECK(on_status_bar(run, ftk::theme::error()));
     ex(run, "e!");
     CHECK(run.document("a.txt").buffer().text() == "outside\n");
-    CHECK_FALSE(run.program->workspace().unsaved(a));
+    CHECK_FALSE(run.program->files().workspace().unsaved(a));
     run.h.type("u");
     run.h.step();
     CHECK(run.document("a.txt").buffer().text() == "utside\n");
@@ -1232,8 +1232,8 @@ TEST_CASE("With Vim on, Ctrl-W v and s split beside, w h and l go between the gr
     run.program->preferences().vim = true;
     run.press_row("a.txt");
     run.h.step();
-    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
-    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "b.txt");
+    const std::filesystem::path a = run.program->files().workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->files().workspace().name(run.folder.path / "b.txt");
     const auto window = [&](std::string_view key) {
         run.h.press(Key::W, CTRL);
         run.h.type(key);
@@ -1289,7 +1289,7 @@ TEST_CASE("With Vim on, Tab after :e completes the folder's paths as the tree li
     CHECK(field()->value == "e sub/b.txt");
     run.h.press(Key::Enter);
     run.h.step(2);
-    CHECK(run.program->front() == run.program->workspace().name(run.folder.path / "sub/b.txt"));
+    CHECK(run.program->front() == run.program->files().workspace().name(run.folder.path / "sub/b.txt"));
 }
 
 TEST_CASE("With Vim on, the : line says :q will be refused before Enter, as the program knows the tabs",
@@ -1374,7 +1374,7 @@ TEST_CASE("Preferences' Open makes keys.vim with a few lines of comment, and ope
     run.press("Open");
     CHECK(std::filesystem::exists(run.keys_file()));
     CHECK(run.folder.read(".config/keys.vim").starts_with("\" Your maps for Vim's keys"));
-    CHECK(run.program->front() == run.program->workspace().name(run.keys_file()));
+    CHECK(run.program->front() == run.program->files().workspace().name(run.keys_file()));
 }
 
 TEST_CASE("Preferences keeps keys.vim's Open in reach however long its path", "[program][keys]") {
@@ -1408,9 +1408,9 @@ TEST_CASE("With Vim on, Ctrl-O goes back through a group's jumps across files an
     run.program->preferences().vim = true;
     run.press_row("a.txt");
     run.h.step();
-    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
-    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "b.txt");
-    const auto text_of = [&](const std::filesystem::path& path) { return run.program->workspace().find(path)->buffer().text(); };
+    const std::filesystem::path a = run.program->files().workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->files().workspace().name(run.folder.path / "b.txt");
+    const auto text_of = [&](const std::filesystem::path& path) { return run.program->files().workspace().find(path)->buffer().text(); };
     const auto keys = [&](std::string_view typed) {
         run.h.type(typed);
         run.h.step(2);
@@ -1445,7 +1445,7 @@ TEST_CASE("With Vim on, Ctrl-O goes back through a group's jumps across files an
     ctrl_o();
     REQUIRE(run.program->front() == a);
     ex(run, "q");
-    REQUIRE(run.program->workspace().find(a) == nullptr);
+    REQUIRE(run.program->files().workspace().find(a) == nullptr);
     ctrl_o();
     REQUIRE(run.program->front() == a);
     keys("x");
@@ -1464,8 +1464,8 @@ TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in o
     run.program->preferences().vim = true;
     run.press_row("a.txt");
     run.h.step();
-    const std::filesystem::path a = run.program->workspace().name(run.folder.path / "a.txt");
-    const std::filesystem::path b = run.program->workspace().name(run.folder.path / "b.txt");
+    const std::filesystem::path a = run.program->files().workspace().name(run.folder.path / "a.txt");
+    const std::filesystem::path b = run.program->files().workspace().name(run.folder.path / "b.txt");
     run.h.type("jlllmA");
     run.h.step(2);
     run.press_row("b.txt");
@@ -1476,19 +1476,19 @@ TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in o
     // At the very place: x takes the w.
     run.h.type("x");
     run.h.step(2);
-    CHECK(run.program->workspace().find(a)->buffer().text() == "one\n  to\n");
+    CHECK(run.program->files().workspace().find(a)->buffer().text() == "one\n  to\n");
     run.h.type("u");
     run.h.step(2);
     // Closed, the file keeps it; ' opens the file again on the first text
     // of the mark's line.
     ex(run, "q");
-    REQUIRE(run.program->workspace().find(a) == nullptr);
+    REQUIRE(run.program->files().workspace().find(a) == nullptr);
     run.h.type("'A");
     run.h.step(2);
     REQUIRE(run.program->front() == a);
     run.h.type("x");
     run.h.step(2);
-    CHECK(run.program->workspace().find(a)->buffer().text() == "one\n  wo\n");
+    CHECK(run.program->files().workspace().find(a)->buffer().text() == "one\n  wo\n");
     run.h.type("u");
     run.h.step(2);
     // Set in b.txt, it leaves a.txt.
@@ -1496,8 +1496,8 @@ TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in o
     run.h.step();
     run.h.type("mA");
     run.h.step(2);
-    CHECK_FALSE(run.program->workspace().find(a)->mark('A'));
-    CHECK(run.program->workspace().find(b)->mark('A'));
+    CHECK_FALSE(run.program->files().workspace().find(a)->mark('A'));
+    CHECK(run.program->files().workspace().find(b)->mark('A'));
     // One no file has is said.
     run.h.type("'Z");
     run.h.step(2);

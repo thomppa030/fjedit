@@ -99,15 +99,15 @@ int run(const std::filesystem::path& folder) {
                 .pick_folder =
                     [&browser, &program] {
                         browser.open("Open folder", ftk::FileBrowser::Mode::select_directory, "Open",
-                                     {.start = program->workspace().root()});
+                                     {.start = program->files().root()});
                     },
                 .device = &app.device(),
                 .brand = brand,
                 .desktop_entry = fjedit::Program::desktop_entry(ftk::platform::executable_path(), brand),
                 .desktop_data_home = ftk::desktop_data_home(),
             });
-        browser.set_project(program->workspace().root());
-        app.window().set_title(title_of(program->workspace().root()));
+        browser.set_project(program->files().root());
+        app.window().set_title(title_of(program->files().root()));
     };
     make_program(folder);
     const ftk::Connection picked =

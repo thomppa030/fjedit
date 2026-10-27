@@ -65,6 +65,7 @@ target_link_libraries(fjedit-widget-tests PRIVATE fjedit::widget ftk::kit-harnes
 # through the same harness.
 add_executable(fjedit-editor-tests
     log_for_tests.cpp
+    test_code_files.cpp
     test_file_tree.cpp
     test_find_in_files.cpp
     test_preferences.cpp)

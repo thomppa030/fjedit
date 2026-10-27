@@ -6,7 +6,6 @@
 #include "fjedit/core/text_file.hpp"
 #include "fjedit/core/vim/motions.hpp"
 #include "fjedit/core/vim/notation.hpp"
-#include "fjedit/lsp/client.hpp"
 #include "fjedit/program/icons.hpp"
 #include "fjedit/widget/file_kind.hpp"
 
@@ -35,7 +34,6 @@
 #include <algorithm>
 #include <format>
 #include <iterator>
-#include <tuple>
 #include <utility>
 #include <variant>
 
@@ -49,8 +47,6 @@ using ftk::ui::Key;
 
 // The side bar's width (sheet 39).
 constexpr float SIDE_WIDTH = 260.0f;
-// How often the disk is looked at for files changed elsewhere.
-constexpr double DISK_CHECK = 2.0;
 // The buttons at the end of a tab row, in from its right edge.
 constexpr float TAB_END_PAD = 4.0f;
 
@@ -177,14 +173,11 @@ ui::UnsavedItem listed(const std::filesystem::path& path, const std::filesystem:
 } // namespace
 
 Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOptions options)
-    : workspace_(std::move(root)), keymap_(program_keys()), tree_(workspace_.root()), groups_(1),
-      preferences_(preferences), pick_folder_(std::move(options.pick_folder)), wake_(std::move(options.wake)),
-      services_(noting_paths(options.services ? std::move(*options.services)
-                                              : std::vector<ServiceMaker>{clangd(), fjls()}),
-                workspace_.root()),
-      keys_path_(std::move(options.keys)), device_(options.device), desktop_entry_(std::move(options.desktop_entry)),
-      desktop_data_home_(std::move(options.desktop_data_home)) {
-    if (!options.recovery.empty()) recovery_.emplace(std::move(options.recovery));
+    : files_(std::move(root), preferences,
+             {.recovery = std::move(options.recovery), .services = std::move(options.services), .wake = std::move(options.wake)}),
+      keymap_(program_keys()), tree_(files_.root()), groups_(1), preferences_(preferences),
+      pick_folder_(std::move(options.pick_folder)), keys_path_(std::move(options.keys)), device_(options.device),
+      desktop_entry_(std::move(options.desktop_entry)), desktop_data_home_(std::move(options.desktop_data_home)) {
     read_keys();
     if (!options.brand.empty()) {
         if (ftk::Result<ftk::SvgPicture> mark = ftk::SvgPicture::load(options.brand / "fjedit-mark-dark.svg")) {
@@ -195,78 +188,14 @@ Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOp
     }
 }
 
-ServiceMaker Program::clangd() {
-    static const std::vector<std::string> EXTENSIONS{"c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "inl", "ipp"};
-    return {.name = "clangd",
-            .extensions = EXTENSIONS,
-            .make = [this](const std::filesystem::path& root) -> std::unique_ptr<LanguageService> {
-                return std::make_unique<lsp::Client>(lsp::ClientOptions{
-                    // No mark before a completion's name for whether it
-                    // brings an #include: the name is the name.
-                    .command = {preferences_.clangd, "--log=error", "--header-insertion-decorators=0"},
-                    .root = root,
-                    .extensions = EXTENSIONS,
-                    .language_id = [](const std::filesystem::path& path) {
-                        return path.extension() == ".c" ? std::string("c") : std::string("cpp");
-                    },
-                    .arrived = wake_,
-                    .if_missing = "set its path in Preferences",
-                });
-            }};
-}
-
-ServiceMaker Program::fjls() {
-    // A game's script headers, beside clangd; fjell's own files and GLSL
-    // alone.
-    static const Language& GLSL = language_for("shader.glsl");
-    static const std::vector<std::string> EXTENSIONS = [] {
-        std::vector<std::string> extensions{"hpp", "fjss", "fjwidget", "fjfont", "fjsl"};
-        for (const std::string_view extension : extensions_of(GLSL)) extensions.emplace_back(extension);
-        return extensions;
-    }();
-    return {.name = "fjls",
-            .extensions = EXTENSIONS,
-            .make = [this](const std::filesystem::path& root) -> std::unique_ptr<LanguageService> {
-                return std::make_unique<lsp::Client>(lsp::ClientOptions{
-                    .command = {preferences_.fjls},
-                    .root = root,
-                    .extensions = EXTENSIONS,
-                    .language_id = [](const std::filesystem::path& path) {
-                        const std::string extension = path.extension().string();
-                        if (extension == ".hpp") return std::string("cpp");
-                        // A stage's file and an include alike.
-                        if (&language_for(path.filename().string()) == &GLSL) return std::string("glsl");
-                        return extension.substr(1);
-                    },
-                    .arrived = wake_,
-                    .if_missing = "set its path in Preferences",
-                });
-            }};
-}
-
-std::vector<ServiceMaker> Program::noting_paths(std::vector<ServiceMaker> makers) {
-    for (ServiceMaker& maker : makers) {
-        const bool clangd = maker.name == "clangd";
-        if ((!clangd && maker.name != "fjls") || !maker.make) continue;
-        std::string* started = clangd ? &clangd_started_ : &fjls_started_;
-        const std::string* wanted = clangd ? &preferences_.clangd : &preferences_.fjls;
-        maker.make = [started, wanted, make = std::move(maker.make)](const std::filesystem::path& root) {
-            *started = *wanted;
-            return make(root);
-        };
+void Program::update_files(double now) {
+    ui::core::current().request_frame_at(std::max(files_.next_check(), now));
+    const CodeFiles::Update update = files_.update(now);
+    if (update.looked) {
+        tree_.forget_listings();
+        path_listings_.clear();
     }
-    return makers;
-}
-
-void Program::follow_server_paths() {
-    bool restarted = false;
-    for (const auto& [name, started, wanted] : {std::tuple{"clangd", &clangd_started_, &preferences_.clangd},
-                                                std::tuple{"fjls", &fjls_started_, &preferences_.fjls}}) {
-        if (!services_.status_of(name) || *started == *wanted) continue;
-        services_.restart(name);
-        restarted = true;
-    }
-    if (!restarted) return;
+    if (!update.restarted) return;
     // What a view asked of the one stopped will never be answered.
     for (Group& group : groups_) {
         for (Tab& tab : group.tabs) {
@@ -280,12 +209,12 @@ void Program::follow_server_paths() {
 }
 
 LanguageServerShown Program::clangd_shown() const {
-    LanguageServerShown shown{.status = services_.status_of("clangd"), .reads = {}};
+    LanguageServerShown shown{.status = files_.services().status_of("clangd"), .reads = {}};
     // Where clangd looks for them in the folder open, as it does from a
     // file at its top.
     for (const char* name : {"compile_commands.json", "build/compile_commands.json", "compile_flags.txt"}) {
         std::error_code error;
-        if (std::filesystem::exists(workspace_.root() / name, error)) {
+        if (std::filesystem::exists(files_.root() / name, error)) {
             shown.reads = name;
             break;
         }
@@ -294,38 +223,33 @@ LanguageServerShown Program::clangd_shown() const {
 }
 
 LanguageServerShown Program::fjls_shown() const {
-    return {.status = services_.status_of("fjls"), .reads = {}};
+    return {.status = files_.services().status_of("fjls"), .reads = {}};
 }
 
 std::unique_ptr<EditorView> Program::make_view(const std::filesystem::path& path, Document& document) {
     auto view = std::make_unique<EditorView>(document);
     show_as_preferred(*view, preferences_, registers_, vim_settings_, path_lister_, maps_);
-    if (services_.serves(path)) {
-        view->service = &services_;
+    LanguageServices& services = files_.services();
+    if (services.serves(path)) {
+        view->service = &services;
         view->path = path;
-        services_.open(path, document);
+        services.open(path, document);
     }
     return view;
 }
 
 void Program::let_go(const std::filesystem::path& path) {
-    // Its files' marks and the places jumped from in it wait for it to open
-    // again.
-    if (const Document* document = workspace_.find(path)) {
-        for (const auto& [name, at] : document->marks()) {
-            if (name >= 'A' && name <= 'Z') closed_marks_[name] = {.path = workspace_.name(path), .at = at};
-        }
-        for (Group& group : groups_) group.jumps.closed(workspace_.name(path), *document);
+    if (const Document* document = files_.workspace().find(path)) {
+        for (Group& group : groups_) group.jumps.closed(files_.workspace().name(path), *document);
     }
-    services_.close(path);
-    workspace_.close(path);
+    files_.let_go(path);
 }
 
 void Program::go_to(const std::filesystem::path& path, Span span) {
     keep_jump();
     open(path);
     Tab* tab = front_tab();
-    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    const Document* document = tab != nullptr ? files_.workspace().find(tab->path) : nullptr;
     if (document == nullptr) return;
     const Buffer& buffer = document->buffer();
     tab->view->selections = Selections({.anchor = buffer.clamp(span.from), .caret = buffer.clamp(span.to)});
@@ -412,7 +336,7 @@ void Program::open_keys() {
         std::filesystem::create_directories(keys_path_.parent_path(), error);
         const ftk::Result<> made = write_text_file(keys_path_, KEYS_FILE_START);
         if (!made) {
-            note_ = made.error();
+            files_.set_note(made.error());
             return;
         }
     }
@@ -440,23 +364,10 @@ const Program::Tab* Program::front_tab() const {
 }
 
 void Program::open(const std::filesystem::path& path) {
-    const ftk::Result<Document*> document = workspace_.open(path);
-    if (!document) {
-        note_ = document.error();
-        return;
-    }
-    note_.clear();
+    const ftk::Result<Document*> document = files_.open(path);
+    if (!document) return;
     Group& group = groups_[active_];
-    const std::filesystem::path named = workspace_.name(path);
-    // The files' marks it had when it was let go are its again.
-    for (auto kept = closed_marks_.begin(); kept != closed_marks_.end();) {
-        if (kept->second.path != named) {
-            ++kept;
-            continue;
-        }
-        (*document)->set_mark(kept->first, kept->second.at);
-        kept = closed_marks_.erase(kept);
-    }
+    const std::filesystem::path named = files_.workspace().name(path);
     for (Group& each : groups_) each.jumps.opened(named, (*document)->version());
     auto found = std::ranges::find(group.tabs, named, &Tab::path);
     if (found == group.tabs.end()) {
@@ -477,9 +388,7 @@ bool Program::run(std::string_view command) {
     } else if (command == "file.save") {
         if (tab != nullptr) save(tab->path);
     } else if (command == "file.save_all") {
-        for (const std::filesystem::path& path : workspace_.files()) {
-            if (workspace_.unsaved(path)) save(path);
-        }
+        for (const std::filesystem::path& path : files_.unsaved_files()) save(path);
     } else if (command == "file.close") {
         close_front();
     } else if (command == "file.quit") {
@@ -504,45 +413,16 @@ bool Program::run(std::string_view command) {
 }
 
 void Program::save(const std::filesystem::path& path) {
-    if (const ftk::Result<> saved = workspace_.save(path); !saved) {
-        note_ = saved.error();
-        return;
-    }
-    changed_.erase(workspace_.name(path));
-    forget_kept(workspace_.name(path));
-    services_.saved(workspace_.name(path));
-    note_.clear();
+    if (!files_.save(path)) return;
     // keys.vim saved here applies at once.
-    if (!keys_path_.empty() && workspace_.name(path) == workspace_.name(keys_path_)) read_keys();
-}
-
-void Program::keep_unsaved() {
-    if (!recovery_) return;
-    for (const std::filesystem::path& path : workspace_.files()) {
-        if (!workspace_.unsaved(path)) {
-            forget_kept(path);
-            continue;
-        }
-        const Document& document = *workspace_.find(path);
-        const auto kept = kept_.find(path);
-        if (kept != kept_.end() && kept->second == document.version()) continue;
-        if (const ftk::Result<> written = recovery_->keep(path, document.buffer().text()); !written) {
-            note_ = written.error();
-            continue;
-        }
-        kept_[path] = document.version();
-    }
-}
-
-void Program::forget_kept(const std::filesystem::path& path) {
-    if (kept_.erase(path) > 0 && recovery_) recovery_->forget(path);
+    const Workspace& workspace = files_.workspace();
+    if (!keys_path_.empty() && workspace.name(path) == workspace.name(keys_path_)) read_keys();
 }
 
 bool Program::ask_to_quit() {
     if (quitting_) return true;
     leaving_for_.reset();
-    const std::vector<std::filesystem::path> files = workspace_.files();
-    if (std::ranges::none_of(files, [&](const std::filesystem::path& path) { return workspace_.unsaved(path); })) {
+    if (!files_.first_unsaved()) {
         quitting_ = true;
         return true;
     }
@@ -551,7 +431,7 @@ bool Program::ask_to_quit() {
 }
 
 void Program::open_folder(std::filesystem::path folder) {
-    if (!first_unsaved()) {
+    if (!files_.first_unsaved()) {
         folder_wanted_ = std::move(folder);
         return;
     }
@@ -559,28 +439,12 @@ void Program::open_folder(std::filesystem::path folder) {
     quit_asked_ = true;
 }
 
-void Program::check_disk(double now) {
-    ui::core::current().request_frame_at(std::max(next_check_, now));
-    if (now < next_check_) return;
-    next_check_ = now + DISK_CHECK;
-    for (const std::filesystem::path& path : workspace_.changed_on_disk()) {
-        if (workspace_.unsaved(path)) {
-            changed_.insert(path);
-        } else if (const ftk::Result<> reloaded = workspace_.reload(path); !reloaded) {
-            note_ = reloaded.error();
-        }
-    }
-    tree_.forget_listings();
-    path_listings_.clear();
-    keep_unsaved();
-}
-
 void Program::close_front() {
     const Tab* tab = front_tab();
     if (tab == nullptr) return;
     // Another tab showing the file keeps its changes: closing this one
     // loses nothing.
-    if (tabs_showing(tab->path) == 1 && workspace_.unsaved(tab->path)) {
+    if (tabs_showing(tab->path) == 1 && files_.unsaved(tab->path)) {
         closing_ = tab->path;
         return;
     }
@@ -594,19 +458,12 @@ std::size_t Program::tabs_showing(const std::filesystem::path& path) const {
 }
 
 std::vector<vim::PathEntry> Program::list_paths(std::string_view folder, bool hidden) {
-    const std::filesystem::path at = workspace_.root() / std::filesystem::path(folder);
+    const std::filesystem::path at = files_.root() / std::filesystem::path(folder);
     const auto listed = path_listings_.find({at, hidden});
     if (listed != path_listings_.end()) return listed->second;
     std::vector<vim::PathEntry> entries;
     for (const FolderEntry& entry : read_folder(at, hidden)) entries.push_back({.name = entry.name, .folder = entry.folder});
     return path_listings_.emplace(std::pair{at, hidden}, std::move(entries)).first->second;
-}
-
-std::optional<std::filesystem::path> Program::first_unsaved() const {
-    for (const std::filesystem::path& path : workspace_.files()) {
-        if (workspace_.unsaved(path)) return path;
-    }
-    return std::nullopt;
 }
 
 void Program::run_ex(const vim::ExCommand& command) {
@@ -620,7 +477,7 @@ void Program::run_ex(const vim::ExCommand& command) {
     constexpr std::string_view NO_WRITE = "E37: No write since last change (add ! to override)";
     // Closing the tab loses changes when its file has them and no other tab
     // shows it.
-    const bool loses = workspace_.unsaved(path) && tabs_showing(path) == 1;
+    const bool loses = files_.unsaved(path) && tabs_showing(path) == 1;
     const auto close = [&] { close_tab(groups_[active_], groups_[active_].front); };
     if (name == "write") {
         save(path);
@@ -632,32 +489,26 @@ void Program::run_ex(const vim::ExCommand& command) {
     } else if (name == "wq" || name == "xit") {
         // :x writes only a file with changes. One that couldn't be written
         // keeps its tab, the note saying why.
-        if (name == "wq" || workspace_.unsaved(path)) save(path);
-        if (workspace_.unsaved(path)) return;
+        if (name == "wq" || files_.unsaved(path)) save(path);
+        if (files_.unsaved(path)) return;
         close();
     } else if (name == "qall") {
-        const std::optional<std::filesystem::path> unsaved = first_unsaved();
+        const std::optional<std::filesystem::path> unsaved = files_.first_unsaved();
         if (unsaved && !command.bang) {
             return refuse(std::format("E162: No write since last change for buffer \"{}\"", unsaved->filename().string()));
         }
-        for (const std::filesystem::path& file : workspace_.files()) {
-            if (workspace_.unsaved(file)) forget_kept(file);
-        }
+        for (const std::filesystem::path& file : files_.unsaved_files()) files_.forget_kept(file);
         quitting_ = true;
     } else if (name == "edit" && !command.argument.empty()) {
         // A path from the folder open, as Vim's from the folder it works in;
         // a jump, as in Vim.
         keep_jump();
-        open(workspace_.root() / std::filesystem::path(command.argument));
+        open(files_.root() / std::filesystem::path(command.argument));
     } else if (name == "edit") {
         // The file read again; with !, its changes dropped. Undone, they
         // come back.
-        if (workspace_.unsaved(path) && !command.bang) return refuse(std::string(NO_WRITE));
-        if (const ftk::Result<> reloaded = workspace_.reload(path); !reloaded) {
-            note_ = reloaded.error();
-            return;
-        }
-        changed_.erase(path);
+        if (files_.unsaved(path) && !command.bang) return refuse(std::string(NO_WRITE));
+        (void)files_.reload(path);
     } else if (name == "bnext" || name == "bprevious") {
         keep_jump();
         (void)run(name == "bnext" ? "tab.next" : "tab.previous");
@@ -683,7 +534,7 @@ void Program::answer_vim(const vim::Asked& asked) {
 
 void Program::keep_jump() {
     const Tab* tab = front_tab();
-    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    const Document* document = tab != nullptr ? files_.workspace().find(tab->path) : nullptr;
     if (document == nullptr) return;
     keep_jump({.at = tab->view->selections.primary().caret, .version = document->version()});
 }
@@ -696,16 +547,16 @@ void Program::keep_jump(const vim::JumpFrom& from) {
 
 void Program::step_jumps(long count) {
     const Tab* tab = front_tab();
-    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    const Document* document = tab != nullptr ? files_.workspace().find(tab->path) : nullptr;
     if (document == nullptr) return;
     JumpList& jumps = groups_[active_].jumps;
-    jumps.catch_up(workspace_);
+    jumps.catch_up(files_.workspace());
     const JumpList::Place here{.path = tab->path, .at = tab->view->selections.primary().caret, .version = document->version()};
     const std::optional<JumpList::Place> to = jumps.step(count, here);
     if (!to) return;
     if (to->path != tab->path) open(to->path);
     Tab* now = front_tab();
-    const Document* there = now != nullptr ? workspace_.find(now->path) : nullptr;
+    const Document* there = now != nullptr ? files_.workspace().find(now->path) : nullptr;
     // Not opened: what went wrong is noted.
     if (there == nullptr || now->path != to->path) return;
     now->view->selections = Selections(Selection::at(there->buffer().clamp(to->at)));
@@ -715,27 +566,11 @@ void Program::step_jumps(long count) {
 void Program::keep_file_mark(char name) {
     const Tab* tab = front_tab();
     if (tab == nullptr) return;
-    const Document* own = workspace_.find(tab->path);
-    closed_marks_.erase(name);
-    for (const std::filesystem::path& path : workspace_.files()) {
-        Document* document = workspace_.find(path);
-        if (document != nullptr && document != own) document->forget_mark(name);
-    }
+    files_.keep_file_mark(name, tab->path);
 }
 
 void Program::go_to_file_mark(const vim::MarkWanted& wanted) {
-    // The file open that has it, or the one let go with it.
-    std::optional<std::filesystem::path> holder;
-    for (const std::filesystem::path& path : workspace_.files()) {
-        const Document* document = workspace_.find(path);
-        if (document != nullptr && document->mark(wanted.name)) {
-            holder = path;
-            break;
-        }
-    }
-    if (const auto kept = closed_marks_.find(wanted.name); !holder && kept != closed_marks_.end()) {
-        holder = kept->second.path;
-    }
+    const std::optional<std::filesystem::path> holder = files_.file_with_mark(wanted.name);
     if (!holder) {
         if (Tab* tab = front_tab(); tab != nullptr && tab->view->vim) {
             tab->view->vim->say({.text = "E20: Mark not set", .error = true});
@@ -745,7 +580,7 @@ void Program::go_to_file_mark(const vim::MarkWanted& wanted) {
     keep_jump();
     open(*holder);
     Tab* tab = front_tab();
-    const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+    const Document* document = tab != nullptr ? files_.workspace().find(tab->path) : nullptr;
     const std::optional<Position> at = document != nullptr ? document->mark(wanted.name) : std::nullopt;
     // Not opened: what went wrong is noted.
     if (!at) return;
@@ -772,7 +607,7 @@ void Program::close_tab(Group& group, std::size_t index) {
     });
     if (!shown) {
         let_go(path);
-        forget_kept(path);
+        files_.forget_kept(path);
     }
     if (group.tabs.empty() && groups_.size() > 1) {
         const auto gone = static_cast<std::size_t>(&group - groups_.data());
@@ -789,7 +624,7 @@ void Program::split(std::size_t index) {
     const Group& from = groups_[index];
     if (from.front >= from.tabs.size()) return;
     const Tab& shown = from.tabs[from.front];
-    Document* document = workspace_.find(shown.path);
+    Document* document = files_.workspace().find(shown.path);
     if (document == nullptr) return;
     // Its jumps go with it, as Vim's :split copies a window's.
     Group beside{.tabs = {}, .front = 0, .select = {}, .jumps = from.jumps};
@@ -808,7 +643,7 @@ void Program::open_find_in_files() {
     if (const Tab* tab = front_tab()) {
         const Selection& primary = tab->view->selections.primary();
         const Span span = primary.span();
-        const Document* document = workspace_.find(tab->path);
+        const Document* document = files_.workspace().find(tab->path);
         if (document != nullptr && !primary.empty() && span.from.line == span.to.line) {
             seed = document->buffer().text(span);
         }
@@ -824,9 +659,9 @@ void Program::take_find_in_files(const FindInFilesAsk& ask) {
         if (in_a_tab) continue;
         // Changed in the preview, it gets a tab to be saved from; otherwise
         // it goes.
-        if (workspace_.unsaved(path)) {
+        if (files_.unsaved(path)) {
             Group& group = groups_[active_];
-            group.tabs.push_back({.path = path, .view = make_view(path, *workspace_.find(path))});
+            group.tabs.push_back({.path = path, .view = make_view(path, *files_.workspace().find(path))});
         } else {
             let_go(path);
         }
@@ -847,10 +682,7 @@ void Program::take_keys() {
 }
 
 void Program::draw() {
-    follow_server_paths();
-    // What the language services found since, before anything shows it.
-    services_.update();
-    check_disk(ui::core::current().time());
+    update_files(ui::core::current().time());
     // What was just done is said until the next key.
     if (!ui::core::current().keystrokes().empty()) {
         told_.clear();
@@ -890,7 +722,7 @@ void Program::draw() {
         }
         // Find in files floats over the code, under the tabs.
         const std::optional<std::filesystem::path> shown = front();
-        const std::filesystem::path folder = shown ? shown->parent_path() : workspace_.root();
+        const std::filesystem::path folder = shown ? shown->parent_path() : files_.root();
         const float tabs = dialog_at_.y - code_min.y;
         take_find_in_files(find_in_files_.draw({.min = {code_min.x, code_min.y + tabs}, .max = code_max}, folder, keymap_,
                                                static_cast<float>(preferences_.text_size), preferences_.vim));
@@ -1026,7 +858,7 @@ void Program::draw_group(Group& group, std::size_t index) {
             const ui::DocumentTabResult result = ui::document_tab({.label = label.c_str(),
                                                                    .icon = kind.icon,
                                                                    .hue = kind.hue,
-                                                                   .unsaved = workspace_.unsaved(tab.path),
+                                                                   .unsaved = files_.unsaved(tab.path),
                                                                    .select = group.select == i});
             if (result.front) group.front = i;
             if (result.closed) closed = i;
@@ -1048,23 +880,22 @@ void Program::draw_group(Group& group, std::size_t index) {
     // strip while its file changed on disk with unsaved changes here.
     if (group.front < group.tabs.size()) {
         Tab& tab = group.tabs[group.front];
-        if (changed_.contains(tab.path)) {
+        if (files_.changed_on_disk(tab.path)) {
             const std::string text =
                 std::format("{} changed on disk. It has unsaved changes here.", tab.path.filename().string());
             const char* answers[] = {"Keep mine", "Load from disk"};
             if (const std::optional<std::size_t> answer = ui::notice_strip(ui::Severity::Warning, text.c_str(), answers)) {
-                changed_.erase(tab.path);
-                if (*answer == 1) {
-                    if (const ftk::Result<> reloaded = workspace_.reload(tab.path); !reloaded) note_ = reloaded.error();
-                }
+                // Answered either way, it isn't asked again.
+                files_.keep_mine(tab.path);
+                if (*answer == 1) (void)files_.reload(tab.path);
             }
         }
         show_as_preferred(*tab.view, preferences_, registers_, vim_settings_, path_lister_, maps_);
-        const std::optional<std::filesystem::path> unsaved = first_unsaved();
+        const std::optional<std::filesystem::path> unsaved = files_.first_unsaved();
         tab.view->file_facts = {.file = tab.path.filename().string(),
-                                .closing_loses = workspace_.unsaved(tab.path) && tabs_showing(tab.path) == 1,
+                                .closing_loses = files_.unsaved(tab.path) && tabs_showing(tab.path) == 1,
                                 .unsaved = unsaved ? unsaved->filename().string() : std::string()};
-        Document* document = workspace_.find(tab.path);
+        Document* document = files_.workspace().find(tab.path);
         const glm::vec2 at = ui::cursor();
         const glm::vec2 room = ui::space_left();
         if (document != nullptr && room.x > 0.0f && room.y > 0.0f) {
@@ -1081,9 +912,10 @@ void Program::draw_group(Group& group, std::size_t index) {
             }
             // A rename typed in place: the service asked to make it in every
             // file.
-            if (result.rename && services_.serves(tab.path)) {
+            LanguageServices& services = files_.services();
+            if (result.rename && services.serves(tab.path)) {
                 renaming_ = Renaming{.rename = *result.rename,
-                                     .asked = services_.rename(tab.path, result.rename->at, result.rename->to)};
+                                     .asked = services.rename(tab.path, result.rename->at, result.rename->to)};
             }
             ui::reserve(room);
         }
@@ -1132,8 +964,9 @@ void Program::draw_status() {
         std::size_t errors = 0;
         std::size_t warnings = 0;
         const Diagnostic* first = nullptr;
-        for (const std::filesystem::path& path : services_.files()) {
-            for (const Diagnostic& problem : services_.diagnostics(path)) {
+        LanguageServices& services = files_.services();
+        for (const std::filesystem::path& path : services.files()) {
+            for (const Diagnostic& problem : services.diagnostics(path)) {
                 errors += problem.severity == Severity::Error ? 1 : 0;
                 warnings += problem.severity == Severity::Warning ? 1 : 0;
                 if (tab == nullptr || path != tab->path || problem.severity > Severity::Warning) continue;
@@ -1150,7 +983,7 @@ void Program::draw_status() {
             ui::status_note(message.substr(0, message.find('\n')),
                             std::format("{}:{}", tab->path.filename().string(), first->span.from.line + 1));
         }
-        if (!note_.empty()) ui::status_item(ui::icon::warning, note_);
+        if (!files_.note().empty()) ui::status_item(ui::icon::warning, files_.note());
         if (!told_.empty()) ui::status_message(ui::StatusTone::Plain, told_);
         // While a colour is picked from its swatch, what Esc and Enter do.
         if (tab != nullptr) {
@@ -1163,7 +996,7 @@ void Program::draw_status() {
                             entry_answer_->where);
         }
         bar.right();
-        const Document* document = tab != nullptr ? workspace_.find(tab->path) : nullptr;
+        const Document* document = tab != nullptr ? files_.workspace().find(tab->path) : nullptr;
         if (document == nullptr) return;
         const Buffer& buffer = document->buffer();
         const Position caret = tab->view->selections.primary().caret;
@@ -1178,7 +1011,7 @@ void Program::draw_status() {
         ui::status_item(nullptr, document->language().name);
         // Each language service the file in front asks, as a dot in how it
         // is.
-        for (const ServiceShown& service : services_.shown(tab->path)) {
+        for (const ServiceShown& service : services.shown(tab->path)) {
             ui::status_rule();
             switch (service.status.state) {
                 case ServiceState::Ready:
@@ -1208,39 +1041,11 @@ void Program::ask_rename() {
     const Rename rename = renaming_->rename;
     renaming_.reset();
     if (!edits) {
-        note_ = edits.error();
+        files_.set_note(edits.error());
         return;
     }
-    make_edits(*edits);
+    files_.make_edits(*edits);
     told_ = std::format("Renamed {} to {} in {} file{}", rename.from, rename.to, edits->size(), edits->size() == 1 ? "" : "s");
-}
-
-void Program::make_edits(const WorkspaceEdit& edits) {
-    for (const auto& [path, file] : edits) {
-        if (Document* document = workspace_.find(path)) {
-            if (file.version && *file.version != document->version()) {
-                note_ = std::format("{} changed while it was being renamed in", path.filename().string());
-                continue;
-            }
-            // Its views catch up through the edit, as with any made elsewhere.
-            Selections selections;
-            const MonospaceLayout layout;
-            CommandContext context{.document = *document, .selections = selections, .layout = layout};
-            (void)apply_edit(context, file.edit);
-            continue;
-        }
-        const ftk::Result<std::string> bytes = read_text_file(path);
-        if (!bytes) {
-            note_ = bytes.error();
-            continue;
-        }
-        Document document(*bytes, language_for(path.filename().string()));
-        Selections selections;
-        const MonospaceLayout layout;
-        CommandContext context{.document = document, .selections = selections, .layout = layout};
-        (void)apply_edit(context, file.edit);
-        if (const ftk::Result<> written = write_text_file(path, document.buffer().text()); !written) note_ = written.error();
-    }
 }
 
 void Program::ask_close() {
@@ -1259,7 +1064,7 @@ void Program::ask_close() {
     if (answer == ui::UnsavedAnswer::Cancel) return;
     if (answer == ui::UnsavedAnswer::Save) {
         save(path);
-        if (workspace_.unsaved(path)) return;
+        if (files_.unsaved(path)) return;
     }
     Group& group = groups_[active_];
     const auto found = std::ranges::find(group.tabs, path, &Tab::path);
@@ -1271,10 +1076,9 @@ void Program::ask_quit() {
         quit_asked_ = false;
         quit_paths_.clear();
         quit_items_.clear();
-        for (const std::filesystem::path& path : workspace_.files()) {
-            if (!workspace_.unsaved(path)) continue;
+        for (const std::filesystem::path& path : files_.unsaved_files()) {
             quit_paths_.push_back(path);
-            quit_items_.push_back(listed(path, workspace_.root(), {}));
+            quit_items_.push_back(listed(path, files_.root(), {}));
         }
         if (!quit_items_.empty()) ui::open_dialog("##quit", {dialog_at_, 0.5f});
     }
@@ -1296,12 +1100,12 @@ void Program::ask_quit() {
         if (answer == ui::UnsavedAnswer::Save && items[i].save) {
             save(paths[i]);
             // A file that couldn't be saved keeps the program open.
-            if (workspace_.unsaved(paths[i])) {
+            if (files_.unsaved(paths[i])) {
                 leaving_for_.reset();
                 return;
             }
         } else {
-            forget_kept(paths[i]);
+            files_.forget_kept(paths[i]);
         }
     }
     if (leaving_for_) {
@@ -1312,16 +1116,16 @@ void Program::ask_quit() {
 }
 
 void Program::ask_recover() {
-    if (!recovery_) return;
+    if (!files_.keeps_work()) return;
     if (!recover_looked_) {
         recover_looked_ = true;
-        recovering_ = recovery_->kept();
+        recovering_ = files_.kept_from_before();
         for (const Recovery::Kept& kept : recovering_) {
             const std::optional<std::size_t> changed = lines_changed(kept.path, kept.bytes);
             const std::string more = !changed        ? std::string("no longer on disk")
                                      : *changed == 1 ? std::string("1 line changed")
                                                      : std::format("{} lines changed", *changed);
-            recover_items_.push_back(listed(kept.path, workspace_.root(), more));
+            recover_items_.push_back(listed(kept.path, files_.root(), more));
         }
         if (!recovering_.empty()) ui::open_dialog("##recover", {dialog_at_, 0.5f});
     }
@@ -1338,10 +1142,10 @@ void Program::ask_recover() {
     for (std::size_t i = 0; i < kept.size(); ++i) {
         if (answer == ui::RecoverAnswer::Recover && items[i].save) {
             open(kept[i].path);
-            if (workspace_.find(kept[i].path) == nullptr) continue;
-            if (const ftk::Result<> put = workspace_.set_text(kept[i].path, kept[i].bytes); !put) note_ = put.error();
+            if (files_.workspace().find(kept[i].path) == nullptr) continue;
+            (void)files_.put_back(kept[i].path, kept[i].bytes);
         } else {
-            recovery_->forget(kept[i].path);
+            files_.discard_kept(kept[i].path);
         }
     }
 }
