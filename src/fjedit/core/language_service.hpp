@@ -238,7 +238,10 @@ public:
     [[nodiscard]] virtual const std::vector<Diagnostic>& diagnostics(const std::filesystem::path& path) = 0;
 
     /// The colours it knows for the file at `path`, for its document as it
-    /// is now; nothing when it knows none, or none that still fit.
+    /// is now; nothing when it knows none, or none that still fit. Colours
+    /// that change come as another object or with the document's version
+    /// changed, so what is worked out from them (the brackets' levels)
+    /// holds while both stay.
     [[nodiscard]] virtual const SemanticTokens* tokens(const std::filesystem::path& path) = 0;
 
     /// The colour values written in the file at `path`, in order, where they

@@ -6,6 +6,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <span>
+#include <string>
+#include <vector>
+
 using namespace fjedit;
 
 namespace {
@@ -21,9 +25,65 @@ struct Text {
     [[nodiscard]] std::optional<BracketPair> bracket(Position at) const {
         return matching_bracket(buffer, syntax, at);
     }
+
+    /// The text with each bracket's level after it, `!` for one without a
+    /// pair: "f(0x)0". `named` is a language service's tokens.
+    [[nodiscard]] std::string levelled(std::span<const std::vector<Token>> named = {}) const {
+        const BracketLevels levels = bracket_levels(buffer, syntax, named);
+        std::string out;
+        for (std::size_t line = 0; line < buffer.line_count(); ++line) {
+            if (line > 0) out += '\n';
+            const std::string_view text = buffer.line(line);
+            const std::span<const LeveledBracket> brackets = levels.on_line(line);
+            std::size_t next = 0;
+            for (std::size_t byte = 0; byte < text.size(); ++byte) {
+                out += text[byte];
+                if (next < brackets.size() && brackets[next].at.byte == byte) {
+                    out += brackets[next].level ? std::to_string(*brackets[next].level) : "!";
+                    ++next;
+                }
+            }
+        }
+        return out;
+    }
 };
 
 } // namespace
+
+TEST_CASE("Brackets of every kind count in one depth", "[structure][levels]") {
+    REQUIRE(Text("f(a[b]) {}").levelled() == "f(0a[1b]1)0 {0}0");
+}
+
+TEST_CASE("Levels run on across lines", "[structure][levels]") {
+    REQUIRE(Text("a {\n  b(c[\n  ]);\n}").levelled() == "a {0\n  b(1c[2\n  ]2)1;\n}0");
+}
+
+TEST_CASE("Brackets in strings and comments are not counted", "[structure][levels]") {
+    REQUIRE(Text("s = \"(\" + f(x); // )").levelled() == "s = \"(\" + f(0x)0; // )");
+}
+
+TEST_CASE("A bracket without a pair has no level and leaves the others theirs", "[structure][levels]") {
+    REQUIRE(Text("if (a && (b) {\n}").levelled() == "if (!a && (0b)0 {0\n}0");
+    REQUIRE(Text("f(x))").levelled() == "f(0x)0)!");
+}
+
+TEST_CASE("A closer pairs with the nearest opener of its kind, those opened after it with none",
+          "[structure][levels]") {
+    REQUIRE(Text("{ ( }").levelled() == "{0 (! }0");
+}
+
+TEST_CASE("Angle brackets count where a language service names them", "[structure][levels]") {
+    const auto bracket = [](std::size_t byte) { return Token{.begin = byte, .end = byte + 1, .kind = TokenKind::Bracket}; };
+    const Text text("std::vector<std::pair<int, float>> v; bool b = 1 < 2;");
+    const std::vector<std::vector<Token>> named{{bracket(11), bracket(21), bracket(32), bracket(33)}};
+    REQUIRE(text.levelled(named) == "std::vector<0std::pair<1int, float>1>0 v; bool b = 1 < 2;");
+    REQUIRE(text.levelled() == "std::vector<std::pair<int, float>> v; bool b = 1 < 2;");
+}
+
+TEST_CASE("A line past the text has no brackets", "[structure][levels]") {
+    const Text text("f()");
+    REQUIRE(bracket_levels(text.buffer, text.syntax).on_line(3).empty());
+}
 
 TEST_CASE("A bracket after the caret finds its pair", "[structure]") {
     const Text text("f(a, g(b))");

@@ -322,8 +322,10 @@ std::vector<TokenKind> token_kinds(const Json& token_types) {
             kind = TokenKind::Uniform;
         } else if (name == "builtin") {
             kind = TokenKind::Builtin;
-        } else if (name == "operator" || name == "bracket") {
+        } else if (name == "operator") {
             kind = TokenKind::Punctuation;
+        } else if (name == "bracket") {
+            kind = TokenKind::Bracket;
         } else if (name == "keyword" || name == "modifier") {
             kind = TokenKind::Keyword;
         } else if (name == "comment") {

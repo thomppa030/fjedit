@@ -31,8 +31,9 @@ inline Colours colours(const fjedit::Lexer& lexer, std::string_view line, const 
 template <>
 struct Catch::StringMaker<fjedit::TokenKind> {
     static std::string convert(fjedit::TokenKind kind) {
-        constexpr const char* NAMES[] = {"Text",   "Keyword",     "Type",   "Function", "String",  "Number",
-                                         "Comment", "Meta", "Punctuation", "Member", "Uniform", "Builtin"};
+        constexpr const char* NAMES[] = {"Text",    "Keyword", "Type",        "Function", "String",  "Number",
+                                         "Comment", "Meta",    "Punctuation", "Member",   "Uniform", "Builtin",
+                                         "Bracket"};
         return NAMES[static_cast<std::size_t>(kind)];
     }
 };

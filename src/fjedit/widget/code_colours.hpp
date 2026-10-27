@@ -20,7 +20,8 @@ namespace fjedit {
     case TokenKind::Number: return theme::code_number();
     case TokenKind::Comment: return theme::code_comment();
     case TokenKind::Meta: return theme::code_meta();
-    case TokenKind::Punctuation: return theme::code_punctuation();
+    case TokenKind::Punctuation:
+    case TokenKind::Bracket: return theme::code_punctuation();
     case TokenKind::Member:
     case TokenKind::Uniform: return theme::code_member();
     case TokenKind::Builtin: return theme::code_builtin();

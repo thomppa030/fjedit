@@ -1,5 +1,6 @@
 #include "fjedit/core/language.hpp"
 #include "fjedit/core/vim/notation.hpp"
+#include "fjedit/widget/code_colours.hpp"
 #include "fjedit/widget/code_view.hpp"
 #include "fjedit/widget/completion.hpp"
 #include "fjedit/widget/minimap.hpp"
@@ -168,6 +169,10 @@ TEST_CASE("Tab indents, and the keyboard stays with the view", "[code_view]") {
     e.h.press(Key::Tab);
     e.h.type("y");
     REQUIRE(e.text() == "x   y");
+}
+
+TEST_CASE("A template's angle brackets are coloured as punctuation", "[code_view]") {
+    REQUIRE(code_colour(TokenKind::Bracket) == code_colour(TokenKind::Punctuation));
 }
 
 TEST_CASE("Text typed with Ctrl is a shortcut's, with Ctrl and Alt AltGr's", "[code_view]") {

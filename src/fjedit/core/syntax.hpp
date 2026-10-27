@@ -46,6 +46,9 @@ enum class TokenKind : uint8_t {
     /// A name the engine gives a shader (ALBEDO, NdotL). Only a language
     /// service knows these.
     Builtin,
+    /// A template's or a cast's angle bracket, which only a language
+    /// service tells from a less-than; coloured as punctuation.
+    Bracket,
 };
 
 /// A stretch of one line: bytes `begin` up to `end`. A lexer leaves out

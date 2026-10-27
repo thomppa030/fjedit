@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,37 @@ struct BracketPair {
 /// one kind count against each other; the search gives up past 10,000
 /// lines.
 [[nodiscard]] std::optional<BracketPair> matching_bracket(const Buffer& buffer, const Syntax& syntax, Position at);
+
+/// A bracket and how deep it stands: how many pairs hold it, or nothing
+/// when it pairs with none.
+struct LeveledBracket {
+    Position at;
+    std::optional<uint32_t> level;
+
+    bool operator==(const LeveledBracket&) const = default;
+};
+
+/// Every bracket of a text in order, with its level (bracket_levels()).
+struct BracketLevels {
+    std::vector<LeveledBracket> brackets;
+    /// Where each line's brackets begin in `brackets`, and after the last
+    /// line, where they end.
+    std::vector<std::size_t> line_starts;
+
+    /// The brackets of line `line`, in order; none for a line past the text
+    /// they were counted in.
+    [[nodiscard]] std::span<const LeveledBracket> on_line(std::size_t line) const;
+};
+
+/// The brackets of `buffer` paired as a parser pairs them, and given levels
+/// as Rainbow Brackets counts them: ( [ { outside strings and comments, and
+/// the angle brackets `named` gives TokenKind::Bracket (a language service's
+/// tokens for each line), every kind in one depth. A closer pairs with the
+/// nearest opener of its kind still open; the openers opened after that one
+/// are left without a pair, as is a closer with none open. A paired
+/// bracket's level is how many pairs hold it.
+[[nodiscard]] BracketLevels bracket_levels(const Buffer& buffer, const Syntax& syntax,
+                                           std::span<const std::vector<Token>> named = {});
 
 /// The nearest `open` bracket before `at` that nothing between it and `at`
 /// closes: the opener of the block `at` is in. Brackets in strings and

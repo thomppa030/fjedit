@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <iterator>
+#include <limits>
 #include <map>
 #include <string>
 #include <string_view>
@@ -27,6 +29,30 @@ std::optional<Kind> bracket_kind(char c) {
         case '(': case ')': return Kind{'(', ')'};
         case '[': case ']': return Kind{'[', ']'};
         case '{': case '}': return Kind{'{', '}'};
+        default: return std::nullopt;
+    }
+}
+
+// Which of ( [ { < a bracket is and whether it opens, for pairing every kind
+// in one depth.
+struct Side {
+    uint8_t kind;
+    bool opens;
+};
+
+// The kind Side gives angle brackets, which only a language service names.
+constexpr uint8_t ANGLE = 3;
+
+std::optional<Side> side_of(char c) {
+    switch (c) {
+        case '(': return Side{0, true};
+        case ')': return Side{0, false};
+        case '[': return Side{1, true};
+        case ']': return Side{1, false};
+        case '{': return Side{2, true};
+        case '}': return Side{2, false};
+        case '<': return Side{ANGLE, true};
+        case '>': return Side{ANGLE, false};
         default: return std::nullopt;
     }
 }
@@ -326,6 +352,71 @@ std::optional<BracketPair> matching_bracket(const Buffer& buffer, const Syntax& 
     const std::optional<Position> pair = pair_of(buffer, syntax, bracket, *kind);
     if (!pair) return std::nullopt;
     return bracket < *pair ? BracketPair{bracket, *pair} : BracketPair{*pair, bracket};
+}
+
+std::span<const LeveledBracket> BracketLevels::on_line(std::size_t line) const {
+    if (line + 1 >= line_starts.size()) return {};
+    return std::span(brackets).subspan(line_starts[line], line_starts[line + 1] - line_starts[line]);
+}
+
+BracketLevels bracket_levels(const Buffer& buffer, const Syntax& syntax, std::span<const std::vector<Token>> named) {
+    constexpr std::string_view BRACKETS = "()[]{}<>";
+    constexpr std::size_t NONE = std::numeric_limits<std::size_t>::max();
+    BracketLevels levels;
+    levels.line_starts.reserve(buffer.line_count() + 1);
+    // For each bracket, by its place in `levels.brackets`: its side, and
+    // the bracket it pairs with.
+    std::vector<Side> sides;
+    std::vector<std::size_t> mates;
+    // The openers still open, the innermost last.
+    std::vector<std::size_t> open;
+    for (std::size_t line = 0; line < buffer.line_count(); ++line) {
+        levels.line_starts.push_back(levels.brackets.size());
+        const std::string_view text = buffer.line(line);
+        const std::span<const Token> lexed = syntax.tokens(line);
+        const std::span<const Token> service = line < named.size() ? std::span<const Token>(named[line]) : std::span<const Token>();
+        std::size_t lexed_at = 0;
+        std::size_t service_at = 0;
+        for (std::size_t byte = text.find_first_of(BRACKETS); byte != std::string_view::npos;
+             byte = text.find_first_of(BRACKETS, byte + 1)) {
+            const Side side = *side_of(text[byte]);
+            if (side.kind == ANGLE) {
+                while (service_at < service.size() && service[service_at].end <= byte) ++service_at;
+                if (service_at == service.size() || service[service_at].begin > byte ||
+                    service[service_at].kind != TokenKind::Bracket) {
+                    continue;
+                }
+            } else {
+                while (lexed_at < lexed.size() && lexed[lexed_at].end <= byte) ++lexed_at;
+                if (lexed_at < lexed.size() && lexed[lexed_at].begin <= byte &&
+                    (lexed[lexed_at].kind == TokenKind::String || lexed[lexed_at].kind == TokenKind::Comment)) {
+                    continue;
+                }
+            }
+            const std::size_t index = levels.brackets.size();
+            levels.brackets.push_back({.at = {line, byte}, .level = std::nullopt});
+            sides.push_back(side);
+            mates.push_back(NONE);
+            if (side.opens) {
+                open.push_back(index);
+                continue;
+            }
+            const auto opener = std::find_if(open.rbegin(), open.rend(), [&](std::size_t o) { return sides[o].kind == side.kind; });
+            if (opener == open.rend()) continue;
+            mates[*opener] = index;
+            mates[index] = *opener;
+            open.erase(std::next(opener).base(), open.end());
+        }
+    }
+    levels.line_starts.push_back(levels.brackets.size());
+
+    // Paired brackets nest, so the pairs open as one goes give each its level.
+    uint32_t depth = 0;
+    for (std::size_t index = 0; index < levels.brackets.size(); ++index) {
+        if (mates[index] == NONE) continue;
+        levels.brackets[index].level = sides[index].opens ? depth++ : --depth;
+    }
+    return levels;
 }
 
 std::optional<std::string> enclosing_function(const Buffer& buffer, const Syntax& syntax, std::size_t line) {

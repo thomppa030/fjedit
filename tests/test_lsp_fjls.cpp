@@ -34,9 +34,10 @@ std::string variable(const char* name) {
 }
 
 std::string_view name_of(TokenKind kind) {
-    constexpr std::array<std::string_view, 12> NAMES = {"Text",    "Keyword", "Type",        "Function",
+    constexpr std::array<std::string_view, 13> NAMES = {"Text",    "Keyword", "Type",        "Function",
                                                         "String",  "Number",  "Comment",     "Meta",
-                                                        "Punctuation", "Member", "Uniform", "Builtin"};
+                                                        "Punctuation", "Member", "Uniform", "Builtin",
+                                                        "Bracket"};
     return NAMES.at(static_cast<std::size_t>(kind));
 }
 
