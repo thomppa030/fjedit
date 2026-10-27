@@ -121,6 +121,17 @@ TEST_CASE("Vim's Ctrl-N and Ctrl-P open the completion list in insert mode, then
     CHECK_FALSE(keys.find(Keymap::VIM_NORMAL, std::vector<Chord>{ctrl(Key::N)}).command);
 }
 
+TEST_CASE("Ctrl I opens the completion list without Vim; Ctrl Space is the program's, in any mode", "[keymap]") {
+    const Keymap keys = Keymap::standard();
+    CHECK(keys.find(Keymap::EDITING, std::vector<Chord>{ctrl(Key::I)}).command == "completion.open");
+    // With Vim, Ctrl I steps forward through the jumps, as Vim's does.
+    CHECK_FALSE(keys.find(Keymap::VIM_NORMAL, std::vector<Chord>{ctrl(Key::I)}).command);
+    CHECK_FALSE(keys.find(Keymap::VIM_INSERT, std::vector<Chord>{ctrl(Key::I)}).command);
+    for (const std::string_view mode : {Keymap::EDITING, Keymap::VIM_NORMAL, Keymap::VIM_INSERT}) {
+        CHECK_FALSE(keys.find(mode, std::vector<Chord>{ctrl(Key::Space)}).command);
+    }
+}
+
 TEST_CASE("Ctrl Shift C and V copy and paste as a terminal's, with Vim on and off", "[keymap]") {
     const Keymap keys = Keymap::standard();
     const std::vector<Chord> copy{{.key = Key::C, .modifiers = {.ctrl = true, .shift = true}}};

@@ -41,6 +41,7 @@ std::span<const CodeCommand> own_commands() {
         {.name = "file.open_folder", .title = "Open folder"},
         {.name = "file.quit", .title = "Quit", .key = Chord{.key = Key::Q, .modifiers = {.ctrl = true}}},
         {.name = "edit.preferences", .title = "Preferences", .key = Chord{.key = Key::Comma, .modifiers = {.ctrl = true}}},
+        {.name = "view.files", .title = "Files", .key = Chord{.key = Key::Space, .modifiers = {.ctrl = true}}},
     };
     return COMMANDS;
 }
@@ -59,7 +60,7 @@ std::optional<ftk::SvgPicture> load_mark(const std::filesystem::path& brand) {
 
 } // namespace
 
-Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOptions options)
+Program::Program(std::filesystem::path root, Preferences& preferences, WindowLayout& layout, ProgramOptions options)
     : files_(std::move(root), preferences,
              {.recovery = std::move(options.recovery), .services = std::move(options.services), .wake = std::move(options.wake)}),
       code_(files_, preferences,
@@ -70,7 +71,7 @@ Program::Program(std::filesystem::path root, Preferences& preferences, ProgramOp
              .mark = load_mark(options.brand),
              .device = options.device,
              .program_name = "fjedit"}),
-      tree_(files_.root()), preferences_(preferences), pick_folder_(std::move(options.pick_folder)),
+      tree_(files_.root()), preferences_(preferences), layout_(layout), pick_folder_(std::move(options.pick_folder)),
       desktop_entry_(std::move(options.desktop_entry)), desktop_data_home_(std::move(options.desktop_data_home)) {}
 
 void Program::update_files(double now) {
@@ -137,6 +138,9 @@ bool Program::run(std::string_view command) {
         (void)ask_to_quit();
     } else if (command == "edit.preferences") {
         preferences_window_.open();
+    } else if (command == "view.files") {
+        layout_.files = !layout_.files;
+        ui::settings_changed();
     } else {
         return code_.run(command);
     }
@@ -173,8 +177,12 @@ void Program::draw() {
     const float height = work.size.y - theme::STATUS_BAR;
     ui::next_window_place(work.pos, {work.size.x, height});
     (void)ui::begin_host_window("##fjedit", {.scrollbar = false, .to_front = false});
-    if (auto side = ui::Pane("##side", {SIDE_WIDTH, height})) draw_side();
-    ui::same_line(0.0f);
+    // The side pane with the files, while it shows; the code takes the
+    // window's width while it doesn't.
+    if (layout_.files) {
+        if (auto side = ui::Pane("##side", {SIDE_WIDTH, height})) draw_side();
+        ui::same_line(0.0f);
+    }
     if (auto editor = ui::Region("##editor", {0.0f, height}, {.wheel_scrolls = false})) {
         const glm::vec2 code_min = ui::cursor();
         const glm::vec2 code_max = code_min + ui::space_left();
@@ -230,7 +238,11 @@ void Program::draw_menus() {
          }},
         {.label = "View",
          .entries = [&] {
-             return std::vector<ui::MenuEntry>{{.label = "Minimap",
+             return std::vector<ui::MenuEntry>{{.label = "Files",
+                                                .shortcut = code_.shortcut("view.files"),
+                                                .checked = layout_.files,
+                                                .chosen = [this] { (void)run("view.files"); }},
+                                               {.label = "Minimap",
                                                 .checked = preferences_.minimap,
                                                 .chosen = [this] {
                                                     preferences_.minimap = !preferences_.minimap;

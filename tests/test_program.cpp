@@ -37,6 +37,7 @@ constexpr ftk::ui::Modifiers CTRL{.ctrl = true};
 struct Running {
     TempFolder folder;
     Preferences preferences;
+    WindowLayout layout;
     std::unique_ptr<Program> program;
     ftk::test::KitHarness h{{1280.0f, 800.0f}};
 
@@ -90,7 +91,7 @@ struct Running {
                                .pick_folder = [this] { ++folders_picked; },
                                .brand = FJEDIT_BRAND};
         if (more) more(options, folder);
-        program = std::make_unique<Program>(folder.path, preferences, std::move(options));
+        program = std::make_unique<Program>(folder.path, preferences, layout, std::move(options));
         h.set_ui([this] { program->draw(); });
         h.step(3);
     }
@@ -1545,4 +1546,51 @@ TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in o
     run.h.type("'Z");
     run.h.step(2);
     CHECK(on_status_bar(run, ftk::theme::error()));
+}
+
+TEST_CASE("Ctrl Space and View Files show and hide the side pane, the code taking its room", "[program][layout]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    REQUIRE(run.h.find("coin.cpp", Role::TreeItem) != nullptr);
+    run.h.press(Key::Space, CTRL);
+    run.h.step(2);
+    CHECK_FALSE(run.layout.files);
+    CHECK(run.h.find("coin.cpp", Role::TreeItem) == nullptr);
+
+    const auto* files = run.menu_entry("View", "Files");
+    REQUIRE(files != nullptr);
+    run.h.click_at(files->rect.centre());
+    run.h.step(2);
+    CHECK(run.layout.files);
+    REQUIRE(run.h.find("coin.cpp", Role::TreeItem) != nullptr);
+
+    // With the keyboard in the code, Vim's or not, Ctrl Space is still the
+    // side pane's: the code binds it nowhere.
+    run.press_row("coin.cpp");
+    run.h.press(Key::Space, CTRL);
+    run.h.step(2);
+    CHECK_FALSE(run.layout.files);
+    CHECK_FALSE(run.program->files().unsaved(run.folder.path / "coin.cpp"));
+    run.program->preferences().vim = true;
+    run.h.step(2);
+    run.h.press(Key::Space, CTRL);
+    run.h.step(2);
+    CHECK(run.layout.files);
+}
+
+TEST_CASE("The window's layout is kept in the settings file and read back", "[program][layout]") {
+    WindowLayout kept{.files = false};
+    const ftk::ui::SettingsSection section = layout_section(kept);
+    const std::vector<ftk::ui::SettingsEntry> written = section.write();
+    REQUIRE(written.size() == 1);
+
+    WindowLayout read;
+    REQUIRE(read.files);
+    ftk::ui::SettingsSection reading = layout_section(read);
+    for (const std::string& line : written.front().lines) reading.read(written.front().name, line);
+    CHECK_FALSE(read.files);
+    reading.read(written.front().name, "Files=1");
+    CHECK(read.files);
+    // Another entry's lines are not its.
+    reading.read("Other", "Files=0");
+    CHECK(read.files);
 }

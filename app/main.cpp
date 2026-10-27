@@ -64,9 +64,10 @@ int run(const std::filesystem::path& folder) {
     }
     // fjell's files look as they do in fjell.
     fjedit::register_file_kinds();
-    // How this machine likes the code shown, and the folders opened lately,
-    // whatever folder is open.
+    // How this machine likes the code shown and the window laid out, and the
+    // folders opened lately, whatever folder is open.
     fjedit::Preferences preferences;
+    fjedit::WindowLayout layout;
     std::vector<std::string> recent_folders;
 
     // File > Open folder picks one in the kit's folder browser, a window of
@@ -90,7 +91,7 @@ int run(const std::filesystem::path& folder) {
         // The one before goes first, its servers and threads with it.
         program.reset();
         program = std::make_unique<fjedit::Program>(
-            root, preferences,
+            root, preferences, layout,
             fjedit::ProgramOptions{
                 .recovery = fjedit::Program::recovery_folder(root),
                 .services = std::nullopt,
@@ -114,10 +115,12 @@ int run(const std::filesystem::path& folder) {
         browser.on_selected.bind([&program](const std::string& path) { program->open_folder(path); });
 
     // fjedit's settings file, this machine's: where its windows were left,
-    // its preferences and the folders opened lately. The window's UI is the
-    // current one from here on, so the file read now places its windows.
+    // its preferences, its layout and the folders opened lately. The window's
+    // UI is the current one from here on, so the file read now places its
+    // windows.
     ftk::ui::core::set_current(&app.ui());
     ftk::ui::add_settings_section(fjedit::preferences_section(preferences));
+    ftk::ui::add_settings_section(fjedit::layout_section(layout));
     ftk::ui::add_settings_section(fjedit::recent_folders_section(recent_folders));
     const std::filesystem::path settings_folder = ftk::platform::config_dir() / "fjedit";
     std::filesystem::create_directories(settings_folder, error);

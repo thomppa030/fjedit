@@ -230,7 +230,10 @@ Keymap Keymap::standard() {
         keymap.bind(EDITING, {chord(Key::K, CTRL), binding.keys}, std::string(binding.command));
     }
     keymap.bind(FINDING, {chord(Key::Escape)}, "find.close");
-    keymap.bind(EDITING, {chord(Key::Space, CTRL)}, "completion.open");
+    // Completion opens by itself as a word or a member access is typed, and
+    // by hand with Ctrl I, as in VS Code: Ctrl Space is the program's, for
+    // its file tree.
+    keymap.bind(EDITING, {chord(Key::I, CTRL)}, "completion.open");
     keymap.bind(EDITING, {chord(Key::F12)}, "definition.go");
     keymap.bind(EDITING, {chord(Key::F2)}, "symbol.rename");
     keymap.bind(EDITING, {chord(Key::I, CTRL, SHIFT)}, "format.document");
@@ -258,7 +261,6 @@ Keymap Keymap::standard() {
     // The keys Vim gives no meaning that stay with it on (decision 4 of the
     // Vim plan).
     const Default with_vim[] = {
-        {chord(Key::Space, CTRL), "completion.open"},
         {chord(Key::F12), "definition.go"},
         {chord(Key::F2), "symbol.rename"},
         {chord(Key::I, CTRL, SHIFT), "format.document"},

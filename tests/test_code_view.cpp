@@ -1230,8 +1230,8 @@ TEST_CASE("Escape closes the list, and a click takes the entry clicked", "[code_
     REQUIRE(listed(c.e).empty());
     REQUIRE(c.e.document.buffer().line(1) == "    ro");
 
-    // Ctrl Space asks again; the second entry clicked.
-    c.e.h.press(Key::Space, CTRL);
+    // Ctrl I asks again; the second entry clicked.
+    c.e.h.press(Key::I, CTRL);
     c.e.h.step();
     c.answer({entry("rotate", TYPED_R, "1"), entry("roll", TYPED_R, "2")});
     const auto* roll = c.e.h.find("roll", ftk::ui::core::Role::TreeItem);

@@ -66,9 +66,10 @@ struct ProgramOptions {
 
 class Program {
 public:
-    /// The folder `root` open, the code shown as `preferences` say. They
-    /// outlive the program, as they outlive each folder opened in a window.
-    Program(std::filesystem::path root, Preferences& preferences, ProgramOptions options = {});
+    /// The folder `root` open, the code shown as `preferences` say and the
+    /// window laid out as `layout` says. They outlive the program, as they
+    /// outlive each folder opened in a window.
+    Program(std::filesystem::path root, Preferences& preferences, WindowLayout& layout, ProgramOptions options = {});
 
     // Its code area holds `this`: the program stays where it was made.
     Program(const Program&) = delete;
@@ -86,7 +87,7 @@ public:
                                                          const std::filesystem::path& brand);
 
     /// Every command the program runs by name: its code area's, then its
-    /// own (Open folder, Quit, Preferences).
+    /// own (Open folder, Quit, Preferences, the side pane's Files).
     [[nodiscard]] static std::span<const CodeCommand> commands();
 
     /// Draws a frame of the program, filling the window's work area.
@@ -127,6 +128,11 @@ public:
     /// preferences_section().
     [[nodiscard]] Preferences& preferences() { return preferences_; }
 
+    /// How its window is laid out: whether the side pane shows the files,
+    /// which View › Files and Ctrl Space change; a window keeps it in its
+    /// settings file through layout_section().
+    [[nodiscard]] const WindowLayout& layout() const { return layout_; }
+
     [[nodiscard]] const PreferencesWindow& preferences_window() const { return preferences_window_; }
 
 private:
@@ -151,6 +157,8 @@ private:
     // they are edited in.
     Preferences& preferences_;
     PreferencesWindow preferences_window_;
+    // How the window is laid out, which outlives the program.
+    WindowLayout& layout_;
     // Quitting, or leaving for another folder: asked for, the unsaved files
     // asked about while asked, the folder left for, and the answer given.
     bool quit_asked_{false};

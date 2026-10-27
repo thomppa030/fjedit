@@ -38,6 +38,13 @@ constexpr const char* FOLDERS_SECTION = "fjedit-folders";
 constexpr std::string_view FOLDERS_ENTRY = "Recent";
 constexpr std::string_view FOLDER_KEY = "Folder=";
 
+// The window's layout, in a section of its own, as
+//     [fjedit-layout][Window]
+//     Files=0
+constexpr const char* LAYOUT_SECTION = "fjedit-layout";
+constexpr std::string_view LAYOUT_ENTRY = "Window";
+constexpr std::string_view FILES_KEY = "Files=";
+
 // The window as sheet 39 first shows it.
 constexpr glm::vec2 SIZE{780.0f, 500.0f};
 
@@ -144,6 +151,18 @@ ui::SettingsSection recent_folders_section(std::vector<std::string>& folders) {
                 ui::SettingsEntry recent{.name = std::string(FOLDERS_ENTRY), .lines = {}};
                 for (const std::string& folder : folders) recent.lines.push_back(std::string(FOLDER_KEY) + folder);
                 return std::vector<ui::SettingsEntry>{std::move(recent)};
+            }};
+}
+
+ui::SettingsSection layout_section(WindowLayout& layout) {
+    return {.name = LAYOUT_SECTION,
+            .read = [&layout](std::string_view entry, std::string_view line) {
+                if (entry != LAYOUT_ENTRY || !line.starts_with(FILES_KEY)) return;
+                layout.files = line.substr(FILES_KEY.size()) != "0";
+            },
+            .write = [&layout] {
+                return std::vector<ui::SettingsEntry>{
+                    {.name = std::string(LAYOUT_ENTRY), .lines = {std::string(FILES_KEY) + (layout.files ? "1" : "0")}}};
             }};
 }
 

@@ -22,6 +22,16 @@ namespace fjedit {
 /// read twice is kept once. `folders` outlives the section.
 [[nodiscard]] ftk::ui::SettingsSection recent_folders_section(std::vector<std::string>& folders);
 
+/// How fjedit's window is laid out on this machine, whatever folder is open:
+/// whether its side pane shows the files.
+struct WindowLayout {
+    bool files{true};
+};
+
+/// The settings file's section that keeps `layout`. `layout` outlives the
+/// section.
+[[nodiscard]] ftk::ui::SettingsSection layout_section(WindowLayout& layout);
+
 /// How a language server is, for the Preferences window to show: its
 /// status, once it has been started, and for clangd the compile commands it
 /// reads in the folder open, when it finds some.
