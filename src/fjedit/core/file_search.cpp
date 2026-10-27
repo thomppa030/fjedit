@@ -109,10 +109,9 @@ std::vector<FileHit> search_files(std::span<const std::filesystem::path> files, 
             if (!bytes) continue;
             read = std::move(*bytes);
         }
-        const Buffer buffer(held != open.end() ? std::string_view(held->second) : std::string_view(read));
-        for (const Span& span : find_all(buffer, needle, options)) {
-            if (hits.size() >= limit) break;
-            hits.push_back({.path = path, .span = span, .line = std::string(buffer.line(span.from.line))});
+        const std::string_view text = held != open.end() ? std::string_view(held->second) : std::string_view(read);
+        for (const TextMatch& match : find_in_text(text, needle, options, limit - hits.size())) {
+            hits.push_back({.path = path, .span = match.span, .line = std::string(match.line)});
         }
     }
     return hits;

@@ -9,8 +9,6 @@ namespace fjedit {
 
 namespace {
 
-constexpr std::string_view BYTE_ORDER_MARK = "\xEF\xBB\xBF";
-
 bool continuation(char c) {
     return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
 }

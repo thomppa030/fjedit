@@ -41,10 +41,10 @@ bool word_after(std::string_view line, std::size_t at) {
     return at < line.size() && char_kind(ftk::utf8::next(line, at)) == CharKind::Word;
 }
 
-// The places on a line where a match may begin: where the needle's first
-// byte is, in either case when case doesn't matter. Each is found by a
-// scan of its own and kept until the walk passes it, so a long line is
-// scanned once whatever the walk asks.
+// The places on a line, or in a whole text, where a match may begin: where
+// the needle's first byte is, in either case when case doesn't matter. Each
+// is found by a scan of its own and kept until the walk passes it, so a
+// long line is scanned once whatever the walk asks.
 class Starts {
 public:
     Starts(std::string_view line, char first, bool match_case) : line_(line) {
@@ -90,18 +90,82 @@ std::vector<std::string_view> pieces(std::string_view needle) {
     return out;
 }
 
-// Whether `needle`, cut into `parts`, occurs from `from`.
-bool matches_at(const Buffer& buffer, const std::vector<std::string_view>& parts, Position from, bool match_case) {
+// A walk down a text's lines, broken where Buffer breaks them: at \n, \r\n
+// or a lone \r. Each break is looked for once, as the walk comes to it, so
+// a walk to the end reads the text once.
+class LineWalk {
+public:
+    explicit LineWalk(std::string_view text) : text_(text), lf_(text.find('\n')), cr_(text.find('\r')) {}
+
+    // The line it is on: its index, the byte of the text it begins at, and
+    // its text without its break.
+    [[nodiscard]] std::size_t index() const { return index_; }
+    [[nodiscard]] std::size_t begin() const { return begin_; }
+    [[nodiscard]] std::string_view line() { return text_.substr(begin_, end() - begin_); }
+
+    // On to the next line; false on the last, which no break ends.
+    bool next() {
+        const std::size_t at = end();
+        if (at == text_.size()) return false;
+        const bool crlf = text_[at] == '\r' && at + 1 < text_.size() && text_[at + 1] == '\n';
+        begin_ = at + (crlf ? 2 : 1);
+        ++index_;
+        return true;
+    }
+
+    // On to the line byte `at` is on, from the line it is on or one before.
+    void to(std::size_t at) {
+        while (end() < at) {
+            if (!next()) return;
+        }
+    }
+
+private:
+    // Where the line it is on ends: at its break, or at the text's end.
+    std::size_t end() {
+        if (lf_ < begin_) lf_ = text_.find('\n', begin_);
+        if (cr_ < begin_) cr_ = text_.find('\r', begin_);
+        return std::min({lf_, cr_, text_.size()});
+    }
+
+    std::string_view text_;
+    std::size_t index_{0};
+    std::size_t begin_{0};
+    // The first \n and \r at or after the line's start, or npos.
+    std::size_t lf_;
+    std::size_t cr_;
+};
+
+// A text's lines as a Buffer holds them, viewed where they are in it.
+class TextLines {
+public:
+    explicit TextLines(std::string_view text) {
+        LineWalk walk(text);
+        lines_.push_back(walk.line());
+        while (walk.next()) lines_.push_back(walk.line());
+    }
+
+    [[nodiscard]] std::size_t line_count() const { return lines_.size(); }
+    [[nodiscard]] std::string_view line(std::size_t index) const { return lines_[index]; }
+
+private:
+    std::vector<std::string_view> lines_;
+};
+
+// Whether `needle`, cut into `parts`, occurs from `from` in `lines`, a
+// Buffer or TextLines.
+template <typename Lines>
+bool matches_at(const Lines& lines, const std::vector<std::string_view>& parts, Position from, bool match_case) {
     const std::size_t last = from.line + parts.size() - 1;
-    if (last >= buffer.line_count()) return false;
-    const std::string_view first = buffer.line(from.line).substr(from.byte);
+    if (last >= lines.line_count()) return false;
+    const std::string_view first = lines.line(from.line).substr(from.byte);
     if (parts.size() == 1) return first.size() >= parts[0].size() && same(first.substr(0, parts[0].size()), parts[0], match_case);
 
     if (!same(first, parts.front(), match_case)) return false;
     for (std::size_t i = 1; i + 1 < parts.size(); ++i) {
-        if (!same(buffer.line(from.line + i), parts[i], match_case)) return false;
+        if (!same(lines.line(from.line + i), parts[i], match_case)) return false;
     }
-    const std::string_view end = buffer.line(last);
+    const std::string_view end = lines.line(last);
     return end.size() >= parts.back().size() && same(end.substr(0, parts.back().size()), parts.back(), match_case);
 }
 
@@ -158,36 +222,34 @@ bool whole_word_at(std::string_view line, std::size_t from, std::size_t to) {
     return !(word_before(line, to) && word_after(line, to));
 }
 
-std::vector<Span> regex_in_lines(const Buffer& buffer, std::string_view pattern, std::size_t first_line,
-                                 std::size_t end_line, FindOptions options) {
+template <typename Lines>
+std::vector<Span> regex_in_lines(const Lines& lines, std::string_view pattern, std::size_t first_line,
+                                 std::size_t end_line, FindOptions options, std::size_t limit) {
     std::vector<Span> found;
     const std::optional<std::regex> expression = compiled(pattern, options.match_case);
     if (!expression) return found;
-    for (std::size_t line = first_line; line < end_line; ++line) {
-        const std::string_view text = buffer.line(line);
+    for (std::size_t line = first_line; line < end_line && found.size() < limit; ++line) {
+        const std::string_view text = lines.line(line);
         const auto group = static_cast<int>(options.group);
         each_match(text, *expression, options, [&](const auto& match) {
             const auto from = static_cast<std::size_t>(match.position(group));
             const std::size_t to = from + static_cast<std::size_t>(match.length(group));
-            if (options.whole_word && !whole_word_at(text, from, to)) return;
+            if (found.size() >= limit || (options.whole_word && !whole_word_at(text, from, to))) return;
             found.push_back({{line, from}, {line, to}});
         });
     }
     return found;
 }
 
-} // namespace
-
-std::vector<Span> find_all(const Buffer& buffer, std::string_view needle, FindOptions options) {
-    return find_in_lines(buffer, needle, 0, buffer.line_count(), options);
-}
-
-std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, std::size_t first_line,
-                                std::size_t end_line, FindOptions options) {
+// The first `limit` places `needle` occurs that begin on lines `first_line`
+// up to `end_line` of `lines`, a Buffer or TextLines.
+template <typename Lines>
+std::vector<Span> in_lines(const Lines& lines, std::string_view needle, std::size_t first_line, std::size_t end_line,
+                           FindOptions options, std::size_t limit) {
     std::vector<Span> found;
-    end_line = std::min(end_line, buffer.line_count());
+    end_line = std::min(end_line, lines.line_count());
     if (needle.empty()) return found;
-    if (options.regex) return regex_in_lines(buffer, needle, first_line, end_line, options);
+    if (options.regex) return regex_in_lines(lines, needle, first_line, end_line, options, limit);
     const std::vector<std::string_view> parts = pieces(needle);
     const bool word_first = word_after(needle, 0);
     const bool word_last = word_before(needle, needle.size());
@@ -196,20 +258,21 @@ std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, s
     // ends with doesn't carry on a word of the text.
     auto apart = [&](Position from, Position to) {
         if (!options.whole_word) return true;
-        if (word_first && word_before(buffer.line(from.line), from.byte)) return false;
-        return !(word_last && word_after(buffer.line(to.line), to.byte));
+        if (word_first && word_before(lines.line(from.line), from.byte)) return false;
+        return !(word_last && word_after(lines.line(to.line), to.byte));
     };
 
     // A needle within a line: from each place on each line where its first
     // byte is, and after a match from its end.
     if (parts.size() == 1) {
-        for (std::size_t index = first_line; index < end_line; ++index) {
-            const std::string_view line = buffer.line(index);
+        for (std::size_t index = first_line; index < end_line && found.size() < limit; ++index) {
+            const std::string_view line = lines.line(index);
             Starts starts(line, needle.front(), options.match_case);
             std::size_t from = 0;
-            for (std::size_t start = starts.next(from); start != std::string_view::npos; start = starts.next(from)) {
+            for (std::size_t start = starts.next(from); start != std::string_view::npos && found.size() < limit;
+                 start = starts.next(from)) {
                 const Position at{index, start};
-                if (!continuation(line[start]) && matches_at(buffer, parts, at, options.match_case)) {
+                if (!continuation(line[start]) && matches_at(lines, parts, at, options.match_case)) {
                     const Position end = match_end(parts, at);
                     if (apart(at, end)) {
                         found.push_back({at, end});
@@ -226,12 +289,12 @@ std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, s
     // A needle across lines can begin only where its first piece ends a
     // line; after a match, the next is looked for from its end.
     Position from{first_line, 0};
-    while (from.line < end_line) {
-        const std::string_view line = buffer.line(from.line);
+    while (from.line < end_line && found.size() < limit) {
+        const std::string_view line = lines.line(from.line);
         if (line.size() >= parts.front().size()) {
             const Position at{from.line, line.size() - parts.front().size()};
             const bool boundary = at.byte == line.size() || !continuation(line[at.byte]);
-            if (at.byte >= from.byte && boundary && matches_at(buffer, parts, at, options.match_case)) {
+            if (at.byte >= from.byte && boundary && matches_at(lines, parts, at, options.match_case)) {
                 const Position end = match_end(parts, at);
                 if (apart(at, end)) {
                     found.push_back({at, end});
@@ -241,6 +304,67 @@ std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, s
             }
         }
         from = {from.line + 1, 0};
+    }
+    return found;
+}
+
+// A needle within a line, looked for in the whole of `text` at once rather
+// than line by line: from each place its first byte is, and after a match
+// from its end. Only a match is walked to its line, where a whole word is
+// judged as find_all() judges it.
+std::vector<TextMatch> in_text(std::string_view text, std::string_view needle, FindOptions options, std::size_t limit) {
+    std::vector<TextMatch> found;
+    // No line holds a \r.
+    if (needle.find('\r') != std::string_view::npos) return found;
+    const bool word_first = word_after(needle, 0);
+    const bool word_last = word_before(needle, needle.size());
+    LineWalk lines(text);
+    Starts starts(text, needle.front(), options.match_case);
+    std::size_t from = 0;
+    for (std::size_t start = starts.next(from); start != std::string_view::npos && found.size() < limit;
+         start = starts.next(from)) {
+        from = start + 1;
+        if (continuation(text[start]) || text.size() - start < needle.size() ||
+            !same(text.substr(start, needle.size()), needle, options.match_case)) {
+            continue;
+        }
+        lines.to(start);
+        const std::string_view line = lines.line();
+        const Position at{lines.index(), start - lines.begin()};
+        const Position end{at.line, at.byte + needle.size()};
+        if (options.whole_word &&
+            ((word_first && word_before(line, at.byte)) || (word_last && word_after(line, end.byte)))) {
+            continue;
+        }
+        found.push_back({{at, end}, line});
+        from = start + needle.size();
+    }
+    return found;
+}
+
+} // namespace
+
+std::vector<Span> find_all(const Buffer& buffer, std::string_view needle, FindOptions options) {
+    return find_in_lines(buffer, needle, 0, buffer.line_count(), options);
+}
+
+std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, std::size_t first_line,
+                                std::size_t end_line, FindOptions options) {
+    return in_lines(buffer, needle, first_line, end_line, options, std::numeric_limits<std::size_t>::max());
+}
+
+std::vector<TextMatch> find_in_text(std::string_view text, std::string_view needle, FindOptions options,
+                                    std::size_t limit) {
+    if (text.starts_with(BYTE_ORDER_MARK)) text.remove_prefix(BYTE_ORDER_MARK.size());
+    if (needle.empty() || limit == 0) return {};
+    if (!options.regex && needle.find('\n') == std::string_view::npos) return in_text(text, needle, options, limit);
+
+    // A regular expression, or a needle across lines: line by line, as
+    // find_all() looks, on views of the text's lines.
+    const TextLines lines(text);
+    std::vector<TextMatch> found;
+    for (const Span& span : in_lines(lines, needle, 0, lines.line_count(), options, limit)) {
+        found.push_back({span, lines.line(span.from.line)});
     }
     return found;
 }

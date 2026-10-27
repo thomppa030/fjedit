@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <string_view>
 #include <vector>
 
 using namespace fjedit;
@@ -126,4 +127,60 @@ TEST_CASE("A replacement puts in what a regular expression captured", "[find]") 
     REQUIRE(replacement(buffer, found[0], needle, "[$&]", regex) == "[set(a, 1)]");
     // Text is put in as it is.
     REQUIRE(replacement(buffer, found[0], "set", "$1", {}) == "$1");
+}
+
+namespace {
+
+// Checks find_in_text() finds in `text` what find_all() finds in a Buffer
+// of it, with the same lines.
+void check_as_lines(std::string_view text, std::string_view needle, FindOptions options) {
+    const Buffer buffer(text);
+    std::vector<TextMatch> lines;
+    for (const Span& span : find_all(buffer, needle, options)) lines.push_back({span, buffer.line(span.from.line)});
+    CAPTURE(text, needle, options.match_case, options.whole_word, options.regex);
+    CHECK(find_in_text(text, needle, options) == lines);
+}
+
+} // namespace
+
+TEST_CASE("A text searched as its bytes gives what its lines give", "[find]") {
+    const std::string_view texts[] = {
+        "speed = spin_speed * speed;\nspeed",
+        "a\r\nspeed\rb Speed\n\nspeed\r\n",
+        "\xEF\xBB\xBF"
+        "speed x\nspeed",
+        "\x80speed\n\xC3speed\xC3\n\xC3\xA4speed speed_x",
+        "aaaa\naa\r\naaa",
+        "x {\n}\r\ny {\r}\n",
+        "",
+        "\n\r\n\r",
+    };
+    const std::string_view needles[] = {"speed", "SPEED", "aa", "d\ns", "{\n}", "\n", "e\r", "a\naa", "\xA4", "x"};
+    const std::string_view expressions[] = {"s\\w+d", "^", "a+", "[^ ]+$", "(a"};
+    const FindOptions plain[] = {
+        {}, {.match_case = false}, {.whole_word = true}, {.match_case = false, .whole_word = true}};
+    const FindOptions regex[] = {{.regex = true},
+                                 {.match_case = false, .regex = true},
+                                 {.whole_word = true, .regex = true},
+                                 {.regex = true, .empty = true}};
+    for (const std::string_view text : texts) {
+        for (const std::string_view needle : needles) {
+            for (const FindOptions& options : plain) check_as_lines(text, needle, options);
+        }
+        for (const std::string_view expression : expressions) {
+            for (const FindOptions& options : regex) check_as_lines(text, expression, options);
+        }
+    }
+}
+
+TEST_CASE("A text's matches come with their lines, broken where a buffer breaks them", "[find]") {
+    REQUIRE(find_in_text("\xEF\xBB\xBFint a;\r\nspeed\rb speed\n", "speed") ==
+            std::vector<TextMatch>{{{{1, 0}, {1, 5}}, "speed"}, {{{2, 2}, {2, 7}}, "b speed"}});
+}
+
+TEST_CASE("A search of a text stops at its limit", "[find]") {
+    REQUIRE(find_in_text("x x x x", "x", {}, 2).size() == 2);
+    REQUIRE(find_in_text("x\nx\nx", "x", {.regex = true}, 2).size() == 2);
+    REQUIRE(find_in_text("x\nx\nx", "x\n", {}, 1).size() == 1);
+    REQUIRE(find_in_text("x x", "x", {}, 0).empty());
 }

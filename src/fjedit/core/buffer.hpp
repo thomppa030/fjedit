@@ -38,6 +38,10 @@ struct Span {
     bool operator==(const Span&) const = default;
 };
 
+/// The bytes of a UTF-8 byte order mark, which a Buffer keeps apart from
+/// its first line.
+inline constexpr std::string_view BYTE_ORDER_MARK = "\xEF\xBB\xBF";
+
 /// How a file breaks its lines.
 enum class LineEnding : uint8_t {
     Lf,

@@ -7,6 +7,8 @@
 
 #include "fjedit/core/buffer.hpp"
 
+#include <cstddef>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -43,6 +45,22 @@ struct FindOptions {
 /// including, `end_line`: what a view has in sight.
 [[nodiscard]] std::vector<Span> find_in_lines(const Buffer& buffer, std::string_view needle, std::size_t first_line,
                                               std::size_t end_line, FindOptions options = {});
+
+/// A place find_in_text() found, with the line it begins on, without its
+/// break.
+struct TextMatch {
+    Span span;
+    std::string_view line;
+
+    bool operator==(const TextMatch&) const = default;
+};
+
+/// The places find_all() finds in `text` read into a Buffer, the first
+/// `limit` of them, each with its line viewed in `text`: a file's bytes
+/// searched as they are, without its lines being built.
+[[nodiscard]] std::vector<TextMatch> find_in_text(std::string_view text, std::string_view needle,
+                                                  FindOptions options = {},
+                                                  std::size_t limit = std::numeric_limits<std::size_t>::max());
 
 /// The first place `needle` occurs at or after `from`, or failing that, the
 /// first from the start of the text; nothing when it occurs nowhere.
