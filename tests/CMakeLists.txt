@@ -67,6 +67,10 @@ add_executable(fjedit-program-tests
     test_program.cpp)
 ftk_target_defaults(fjedit-program-tests)
 ftk_leak_suppressions(fjedit-program-tests)
+# The program draws its pictures through ftk's Vulkan backend, which the
+# tests never call: the loader is loaded at the first call, so they run where
+# there is none, a CI runner among them.
+ftk_delay_load_vulkan(fjedit-program-tests)
 target_link_libraries(fjedit-program-tests PRIVATE fjedit::program ftk::kit-harness Catch2::Catch2WithMain)
 # fjedit's brand files, read where they are in the source.
 target_compile_definitions(fjedit-program-tests PRIVATE FJEDIT_BRAND="${CMAKE_CURRENT_SOURCE_DIR}/../brand")
