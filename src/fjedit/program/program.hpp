@@ -13,9 +13,9 @@
 #include "fjedit/core/language_services.hpp"
 #include "fjedit/core/recovery.hpp"
 #include "fjedit/core/workspace.hpp"
-#include "fjedit/program/file_tree.hpp"
-#include "fjedit/program/find_in_files.hpp"
-#include "fjedit/program/preferences.hpp"
+#include "fjedit/editor/file_tree.hpp"
+#include "fjedit/editor/find_in_files.hpp"
+#include "fjedit/program/preferences_window.hpp"
 #include "fjedit/widget/code_view.hpp"
 
 #include "ftk/app/desktop_entry.hpp"

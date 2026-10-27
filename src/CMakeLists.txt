@@ -64,18 +64,29 @@ target_link_libraries(fjedit-widget PUBLIC fjedit::core ftk::app-ui)
 ftk_check_editor_ui(fjedit-widget ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widget
                     ICONS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/widget/icons.hpp)
 
+find_package(Threads REQUIRED)
+
+# fjedit-editor is what a program needs to edit a folder's code, whatever
+# window it lays out: the file tree, find in files and how the code is
+# shown. fjedit's program is built on it, and so is fjell's Code tab.
+add_library(fjedit-editor STATIC
+    fjedit/editor/file_tree.cpp
+    fjedit/editor/find_in_files.cpp
+    fjedit/editor/preferences.cpp)
+add_library(fjedit::editor ALIAS fjedit-editor)
+ftk_target_defaults(fjedit-editor)
+target_link_libraries(fjedit-editor PUBLIC fjedit::widget ftk::app-ui Threads::Threads)
+ftk_check_editor_ui(fjedit-editor ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/editor)
+
 # fjedit-program is fjedit as a program: a folder open in a window, its files
 # down the side, tabs over the code, menus and a status bar. The executable
 # runs it in a window of its own; its tests run it in the kit's harness.
 add_library(fjedit-program STATIC
-    fjedit/program/file_tree.cpp
-    fjedit/program/find_in_files.cpp
-    fjedit/program/preferences.cpp
+    fjedit/program/preferences_window.cpp
     fjedit/program/program.cpp)
 add_library(fjedit::program ALIAS fjedit-program)
 ftk_target_defaults(fjedit-program)
-find_package(Threads REQUIRED)
-target_link_libraries(fjedit-program PUBLIC fjedit::widget fjedit::lsp ftk::app ftk::app-ui ftk::platform Threads::Threads)
+target_link_libraries(fjedit-program PUBLIC fjedit::editor fjedit::lsp ftk::app ftk::app-ui ftk::platform Threads::Threads)
 ftk_check_editor_ui(fjedit-program ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program
                     ICONS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/program/icons.hpp)
 

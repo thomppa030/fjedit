@@ -1,4 +1,4 @@
-#include "fjedit/program/file_tree.hpp"
+#include "fjedit/editor/file_tree.hpp"
 
 #include "fjedit/widget/file_kind.hpp"
 

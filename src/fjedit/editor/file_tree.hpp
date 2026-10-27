@@ -1,6 +1,6 @@
 #pragma once
 
-// The files of the folder open, down the program's side (sheet 39): the
+// The files of the folder open, as a tree down the side (sheet 39): the
 // folder itself, then folders before files, each by name, a file's icon in
 // its category's hue. Names beginning with a dot are left out. A folder is
 // read when it is first opened and again when the tree is told to forget

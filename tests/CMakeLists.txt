@@ -61,6 +61,17 @@ ftk_target_defaults(fjedit-widget-tests)
 ftk_leak_suppressions(fjedit-widget-tests)
 target_link_libraries(fjedit-widget-tests PRIVATE fjedit::widget ftk::kit-harness Catch2::Catch2WithMain)
 
+# What a program edits a folder's code with, on folders of the tests' own,
+# through the same harness.
+add_executable(fjedit-editor-tests
+    log_for_tests.cpp
+    test_file_tree.cpp
+    test_find_in_files.cpp
+    test_preferences.cpp)
+ftk_target_defaults(fjedit-editor-tests)
+ftk_leak_suppressions(fjedit-editor-tests)
+target_link_libraries(fjedit-editor-tests PRIVATE fjedit::editor ftk::kit-harness Catch2::Catch2WithMain)
+
 # The program, on folders of the tests' own, through the same harness.
 add_executable(fjedit-program-tests
     log_for_tests.cpp
@@ -97,5 +108,6 @@ list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 catch_discover_tests(fjedit-tests)
 catch_discover_tests(fjedit-widget-tests TEST_PREFIX "view: ")
+catch_discover_tests(fjedit-editor-tests TEST_PREFIX "editor: ")
 catch_discover_tests(fjedit-program-tests TEST_PREFIX "program: ")
 catch_discover_tests(fjedit-lsp-tests TEST_PREFIX "lsp: ")

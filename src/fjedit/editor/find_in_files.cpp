@@ -1,4 +1,4 @@
-#include "fjedit/program/find_in_files.hpp"
+#include "fjedit/editor/find_in_files.hpp"
 
 #include "fjedit/core/commands.hpp"
 #include "fjedit/core/language.hpp"

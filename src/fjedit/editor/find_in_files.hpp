@@ -1,12 +1,12 @@
 #pragma once
 
-// Find in files (sheet 39, W3): a window floating at the top of the code,
-// where you are already looking, with the search and its toggles, where to
-// look and which files, the matches as one flat list, and the code around
-// the match picked, editable, under them. Ctrl Shift F, or the search on
-// the files, opens it; Enter opens the file at the match, Up and Down go
-// through the matches, Escape closes it. The search runs on the program's
-// threads, again whenever what it looks for changes: a new search stops the
+// Find in files (sheet 39, W3): a window floating at the top of the room it
+// is given, where you are already looking, with the search and its toggles,
+// where to look and which files, the matches as one flat list, and the code
+// around the match picked, editable, under them. Ctrl Shift F, or the search
+// on the files, opens it; Enter opens the file at the match, Up and Down go
+// through the matches, Escape closes it. The search runs on the threads it
+// is given, again whenever what it looks for changes: a new search stops the
 // one before it and never waits for it to end.
 
 #include "fjedit/core/file_search.hpp"
@@ -31,7 +31,7 @@
 
 namespace fjedit {
 
-/// What the window asks of the program in a frame.
+/// What the window asks of whoever draws it, in a frame.
 struct FindInFilesAsk {
     /// Open this file at this match, with the keyboard: the window closed.
     std::optional<FileHit> go;
