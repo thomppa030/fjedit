@@ -95,7 +95,7 @@ int run(const std::filesystem::path& folder) {
                 .recovery = fjedit::Program::recovery_folder(root),
                 .services = std::nullopt,
                 .wake = [] { ftk::Window::wake(); },
-                .keys = fjedit::Program::keys_file(),
+                .keys = fjedit::CodeArea::keys_file(),
                 .pick_folder =
                     [&browser, &program] {
                         browser.open("Open folder", ftk::FileBrowser::Mode::select_directory, "Open",

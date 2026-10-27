@@ -71,14 +71,16 @@ find_package(Threads REQUIRED)
 # tree, find in files and how the code is shown. fjedit's program is built
 # on it, and so is fjell's Code tab.
 add_library(fjedit-editor STATIC
+    fjedit/editor/code_area.cpp
     fjedit/editor/code_files.cpp
     fjedit/editor/file_tree.cpp
     fjedit/editor/find_in_files.cpp
     fjedit/editor/preferences.cpp)
 add_library(fjedit::editor ALIAS fjedit-editor)
 ftk_target_defaults(fjedit-editor)
-target_link_libraries(fjedit-editor PUBLIC fjedit::widget fjedit::lsp ftk::app-ui Threads::Threads)
-ftk_check_editor_ui(fjedit-editor ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/editor)
+target_link_libraries(fjedit-editor PUBLIC fjedit::widget fjedit::lsp ftk::app ftk::app-ui ftk::platform Threads::Threads)
+ftk_check_editor_ui(fjedit-editor ROOTS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/editor
+                    ICONS ${CMAKE_CURRENT_SOURCE_DIR}/fjedit/editor/icons.hpp)
 
 # fjedit-program is fjedit as a program: a folder open in a window, its files
 # down the side, tabs over the code, menus and a status bar. The executable

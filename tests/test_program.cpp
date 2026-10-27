@@ -225,7 +225,7 @@ TEST_CASE("A group with no file open shows fjedit's logomark where the kit's fil
 TEST_CASE("A file pressed in the tree opens in a tab in front, with the keyboard", "[program]") {
     Running run({{"coin.cpp", "int a;\n"}, {"toon.fjsl", "void fragment() {}\n"}});
     run.press_row("coin.cpp");
-    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->code().front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
     REQUIRE(run.h.find("coin.cpp", Role::Tab) != nullptr);
     run.h.type("x");
     REQUIRE(run.document("coin.cpp").buffer().text() == "xint a;\n");
@@ -233,10 +233,10 @@ TEST_CASE("A file pressed in the tree opens in a tab in front, with the keyboard
 
     // A second file, then back to the first by its tab.
     run.press_row("toon.fjsl");
-    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "toon.fjsl"));
+    REQUIRE(run.program->code().front() == run.program->files().workspace().name(run.folder.path / "toon.fjsl"));
     run.h.click_at(run.h.find("coin.cpp", Role::Tab)->rect.centre());
     run.h.step();
-    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->code().front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
 }
 
 TEST_CASE("Ctrl S saves the file in front", "[program]") {
@@ -255,14 +255,57 @@ TEST_CASE("Closing a tab with unsaved changes asks first", "[program]") {
     run.h.press(Key::W, CTRL);
     run.h.step(2);
     // Still open while it asks.
-    REQUIRE(run.program->front().has_value());
+    REQUIRE(run.program->code().front().has_value());
     const auto* dont_save = run.h.find("Don't save", Role::Button);
     REQUIRE(dont_save != nullptr);
     run.h.click_at(dont_save->rect.centre());
     run.h.step(2);
-    REQUIRE_FALSE(run.program->front().has_value());
+    REQUIRE_FALSE(run.program->code().front().has_value());
     REQUIRE(run.program->files().workspace().files().empty());
     REQUIRE(run.folder.read("coin.cpp") == "int a;\n");
+}
+
+TEST_CASE("A tab's close button pressed with unsaved changes asks first", "[program]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    run.h.step();
+    // The × at the tab's right end, under the mouse there.
+    const ftk::ui::core::Rect tab = run.h.find("coin.cpp", Role::Tab)->rect;
+    run.h.click_at({tab.max.x - 20.0f, tab.min.y + 14.0f});
+    run.h.step(2);
+    REQUIRE(run.program->code().front().has_value());
+    CHECK(run.h.find("Don't save", Role::Button) != nullptr);
+}
+
+TEST_CASE("With Vim on, File Close on a tab with unsaved changes asks first", "[program][vim]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    run.h.step();
+    REQUIRE(run.program->files().unsaved(run.folder.path / "coin.cpp"));
+    const auto* entry = run.menu_entry("File", "Close");
+    REQUIRE(entry != nullptr);
+    run.h.click_at(entry->rect.centre());
+    run.h.step(2);
+    REQUIRE(run.program->code().front().has_value());
+    CHECK(run.h.find("Don't save", Role::Button) != nullptr);
+}
+
+TEST_CASE("With Vim on, File Quit with unsaved changes asks first", "[program][vim][quit]") {
+    Running run({{"coin.cpp", "int a;\n"}});
+    run.program->preferences().vim = true;
+    run.press_row("coin.cpp");
+    run.h.type("x");
+    run.h.step();
+    REQUIRE(run.program->files().unsaved(run.folder.path / "coin.cpp"));
+    const auto* entry = run.menu_entry("File", "Quit");
+    REQUIRE(entry != nullptr);
+    run.h.click_at(entry->rect.centre());
+    run.h.step(2);
+    CHECK_FALSE(run.program->quitting());
+    CHECK(run.h.find("Don't save", Role::Button) != nullptr);
 }
 
 TEST_CASE("Closing a saved tab asks nothing", "[program]") {
@@ -270,14 +313,14 @@ TEST_CASE("Closing a saved tab asks nothing", "[program]") {
     run.press_row("coin.cpp");
     run.h.press(Key::W, CTRL);
     run.h.step();
-    REQUIRE_FALSE(run.program->front().has_value());
+    REQUIRE_FALSE(run.program->code().front().has_value());
 }
 
 TEST_CASE("A file that isn't text opens nothing", "[program]") {
     Running run({{"blob.bin", "a"}});
     run.folder.write("blob.bin", std::string("a\0b", 3));
     run.press_row("blob.bin");
-    REQUIRE_FALSE(run.program->front().has_value());
+    REQUIRE_FALSE(run.program->code().front().has_value());
     REQUIRE(run.program->files().workspace().files().empty());
 }
 
@@ -371,7 +414,7 @@ TEST_CASE("Work kept from before is offered at the start and comes back unsaved"
         REQUIRE(Recovery(folder.path / ".recovery").keep(named.name("coin.cpp"), "int kept;\n").has_value());
     });
     run.press("Recover 1 file");
-    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
+    REQUIRE(run.program->code().front() == run.program->files().workspace().name(run.folder.path / "coin.cpp"));
     REQUIRE(run.document("coin.cpp").buffer().text() == "int kept;\n");
     REQUIRE(run.program->files().workspace().unsaved(run.folder.path / "coin.cpp"));
     REQUIRE(run.folder.read("coin.cpp") == "int a;\n");
@@ -384,7 +427,7 @@ TEST_CASE("Discard lets the work kept from before go", "[program][recovery]") {
     });
     run.press("Discard");
     REQUIRE(run.kept().empty());
-    REQUIRE_FALSE(run.program->front().has_value());
+    REQUIRE_FALSE(run.program->code().front().has_value());
 }
 
 TEST_CASE("Quitting with nothing unsaved goes at once", "[program][quit]") {
@@ -473,7 +516,7 @@ TEST_CASE("Splitting opens the file in front again beside it, one document betwe
     run.press_row("coin.cpp");
     run.h.press(Key::Backslash, CTRL);
     run.h.step(2);
-    REQUIRE(run.program->groups() == 2);
+    REQUIRE(run.program->code().groups() == 2);
     std::size_t tabs = 0;
     for (const auto& node : run.h.ui().semantics()) tabs += node.role == Role::Tab && node.label == "coin.cpp";
     REQUIRE(tabs == 2);
@@ -487,7 +530,7 @@ TEST_CASE("Splitting opens the file in front again beside it, one document betwe
     // other tab still shows the changes.
     run.h.press(Key::W, CTRL);
     run.h.step(2);
-    REQUIRE(run.program->groups() == 1);
+    REQUIRE(run.program->code().groups() == 1);
     REQUIRE(run.program->files().workspace().unsaved(run.folder.path / "coin.cpp"));
     // The group left has the keyboard.
     run.h.type("y");
@@ -500,7 +543,7 @@ constexpr ftk::ui::Modifiers CTRL_SHIFT{.ctrl = true, .shift = true};
 
 // Steps until find in files has its matches, or long enough that it won't.
 void wait_for_hits(Running& run) {
-    for (int i = 0; i < 400 && run.program->find_in_files().hits().empty(); ++i) run.h.step();
+    for (int i = 0; i < 400 && run.program->code().find_in_files().hits().empty(); ++i) run.h.step();
 }
 
 } // namespace
@@ -508,16 +551,16 @@ void wait_for_hits(Running& run) {
 TEST_CASE("Find in files finds in every file, and Enter opens the first at its match", "[program][find_in_files]") {
     Running run({{"a.cpp", "float spin_speed;\n"}, {"b.cpp", "x = spin_speed;\n"}, {"c.txt", "nothing\n"}});
     run.h.press(Key::F, CTRL_SHIFT);
-    REQUIRE(run.program->find_in_files().is_open());
+    REQUIRE(run.program->code().find_in_files().is_open());
     run.h.type("spin_speed");
     wait_for_hits(run);
-    REQUIRE(run.program->find_in_files().hits().size() == 2);
+    REQUIRE(run.program->code().find_in_files().hits().size() == 2);
     REQUIRE(run.h.find("float spin_speed;", Role::TreeItem) != nullptr);
 
     run.h.press(Key::Enter);
     run.h.step(2);
-    REQUIRE_FALSE(run.program->find_in_files().is_open());
-    REQUIRE(run.program->front() == run.program->files().workspace().name(run.folder.path / "a.cpp"));
+    REQUIRE_FALSE(run.program->code().find_in_files().is_open());
+    REQUIRE(run.program->code().front() == run.program->files().workspace().name(run.folder.path / "a.cpp"));
 }
 
 TEST_CASE("Find in files draws the matches in view, and Down brings the one picked into it", "[program][find_in_files]") {
@@ -527,7 +570,7 @@ TEST_CASE("Find in files draws the matches in view, and Down brings the one pick
     run.h.press(Key::F, CTRL_SHIFT);
     run.h.type("match");
     wait_for_hits(run);
-    REQUIRE(run.program->find_in_files().hits().size() == 40);
+    REQUIRE(run.program->code().find_in_files().hits().size() == 40);
     REQUIRE(run.h.find("match 0", Role::TreeItem) != nullptr);
     REQUIRE(run.h.find("match 30", Role::TreeItem) == nullptr);
 
@@ -543,14 +586,14 @@ TEST_CASE("With Vim on, Ctrl-J and Ctrl-K move through find in files' matches", 
     run.h.press(Key::F, CTRL_SHIFT);
     run.h.type("spin");
     wait_for_hits(run);
-    REQUIRE(run.program->find_in_files().hits().size() == 2);
+    REQUIRE(run.program->code().find_in_files().hits().size() == 2);
     run.h.press(Key::J, CTRL);
     run.h.press(Key::K, CTRL);
     run.h.press(Key::J, CTRL);
     run.h.step();
     run.h.press(Key::Enter);
     run.h.step(2);
-    CHECK(run.program->front() == run.program->files().workspace().name(run.folder.path / "b.cpp"));
+    CHECK(run.program->code().front() == run.program->files().workspace().name(run.folder.path / "b.cpp"));
 }
 
 TEST_CASE("Find in files searches open files with their unsaved changes", "[program][find_in_files]") {
@@ -560,7 +603,7 @@ TEST_CASE("Find in files searches open files with their unsaved changes", "[prog
     run.h.press(Key::F, CTRL_SHIFT);
     run.h.type("spin_speed");
     wait_for_hits(run);
-    REQUIRE(run.program->find_in_files().hits().size() == 1);
+    REQUIRE(run.program->code().find_in_files().hits().size() == 1);
 }
 
 TEST_CASE("Replace in every file changes open files in place and writes the rest", "[program][find_in_files]") {
@@ -586,7 +629,7 @@ TEST_CASE("Escape closes find in files, letting go of the files it only showed",
     REQUIRE(run.program->files().workspace().files().size() == 1);
     run.h.press(Key::Escape);
     run.h.step();
-    REQUIRE_FALSE(run.program->find_in_files().is_open());
+    REQUIRE_FALSE(run.program->code().find_in_files().is_open());
     REQUIRE(run.program->files().workspace().files().empty());
 }
 
@@ -696,37 +739,37 @@ TEST_CASE("Vim keys preferred give every view Vim's keys, and the status bar its
 TEST_CASE("The menus show the keys of the mode the view in front is in", "[program][vim]") {
     Running run({{"a.txt", "abc\n"}});
     run.press_row("a.txt");
-    CHECK(run.program->shortcut("edit.undo") == "Ctrl Z");
-    CHECK(run.program->shortcut("file.close") == "Ctrl W");
+    CHECK(run.program->code().shortcut("edit.undo") == "Ctrl Z");
+    CHECK(run.program->code().shortcut("file.close") == "Ctrl W");
     run.program->preferences().vim = true;
     run.h.step();
-    CHECK(run.program->shortcut("edit.undo") == "u");
-    CHECK(run.program->shortcut("edit.redo") == "Ctrl R");
-    CHECK(run.program->shortcut("edit.cut") == "\"+dd");
+    CHECK(run.program->code().shortcut("edit.undo") == "u");
+    CHECK(run.program->code().shortcut("edit.redo") == "Ctrl R");
+    CHECK(run.program->code().shortcut("edit.cut") == "\"+dd");
     // A terminal's copy and paste, which Vim keeps.
-    CHECK(run.program->shortcut("edit.copy") == "Ctrl Shift C");
-    CHECK(run.program->shortcut("edit.paste") == "Ctrl Shift V");
+    CHECK(run.program->code().shortcut("edit.copy") == "Ctrl Shift C");
+    CHECK(run.program->code().shortcut("edit.paste") == "Ctrl Shift V");
     // The program's keys and the bindings Vim keeps, and none for what Vim
     // has no keys for yet.
-    CHECK(run.program->shortcut("file.save") == "Ctrl S");
-    CHECK(run.program->shortcut("format.document") == "Ctrl Shift I");
-    CHECK(run.program->shortcut("definition.go") == "gd");
-    CHECK(run.program->shortcut("symbol.rename") == "grn");
-    CHECK(run.program->shortcut("file.close") == "Ctrl W q");
-    CHECK(run.program->shortcut("find.open").empty());
+    CHECK(run.program->code().shortcut("file.save") == "Ctrl S");
+    CHECK(run.program->code().shortcut("format.document") == "Ctrl Shift I");
+    CHECK(run.program->code().shortcut("definition.go") == "gd");
+    CHECK(run.program->code().shortcut("symbol.rename") == "grn");
+    CHECK(run.program->code().shortcut("file.close") == "Ctrl W q");
+    CHECK(run.program->code().shortcut("find.open").empty());
     run.h.type("v");
     run.h.step();
-    CHECK(run.program->shortcut("edit.cut") == "\"+d");
-    CHECK(run.program->shortcut("edit.copy") == "Ctrl Shift C");
-    CHECK(run.program->shortcut("edit.undo").empty());
-    CHECK(run.program->shortcut("file.close") == "Ctrl W q");
+    CHECK(run.program->code().shortcut("edit.cut") == "\"+d");
+    CHECK(run.program->code().shortcut("edit.copy") == "Ctrl Shift C");
+    CHECK(run.program->code().shortcut("edit.undo").empty());
+    CHECK(run.program->code().shortcut("file.close") == "Ctrl W q");
     run.h.press(Key::Escape);
     run.h.type("i");
     run.h.step();
-    CHECK(run.program->shortcut("edit.undo") == "Ctrl O u");
-    CHECK(run.program->shortcut("edit.paste") == "Ctrl Shift V");
-    CHECK(run.program->shortcut("edit.copy").empty());
-    CHECK(run.program->shortcut("file.close") == "Ctrl O Ctrl W q");
+    CHECK(run.program->code().shortcut("edit.undo") == "Ctrl O u");
+    CHECK(run.program->code().shortcut("edit.paste") == "Ctrl Shift V");
+    CHECK(run.program->code().shortcut("edit.copy").empty());
+    CHECK(run.program->code().shortcut("file.close") == "Ctrl O Ctrl W q");
 }
 
 TEST_CASE("With Vim on, :set rnu and so change every view for the session, Preferences left as they are",
@@ -738,8 +781,8 @@ TEST_CASE("With Vim on, :set rnu and so change every view for the session, Prefe
     run.h.type(":set rnu so=7");
     run.h.press(Key::Enter);
     run.h.step(2);
-    CHECK(run.program->vim_settings().relative_numbers_shown);
-    CHECK(run.program->vim_settings().around_caret_shown == 7);
+    CHECK(run.program->code().vim_settings().relative_numbers_shown);
+    CHECK(run.program->code().vim_settings().around_caret_shown == 7);
     CHECK(run.program->preferences().line_numbers == LineNumbers::Absolute);
     CHECK(run.program->preferences().around_caret == 0);
 }
@@ -752,7 +795,7 @@ TEST_CASE("With Vim on, Ctrl W is Vim's and closes no tab", "[program][vim]") {
     run.h.type("A");
     run.h.press(Key::W, CTRL);
     run.h.step(2);
-    REQUIRE(run.program->front().has_value());
+    REQUIRE(run.program->code().front().has_value());
     REQUIRE(run.document("a.txt").buffer().text() == "foo \n");
 }
 
@@ -837,7 +880,7 @@ TEST_CASE("A definition in another file opens it there, the place selected", "[p
     const std::filesystem::path header = run.program->files().workspace().name(run.folder.path / "coin.hpp");
     FakeLanguage::answer(run.language->definitions.front(), std::vector<Location>{{header, {{1, 4}, {1, 9}}}});
     run.h.step(3);
-    REQUIRE(run.program->front() == header);
+    REQUIRE(run.program->code().front() == header);
     REQUIRE(run.document("coin.hpp").buffer().line(1) == "int speed;");
     // The keyboard in it, the definition selected: typing replaces it.
     run.h.type("pace");
@@ -966,7 +1009,7 @@ TEST_CASE("Cancelling the question about closing gives the keyboard back to the 
     run.h.step(2);
     run.h.press(Key::Escape);
     run.h.step(2);
-    REQUIRE(run.program->front().has_value());
+    REQUIRE(run.program->code().front().has_value());
     run.h.type("y");
     run.h.step();
     REQUIRE(run.document("coin.cpp").buffer().line(0) == "xyint a;");
@@ -1135,11 +1178,11 @@ TEST_CASE("With Vim on, :w saves; :q is refused over unsaved changes, asking not
     run.h.type("x");
     REQUIRE_FALSE(on_status_bar(run, ftk::theme::error()));
     ex(run, "q");
-    REQUIRE(run.program->front().has_value());
+    REQUIRE(run.program->code().front().has_value());
     CHECK(on_status_bar(run, ftk::theme::error()));
     CHECK(run.h.find("Don't save", Role::Button) == nullptr);
     ex(run, "q!");
-    CHECK_FALSE(run.program->front().has_value());
+    CHECK_FALSE(run.program->code().front().has_value());
     CHECK(run.program->files().workspace().files().empty());
     CHECK(run.folder.read("a.txt") == "bc\n");
 }
@@ -1152,19 +1195,19 @@ TEST_CASE("With Vim on, :q closes a tab whose changes another tab shows, and :wq
     run.h.step();
     run.h.type("x");
     ex(run, "sp");
-    REQUIRE(run.program->groups() == 2);
+    REQUIRE(run.program->code().groups() == 2);
     ex(run, "q");
-    CHECK(run.program->groups() == 1);
+    CHECK(run.program->code().groups() == 1);
     CHECK(run.program->files().workspace().unsaved(run.folder.path / "a.txt"));
     ex(run, "wq");
-    CHECK_FALSE(run.program->front().has_value());
+    CHECK_FALSE(run.program->code().front().has_value());
     CHECK(run.folder.read("a.txt") == "bc\n");
     // :x writes only a file with changes: what another program wrote stays.
     run.press_row("b.txt");
     run.h.step();
     run.folder.write("b.txt", "outside\n");
     ex(run, "x");
-    CHECK_FALSE(run.program->front().has_value());
+    CHECK_FALSE(run.program->code().front().has_value());
     CHECK(run.folder.read("b.txt") == "outside\n");
 }
 
@@ -1201,13 +1244,13 @@ TEST_CASE("With Vim on, :e opens a file from the folder and reads the one in fro
     const std::filesystem::path a = run.program->files().workspace().name(run.folder.path / "a.txt");
     const std::filesystem::path b = run.program->files().workspace().name(run.folder.path / "sub/b.txt");
     ex(run, "e sub/b.txt");
-    CHECK(run.program->front() == b);
+    CHECK(run.program->code().front() == b);
     ex(run, "bp");
-    CHECK(run.program->front() == a);
+    CHECK(run.program->code().front() == a);
     ex(run, "bn");
-    CHECK(run.program->front() == b);
+    CHECK(run.program->code().front() == b);
     ex(run, "bn");
-    CHECK(run.program->front() == a);
+    CHECK(run.program->code().front() == a);
 
     // Read again; refused over changes; with !, the changes dropped, and
     // undone, back.
@@ -1240,32 +1283,32 @@ TEST_CASE("With Vim on, Ctrl-W v and s split beside, w h and l go between the gr
         run.h.step(2);
     };
     window("v");
-    REQUIRE(run.program->groups() == 2);
+    REQUIRE(run.program->code().groups() == 2);
     ex(run, "e b.txt");
-    CHECK(run.program->front() == b);
+    CHECK(run.program->code().front() == b);
     window("h");
-    CHECK(run.program->front() == a);
+    CHECK(run.program->code().front() == a);
     // The keys go to the group gone to.
     run.h.type("x");
     CHECK(run.document("a.txt").buffer().text() == "bc\n");
     CHECK(run.document("b.txt").buffer().text() == "b\n");
     window("l");
-    CHECK(run.program->front() == b);
+    CHECK(run.program->code().front() == b);
     window("l");
-    CHECK(run.program->front() == b);
+    CHECK(run.program->code().front() == b);
     window("w");
-    CHECK(run.program->front() == a);
+    CHECK(run.program->code().front() == a);
     window("w");
-    CHECK(run.program->front() == b);
+    CHECK(run.program->code().front() == b);
     // None stands above or below.
     window("j");
-    CHECK(run.program->front() == b);
-    CHECK(run.program->groups() == 2);
+    CHECK(run.program->code().front() == b);
+    CHECK(run.program->code().groups() == 2);
     window("s");
-    CHECK(run.program->groups() == 3);
+    CHECK(run.program->code().groups() == 3);
     window("q");
     window("c");
-    CHECK(run.program->groups() == 2);
+    CHECK(run.program->code().groups() == 2);
 }
 
 TEST_CASE("With Vim on, Tab after :e completes the folder's paths as the tree lists them", "[program][vim]") {
@@ -1289,7 +1332,7 @@ TEST_CASE("With Vim on, Tab after :e completes the folder's paths as the tree li
     CHECK(field()->value == "e sub/b.txt");
     run.h.press(Key::Enter);
     run.h.step(2);
-    CHECK(run.program->front() == run.program->files().workspace().name(run.folder.path / "sub/b.txt"));
+    CHECK(run.program->code().front() == run.program->files().workspace().name(run.folder.path / "sub/b.txt"));
 }
 
 TEST_CASE("With Vim on, the : line says :q will be refused before Enter, as the program knows the tabs",
@@ -1338,9 +1381,9 @@ TEST_CASE("With Vim on, keys.vim's maps, binds and settings apply from the start
     run.h.step();
     CHECK(run.document("a.txt").buffer().text() == "two\n");
     // A bind shows in the menus, over the program's own keys.
-    CHECK(run.program->shortcut("files.find") == chords_text(*vim::parse_notation("<Space>fg")));
-    CHECK(run.program->vim_settings().pattern.ignore_case);
-    CHECK(run.program->keys_errors() == std::vector<vim::KeysError>{
+    CHECK(run.program->code().shortcut("files.find") == chords_text(*vim::parse_notation("<Space>fg")));
+    CHECK(run.program->code().vim_settings().pattern.ignore_case);
+    CHECK(run.program->code().keys_errors() == std::vector<vim::KeysError>{
                                             {.line = 4, .message = "relativenumber: set in Preferences"},
                                             {.line = 5, .message = "Not supported here: frob"},
                                             {.line = 6, .message = "No command called files.nothing"},
@@ -1353,7 +1396,7 @@ TEST_CASE("With Vim on, keys.vim saved in fjedit applies at once", "[program][vi
         folder.write(".config/keys.vim", "\" mine\n");
     });
     run.program->preferences().vim = true;
-    run.program->open(run.keys_file());
+    run.program->code().open(run.keys_file());
     run.h.step();
     run.h.type("ggonnoremap Q dd");
     run.h.press(Key::Escape);
@@ -1374,7 +1417,7 @@ TEST_CASE("Preferences' Open makes keys.vim with a few lines of comment, and ope
     run.press("Open");
     CHECK(std::filesystem::exists(run.keys_file()));
     CHECK(run.folder.read(".config/keys.vim").starts_with("\" Your maps for Vim's keys"));
-    CHECK(run.program->front() == run.program->files().workspace().name(run.keys_file()));
+    CHECK(run.program->code().front() == run.program->files().workspace().name(run.keys_file()));
 }
 
 TEST_CASE("Preferences keeps keys.vim's Open in reach however long its path", "[program][keys]") {
@@ -1399,7 +1442,7 @@ TEST_CASE("Preferences keeps keys.vim's Open in reach however long its path", "[
 
 TEST_CASE("Every command the program names it runs", "[program]") {
     Running run({{"a.txt", ""}});
-    for (const Program::Command& command : Program::commands()) CHECK(run.program->run(command.name));
+    for (const CodeCommand& command : Program::commands()) CHECK(run.program->run(command.name));
 }
 
 TEST_CASE("With Vim on, Ctrl-O goes back through a group's jumps across files and Ctrl-I forward; a split copies them",
@@ -1426,10 +1469,10 @@ TEST_CASE("With Vim on, Ctrl-O goes back through a group's jumps across files an
     // G from line 2, then :e from line 4 into b.txt.
     keys("jG");
     ex(run, "e b.txt");
-    REQUIRE(run.program->front() == b);
+    REQUIRE(run.program->code().front() == b);
     // Back where :e left a.txt (x takes the f of four), then where G left.
     ctrl_o();
-    REQUIRE(run.program->front() == a);
+    REQUIRE(run.program->code().front() == a);
     keys("x");
     CHECK(text_of(a) == "one\ntwo\nthree\nour");
     keys("u");
@@ -1440,20 +1483,20 @@ TEST_CASE("With Vim on, Ctrl-O goes back through a group's jumps across files an
     // Forward again, to b.txt where the first Ctrl-O left it.
     ctrl_i();
     ctrl_i();
-    CHECK(run.program->front() == b);
+    CHECK(run.program->code().front() == b);
     // a.txt closed, Ctrl-O opens it again at the place.
     ctrl_o();
-    REQUIRE(run.program->front() == a);
+    REQUIRE(run.program->code().front() == a);
     ex(run, "q");
     REQUIRE(run.program->files().workspace().find(a) == nullptr);
     ctrl_o();
-    REQUIRE(run.program->front() == a);
+    REQUIRE(run.program->code().front() == a);
     keys("x");
     CHECK(text_of(a) == "one\nwo\nthree\nfour");
     keys("u");
     // A split goes on from the same list.
     ex(run, "sp");
-    REQUIRE(run.program->groups() == 2);
+    REQUIRE(run.program->code().groups() == 2);
     ctrl_i();
     keys("x");
     CHECK(text_of(a) == "one\ntwo\nthree\nour");
@@ -1472,7 +1515,7 @@ TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in o
     run.h.step();
     run.h.type("`A");
     run.h.step(2);
-    REQUIRE(run.program->front() == a);
+    REQUIRE(run.program->code().front() == a);
     // At the very place: x takes the w.
     run.h.type("x");
     run.h.step(2);
@@ -1485,7 +1528,7 @@ TEST_CASE("With Vim on, a file's mark opens its file, closed or not, and is in o
     REQUIRE(run.program->files().workspace().find(a) == nullptr);
     run.h.type("'A");
     run.h.step(2);
-    REQUIRE(run.program->front() == a);
+    REQUIRE(run.program->code().front() == a);
     run.h.type("x");
     run.h.step(2);
     CHECK(run.program->files().workspace().find(a)->buffer().text() == "one\n  wo\n");

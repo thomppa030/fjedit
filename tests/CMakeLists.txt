@@ -65,12 +65,17 @@ target_link_libraries(fjedit-widget-tests PRIVATE fjedit::widget ftk::kit-harnes
 # through the same harness.
 add_executable(fjedit-editor-tests
     log_for_tests.cpp
+    test_code_area.cpp
     test_code_files.cpp
     test_file_tree.cpp
     test_find_in_files.cpp
     test_preferences.cpp)
 ftk_target_defaults(fjedit-editor-tests)
 ftk_leak_suppressions(fjedit-editor-tests)
+# The code area draws fjedit's mark through ftk's Vulkan backend, which the
+# tests never call: the loader is loaded at the first call, so they run where
+# there is none, a CI runner among them.
+ftk_delay_load_vulkan(fjedit-editor-tests)
 target_link_libraries(fjedit-editor-tests PRIVATE fjedit::editor ftk::kit-harness Catch2::Catch2WithMain)
 
 # The program, on folders of the tests' own, through the same harness.

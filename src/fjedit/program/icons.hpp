@@ -8,8 +8,7 @@
 
 namespace fjedit::icon {
 
-// The editor
-inline constexpr const char* split = ICON_LC_COLUMNS_2;
+// The program
 inline constexpr const char* desktop_entry = ICON_LC_APP_WINDOW; // File > Create desktop entry
 
 // Preferences
