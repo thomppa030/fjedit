@@ -97,6 +97,12 @@ void draw_text_rows(Preferences& preferences) {
         ui::row("Minimap", [&] {
             if (ui::checkbox("##minimap", preferences.minimap).changed) ui::settings_changed();
         });
+        ui::row("Close brackets and quotes", [&] {
+            if (ui::checkbox("##close_pairs", preferences.close_pairs).changed) ui::settings_changed();
+        });
+        ui::row("Colour brackets by level", [&] {
+            if (ui::checkbox("##bracket_colours", preferences.bracket_colours).changed) ui::settings_changed();
+        });
         ui::row("Line numbers", [&] {
             if (ui::segmented<LineNumbers>("##line_numbers", preferences.line_numbers, LINE_NUMBERS).changed) {
                 ui::settings_changed();

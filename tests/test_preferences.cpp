@@ -10,6 +10,8 @@ using namespace fjedit;
 TEST_CASE("The preferences are kept in the settings file and read back held to their range", "[editor][preferences]") {
     Preferences kept{.text_size = 17,
                      .minimap = false,
+                     .close_pairs = false,
+                     .bracket_colours = false,
                      .line_numbers = LineNumbers::Relative,
                      .around_caret = 20,
                      .vim = true,
@@ -24,6 +26,8 @@ TEST_CASE("The preferences are kept in the settings file and read back held to t
     for (const std::string& line : written.front().lines) reading.read(written.front().name, line);
     REQUIRE(read.text_size == 17);
     REQUIRE_FALSE(read.minimap);
+    REQUIRE_FALSE(read.close_pairs);
+    REQUIRE_FALSE(read.bracket_colours);
     REQUIRE(read.line_numbers == LineNumbers::Relative);
     REQUIRE(read.around_caret == 20);
     REQUIRE(read.vim);

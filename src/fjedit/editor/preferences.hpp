@@ -36,6 +36,12 @@ struct Preferences {
     int text_size{static_cast<int>(CODE_TEXT)};
     /// The views show the minimap.
     bool minimap{true};
+    /// Typing an opener or a quote types its closer too
+    /// (EditorView::close_pairs).
+    bool close_pairs{true};
+    /// The views draw brackets in their levels' colours
+    /// (EditorView::bracket_colours).
+    bool bracket_colours{true};
     /// How the views number their lines.
     LineNumbers line_numbers{LineNumbers::Absolute};
     /// How many rows the views keep in sight above and below the caret as

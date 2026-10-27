@@ -54,8 +54,8 @@ inline constexpr std::array<std::string_view, 3> CLANGD_READS{"compile_commands.
 /// fjls as it is, each with how it is under it.
 void draw_server_rows(Preferences& preferences, const LanguageServerShown& clangd, const LanguageServerShown& fjls);
 
-/// The Text group: its size, the minimap, line numbers and the lines kept in
-/// sight around the caret.
+/// The Text group: its size, the minimap, closing and colouring brackets,
+/// line numbers and the lines kept in sight around the caret.
 void draw_text_rows(Preferences& preferences);
 
 /// The Keys group: Vim keys, and keys.vim at `keys` with Open (none shows no

@@ -38,8 +38,9 @@ constexpr const char* LAYOUT_SECTION = "fjedit-layout";
 constexpr std::string_view LAYOUT_ENTRY = "Window";
 constexpr std::string_view FILES_KEY = "Files=";
 
-// The window as sheet 39 first shows it.
-constexpr glm::vec2 SIZE{780.0f, 500.0f};
+// The window as it first shows: sheet 39's width, and tall enough for the
+// whole Code editor page.
+constexpr glm::vec2 SIZE{780.0f, 560.0f};
 
 // The Code editor page's settings, as rows a search can filter, in the
 // groups both programs draw. Returns whether keys.vim's Open was pressed.

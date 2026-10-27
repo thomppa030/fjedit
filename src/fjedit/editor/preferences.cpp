@@ -54,6 +54,10 @@ void read_line(Preferences& preferences, std::string_view entry, std::string_vie
         preferences.text_size = std::clamp(number, TEXT_SIZE_MIN, TEXT_SIZE_MAX);
     } else if (key == "Minimap") {
         preferences.minimap = number != 0;
+    } else if (key == "ClosePairs") {
+        preferences.close_pairs = number != 0;
+    } else if (key == "BracketColours") {
+        preferences.bracket_colours = number != 0;
     } else if (key == "AroundCaret") {
         preferences.around_caret = std::clamp(number, 0, AROUND_CARET_MAX);
     } else if (key == "VimKeys") {
@@ -73,6 +77,8 @@ ui::SettingsSection preferences_section(Preferences& preferences) {
                     {std::string(ENTRY),
                      {std::format("TextSize={}", preferences.text_size),
                       std::format("Minimap={}", preferences.minimap ? 1 : 0),
+                      std::format("ClosePairs={}", preferences.close_pairs ? 1 : 0),
+                      std::format("BracketColours={}", preferences.bracket_colours ? 1 : 0),
                       std::format("LineNumbers={}", line_numbers_name(preferences.line_numbers)),
                       std::format("AroundCaret={}", preferences.around_caret),
                       std::format("VimKeys={}", preferences.vim ? 1 : 0),

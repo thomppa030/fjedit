@@ -235,6 +235,8 @@ void CodeArea::open_keys() {
 void CodeArea::show_as_preferred(EditorView& view) {
     vim::Settings& settings = *vim_settings_;
     view.minimap = preferences_.minimap;
+    view.close_pairs = preferences_.close_pairs;
+    view.bracket_colours = preferences_.bracket_colours;
     view.text_size = static_cast<float>(preferences_.text_size);
     view.line_numbers = settings.relative_numbers
                             ? (*settings.relative_numbers ? LineNumbers::Relative : LineNumbers::Absolute)

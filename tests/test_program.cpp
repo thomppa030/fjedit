@@ -683,12 +683,44 @@ TEST_CASE("The minimap's checkbox in the preferences turns it off", "[program][p
     for (const auto& node : run.h.ui().semantics()) {
         if (node.role == Role::Toggle) toggles.push_back(node.rect);
     }
-    // The page's checkboxes, in the order drawn: Minimap's, in Text, before
-    // Vim keys', in Keys.
-    REQUIRE(toggles.size() == 2);
+    // The page's checkboxes, in the order drawn: Minimap's, Close brackets
+    // and quotes' and Colour brackets by level's, in Text, then Vim keys', in
+    // Keys.
+    REQUIRE(toggles.size() == 4);
     run.h.click_at(toggles.front().centre());
     run.h.step();
     REQUIRE_FALSE(run.program->preferences().minimap);
+}
+
+TEST_CASE("Closing pairs and bracket colours preferred reach every view", "[program][preferences]") {
+    Running run({{"a.cpp", "f\n"}});
+    run.press_row("a.cpp");
+    const ftk::ui::core::Rect code = code_rect(run);
+    // How many shapes the last frame drew in `colour` in the code.
+    const auto in_code = [&](ftk::ui::Color colour) {
+        const uint32_t packed = ftk::ui::core::pack_colour(colour);
+        std::size_t count = 0;
+        for (const ftk::ui::core::RootOutput& root : run.h.output().roots) {
+            for (const ftk::ui::core::Primitive& p : root.draw->primitives) {
+                count += p.colour == packed && code.contains(p.min) ? 1 : 0;
+            }
+        }
+        return count;
+    };
+    run.h.click_at({code.min.x + 300.0f, code.min.y + 0.5f * code_line(CODE_TEXT)});
+    run.h.step();
+    run.h.type("(");
+    run.h.step();
+    REQUIRE(run.document("a.cpp").buffer().line(0) == "f()");
+    REQUIRE(in_code(ftk::theme::code_bracket_level(0)) == 2);
+
+    run.program->preferences().close_pairs = false;
+    run.program->preferences().bracket_colours = false;
+    run.h.step(2);
+    run.h.type("[");
+    run.h.step();
+    REQUIRE(run.document("a.cpp").buffer().line(0) == "f([)");
+    REQUIRE(in_code(ftk::theme::code_bracket_level(0)) == 0);
 }
 
 TEST_CASE("Every view shows its code at the text size preferred", "[program][preferences]") {
@@ -1410,15 +1442,45 @@ TEST_CASE("With Vim on, keys.vim saved in fjedit applies at once", "[program][vi
     CHECK(run.document("a.txt").buffer().text() == "two\n");
 }
 
+namespace {
+
+// Clicks Preferences' search field, the first text field drawn without a
+// name, so what is typed next searches the page.
+void click_search(ftk::test::UiHarness& h) {
+    const auto* search = h.find("", Role::TextField);
+    REQUIRE(search != nullptr);
+    h.click_at(search->rect.centre());
+}
+
+} // namespace
+
 TEST_CASE("Preferences' Open makes keys.vim with a few lines of comment, and opens it", "[program][keys]") {
     Running run({{"a.txt", ""}});
     REQUIRE(run.program->run("edit.preferences"));
     run.h.step(2);
+    click_search(run.h);
     run.h.type("maps");
     run.press("Open");
     CHECK(std::filesystem::exists(run.keys_file()));
     CHECK(run.folder.read(".config/keys.vim").starts_with("\" Your maps for Vim's keys"));
     CHECK(run.program->code().front() == run.program->files().workspace().name(run.keys_file()));
+}
+
+TEST_CASE("Preferences shows the whole Code editor page at once, its last row in reach", "[program][preferences]") {
+    ftk::test::KitHarness h;
+    Preferences preferences;
+    PreferencesWindow window;
+    window.open();
+    bool asked = false;
+    h.set_ui([&] {
+        if (window.draw(preferences, {}, {}, "keys.vim").open_keys) asked = true;
+    });
+    h.step(2);
+    const auto* open = h.find("Open", Role::Button);
+    REQUIRE(open != nullptr);
+    h.click_at(open->rect.centre());
+    h.step(2);
+    CHECK(asked);
 }
 
 TEST_CASE("Preferences keeps keys.vim's Open in reach however long its path", "[program][keys]") {
@@ -1432,6 +1494,7 @@ TEST_CASE("Preferences keeps keys.vim's Open in reach however long its path", "[
         if (window.draw(preferences, {}, {}, keys).open_keys) asked = true;
     });
     h.step(2);
+    click_search(h);
     h.type("maps");
     h.step();
     const auto* open = h.find("Open", Role::Button);
