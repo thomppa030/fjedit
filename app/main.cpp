@@ -130,10 +130,10 @@ int run(const std::filesystem::path& folder) {
                 program->draw();
                 ftk::ui::save_settings_when_due();
             },
-        // The folder browser draws a window of its own, between the
-        // program's frames. A folder picked opens once the program has its
-        // answer about the unsaved files; the window waits while it asks,
-        // and closes once it has its answer to quitting.
+        // The folder browser lays out a window of its own between the
+        // program's frames, and is drawn in them. A folder picked opens once
+        // the program has its answer about the unsaved files; the window
+        // waits while it asks, and closes once it has its answer to quitting.
         .update =
             [&] {
                 browser.tick();
@@ -145,6 +145,7 @@ int run(const std::filesystem::path& folder) {
                 if (window.should_close() && !program->ask_to_quit()) window.cancel_close();
                 if (program->quitting()) window.request_close();
             },
+        .windows = [&browser](ftk::gpu::Frame& frame, ftk::gpu::CommandList& cmd) { browser.record(frame, cmd); },
     });
     ftk::ui::save_settings_file(settings);
     if (!ran) {
